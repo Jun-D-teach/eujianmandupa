@@ -12,7 +12,8 @@ export const SOAL_CONTOH: {
   opsi_b: string;
   opsi_c: string;
   opsi_d: string;
-  kunci_jawaban: "A" | "B" | "C" | "D";
+  opsi_e?: string;
+  kunci_jawaban: "A" | "B" | "C" | "D" | "E";
 }[] = [
   {
     pertanyaan: "Berapa hasil dari 12 × 4?",
@@ -20,6 +21,7 @@ export const SOAL_CONTOH: {
     opsi_b: "48",
     opsi_c: "54",
     opsi_d: "56",
+    opsi_e: "60",
     kunci_jawaban: "B",
   },
   {
@@ -28,6 +30,7 @@ export const SOAL_CONTOH: {
     opsi_b: "Jupiter",
     opsi_c: "Mars",
     opsi_d: "Merkurius",
+    opsi_e: "Saturnus",
     kunci_jawaban: "C",
   },
   {
@@ -81,6 +84,7 @@ export const tambah = mutation({
     opsi_b: v.string(),
     opsi_c: v.string(),
     opsi_d: v.string(),
+    opsi_e: v.optional(v.string()),
     kunci_jawaban: pilihanValidator,
   },
   handler: async (ctx, args) => {
@@ -101,6 +105,7 @@ export const tambah = mutation({
       opsi_b: args.opsi_b.trim(),
       opsi_c: args.opsi_c.trim(),
       opsi_d: args.opsi_d.trim(),
+      opsi_e: args.opsi_e?.trim() || undefined,
       kunci_jawaban: args.kunci_jawaban,
       urutan: jumlah.length + 1,
     });
@@ -140,15 +145,25 @@ export const daftar = query({
 
 /**
  * Endpoint setara GAS `action=getSoal` untuk siswa.
- * Kunci jawaban DISEMBUNYIKAN dari response demi keamanan.
+ * - Wajib TOKEN UJIAN yang benar (diset admin).
+ * - Kunci jawaban DISEMBUNYIKAN dari response demi keamanan.
  */
 export const untukSiswa = query({
-  args: { ujianId: v.id("ujian") },
+  args: { ujianId: v.id("ujian"), token: v.string() },
   handler: async (ctx, args) => {
     await requireUser(ctx);
     const ujian = await ctx.db.get(args.ujianId);
     if (ujian === null) throw new Error("Ujian tidak ditemukan.");
     if (!ujian.aktif) throw new Error("Ujian ini belum diaktifkan pengawas.");
+
+    const tokenAsli = (ujian.token ?? "").toUpperCase();
+    if (!tokenAsli) {
+      throw new Error("Ujian ini belum memiliki token. Hubungi pengawas.");
+    }
+    if (args.token.trim().toUpperCase() !== tokenAsli) {
+      throw new Error("Token ujian salah. Minta token yang benar ke pengawas.");
+    }
+
     const rows = await ctx.db
       .query("soal")
       .withIndex("by_ujian", (q) => q.eq("ujian_id", args.ujianId))
@@ -160,6 +175,7 @@ export const untukSiswa = query({
         judul: ujian.judul,
         deskripsi: ujian.deskripsi,
         aktif: ujian.aktif,
+        durasi_menit: ujian.durasi_menit ?? 60,
       },
       soal: sorted.map((s) => ({
         _id: s._id,
@@ -168,6 +184,7 @@ export const untukSiswa = query({
         opsi_b: s.opsi_b,
         opsi_c: s.opsi_c,
         opsi_d: s.opsi_d,
+        ...(s.opsi_e ? { opsi_e: s.opsi_e } : {}),
         urutan: s.urutan,
       })),
     };

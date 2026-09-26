@@ -14,6 +14,7 @@ import {
   ArrowRight,
   ClipboardList,
   History,
+  KeyRound,
   Pencil,
   PlayCircle,
   Trophy,
@@ -129,7 +130,9 @@ export function SiswaUjian() {
                       <span className="flex size-10 items-center justify-center rounded-2xl bg-accent text-accent-foreground">
                         <ClipboardList className="size-5" />
                       </span>
-                      <Badge variant="secondary">{u.jumlah_soal} soal</Badge>
+                      <Badge variant="secondary">
+                        {u.jumlah_soal} soal · {u.durasi_menit} menit
+                      </Badge>
                     </div>
 
                     <h3 className="mt-4 text-lg font-bold leading-6 tracking-tight">
@@ -141,8 +144,13 @@ export function SiswaUjian() {
                       </p>
                     )}
 
+                    <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold text-muted-foreground">
+                      <KeyRound className="size-3" />
+                      Token dibutuhkan saat unduh soal
+                    </p>
+
                     {lanjut && (
-                      <p className="mt-3 text-xs font-semibold text-emerald-700">
+                      <p className="mt-2 text-xs font-semibold text-emerald-700">
                         Sesi tersimpan · fase {sesi!.fase}
                       </p>
                     )}

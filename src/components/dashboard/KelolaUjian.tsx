@@ -30,17 +30,31 @@ import {
   KeyRound,
   Plus,
   Power,
+  RefreshCw,
   Sparkles,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/use-auth";
 
-const PILIHAN = ["A", "B", "C", "D"] as const;
+const PILIHAN = ["A", "B", "C", "D", "E"] as const;
+const OPSI_WAJIB = ["A", "B", "C", "D"] as const;
 
-type Kunci = "A" | "B" | "C" | "D";
+type Kunci = "A" | "B" | "C" | "D" | "E";
+
+const ACAPAN_TOKEN = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function tokenAcak(): string {
+  return Array.from(
+    { length: 6 },
+    () => ACAPAN_TOKEN[Math.floor(Math.random() * ACAPAN_TOKEN.length)],
+  ).join("");
+}
 
 /** Kelola ujian: buat, aktifkan, susun soal, hapus. (guru & admin) */
 export function KelolaUjian() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const ujian = useQuery(api.ujian.listSemua);
   const buatUjian = useMutation(api.ujian.buat);
   const setAktif = useMutation(api.ujian.setAktif);
@@ -48,6 +62,8 @@ export function KelolaUjian() {
 
   const [judul, setJudul] = useState("");
   const [deskripsi, setDeskripsi] = useState("");
+  const [tokenBaru, setTokenBaru] = useState("");
+  const [durasi, setDurasi] = useState(60);
   const [busy, setBusy] = useState(false);
   const [hapusTarget, setHapusTarget] = useState<{ id: string; judul: string } | null>(
     null,
@@ -63,9 +79,14 @@ export function KelolaUjian() {
       await buatUjian({
         judul: judul.trim(),
         deskripsi: deskripsi.trim() || undefined,
+        token: tokenBaru.trim() || undefined,
+        durasi_menit:
+          Number.isFinite(durasi) && durasi > 0 ? Math.floor(durasi) : undefined,
       });
       setJudul("");
       setDeskripsi("");
+      setTokenBaru("");
+      setDurasi(60);
       toast.success("Ujian dibuat. Susun soalnya lalu aktifkan.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal membuat ujian.");
@@ -114,38 +135,71 @@ export function KelolaUjian() {
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Kelola ujian</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Buat ujian, susun soal beserta kunci jawaban, lalu aktifkan untuk
-          siswa.
+          {isAdmin
+            ? "Buat ujian, atur token & waktu, lalu aktifkan untuk siswa."
+            : "Susun soal, pilihan jawaban, dan kunci jawaban ujian yang sudah dibuat admin."}
         </p>
       </div>
 
-      {/* Form ujian baru */}
-      <Card className="border-border/70">
-        <CardContent className="space-y-4 p-5">
-          <div className="grid gap-2">
-            <Label htmlFor="judul">Judul ujian baru</Label>
-            <Input
-              id="judul"
-              value={judul}
-              onChange={(e) => setJudul(e.target.value)}
-              placeholder="cth. Matematika — Bab Trigonometri"
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="deskripsi">Deskripsi (opsional)</Label>
-            <Textarea
-              id="deskripsi"
-              value={deskripsi}
-              onChange={(e) => setDeskripsi(e.target.value)}
-              placeholder="cth. 10 soal pilihan ganda, kerjakan 30 menit."
-              rows={2}
-            />
-          </div>
-          <Button onClick={buat} disabled={busy} className="gap-2">
-            <Plus className="size-4" /> Buat ujian
-          </Button>
-        </CardContent>
-      </Card>
+      {/* Form ujian baru — ADMIN */}
+      {isAdmin ? (
+        <Card className="border-border/70">
+          <CardContent className="space-y-4 p-5">
+            <div className="grid gap-2">
+              <Label htmlFor="judul">Judul ujian baru</Label>
+              <Input
+                id="judul"
+                value={judul}
+                onChange={(e) => setJudul(e.target.value)}
+                placeholder="cth. Matematika — Bab Trigonometri"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="deskripsi">Deskripsi (opsional)</Label>
+              <Textarea
+                id="deskripsi"
+                value={deskripsi}
+                onChange={(e) => setDeskripsi(e.target.value)}
+                placeholder="cth. 10 soal pilihan ganda, kerjakan 30 menit."
+                rows={2}
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="token-baru">Token ujian (opsional)</Label>
+                <Input
+                  id="token-baru"
+                  value={tokenBaru}
+                  onChange={(e) => setTokenBaru(e.target.value.toUpperCase())}
+                  placeholder="kosong = dibuat otomatis"
+                  maxLength={12}
+                  autoComplete="off"
+                  className="font-mono font-bold uppercase tracking-[0.3em]"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="durasi-baru">Waktu ujian (menit)</Label>
+                <Input
+                  id="durasi-baru"
+                  type="number"
+                  min={1}
+                  max={600}
+                  value={durasi}
+                  onChange={(e) => setDurasi(Number(e.target.value))}
+                />
+              </div>
+            </div>
+            <Button onClick={buat} disabled={busy} className="gap-2">
+              <Plus className="size-4" /> Buat ujian
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-border/70 bg-muted/50 px-4 py-3 text-sm leading-6 text-muted-foreground">
+          Token, waktu, dan status aktif ujian diset oleh <strong className="text-foreground">admin</strong>.
+          Kamu fokus menyusun soal dan kunci jawabannya.
+        </div>
+      )}
 
       {ujian.length === 0 ? (
         <Empty className="rounded-3xl border border-dashed border-border/70 py-14">
@@ -191,25 +245,45 @@ export function KelolaUjian() {
 
               <AccordionContent className="pb-5">
                 <div className="space-y-5">
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant={u.aktif ? "outline" : "default"}
-                      size="sm"
-                      className="gap-2"
-                      onClick={() => ubahAktif(u._id, !u.aktif, u.judul)}
-                    >
-                      <Power className="size-4" />
-                      {u.aktif ? "Nonaktifkan" : "Aktifkan ujian"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="gap-2 text-red-600 hover:text-red-700"
-                      onClick={() => setHapusTarget({ id: u._id, judul: u.judul })}
-                    >
-                      <Trash2 className="size-4" /> Hapus ujian
-                    </Button>
-                  </div>
+                  {isAdmin ? (
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant={u.aktif ? "outline" : "default"}
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => ubahAktif(u._id, !u.aktif, u.judul)}
+                      >
+                        <Power className="size-4" />
+                        {u.aktif ? "Nonaktifkan" : "Aktifkan ujian"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 text-red-600 hover:text-red-700"
+                        onClick={() => setHapusTarget({ id: u._id, judul: u.judul })}
+                      >
+                        <Trash2 className="size-4" /> Hapus ujian
+                      </Button>
+                      <Badge variant="secondary" className="ml-auto">
+                        Durasi {u.durasi_menit} menit
+                      </Badge>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-muted-foreground">
+                      <Badge variant={u.aktif ? "default" : "secondary"}>
+                        {u.aktif ? "Aktif" : "Draft"}
+                      </Badge>
+                      <span>{u.jumlah_soal} soal tersusun</span>
+                    </div>
+                  )}
+
+                  {isAdmin && (
+                    <PanelPengaturan
+                      ujianId={u._id}
+                      token={u.token}
+                      durasi={u.durasi_menit}
+                    />
+                  )}
 
                   <PanelSoal ujianId={u._id} />
                 </div>
@@ -259,6 +333,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
     opsi_b: "",
     opsi_c: "",
     opsi_d: "",
+    opsi_e: "",
   });
   const [kunci, setKunci] = useState<Kunci>("A");
   const [busy, setBusy] = useState(false);
@@ -271,8 +346,8 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       toast.error("Pertanyaan wajib diisi.");
       return;
     }
-    if (PILIHAN.some((p) => !form[`opsi_${p}` as keyof typeof form].trim())) {
-      toast.error("Semua opsi A–D wajib diisi.");
+    if (OPSI_WAJIB.some((p) => !form[`opsi_${p}` as keyof typeof form].trim())) {
+      toast.error("Opsi A–D wajib diisi; opsi E bersifat opsional.");
       return;
     }
     setBusy(true);
@@ -284,9 +359,17 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
         opsi_b: form.opsi_b.trim(),
         opsi_c: form.opsi_c.trim(),
         opsi_d: form.opsi_d.trim(),
+        opsi_e: form.opsi_e.trim() || undefined,
         kunci_jawaban: kunci,
       });
-      setForm({ pertanyaan: "", opsi_a: "", opsi_b: "", opsi_c: "", opsi_d: "" });
+      setForm({
+        pertanyaan: "",
+        opsi_a: "",
+        opsi_b: "",
+        opsi_c: "",
+        opsi_d: "",
+        opsi_e: "",
+      });
       setKunci("A");
       toast.success("Soal ditambahkan.");
     } catch (err) {
@@ -359,6 +442,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                     <li>B. {s.opsi_b}</li>
                     <li>C. {s.opsi_c}</li>
                     <li>D. {s.opsi_d}</li>
+                    {s.opsi_e && <li>E. {s.opsi_e}</li>}
                   </ul>
                   <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-bold text-emerald-700">
                     <KeyRound className="size-3.5" /> Kunci: {s.kunci_jawaban}
@@ -394,7 +478,9 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                 key={p}
                 value={form[`opsi_${p}` as keyof typeof form]}
                 onChange={set(`opsi_${p}` as keyof typeof form)}
-                placeholder={`Opsi ${p}`}
+                placeholder={
+                  p === "E" ? "Opsi E (opsional)" : `Opsi ${p}`
+                }
               />
             ))}
           </div>
@@ -428,6 +514,108 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
             </Button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Pengaturan ujian khusus admin: token & durasi waktu. */
+function PanelPengaturan({
+  ujianId,
+  token,
+  durasi,
+}: {
+  ujianId: string;
+  token: string;
+  durasi: number;
+}) {
+  const atur = useMutation(api.ujian.aturPengaturan);
+  const [nilaiToken, setNilaiToken] = useState(token);
+  const [nilaiDurasi, setNilaiDurasi] = useState(String(durasi));
+  const [busy, setBusy] = useState(false);
+
+  const acakToken = () => setNilaiToken(tokenAcak());
+
+  const simpan = async () => {
+    const menit = Math.floor(Number(nilaiDurasi));
+    if (!nilaiToken.trim()) {
+      toast.error("Token ujian wajib diisi.");
+      return;
+    }
+    if (!Number.isFinite(menit) || menit < 1 || menit > 600) {
+      toast.error("Durasi harus 1–600 menit.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await atur({
+        ujianId: ujianId as never,
+        token: nilaiToken.trim().toUpperCase(),
+        durasi_menit: menit,
+      });
+      toast.success("Token & waktu ujian disimpan.");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Gagal menyimpan pengaturan.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border border-border/70 bg-background/60 p-4">
+      <div className="flex items-center gap-2">
+        <KeyRound className="size-4 text-muted-foreground" />
+        <p className="text-sm font-bold">Token & waktu ujian</p>
+        <Badge variant="outline" className="ml-auto text-[10px] uppercase tracking-wider">
+          Admin
+        </Badge>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-2">
+          <Label htmlFor={`token-${ujianId}`}>Token ujian</Label>
+          <div className="flex gap-2">
+            <Input
+              id={`token-${ujianId}`}
+              value={nilaiToken}
+              onChange={(e) => setNilaiToken(e.target.value.toUpperCase())}
+              maxLength={12}
+              autoComplete="off"
+              className="font-mono font-bold uppercase tracking-[0.3em]"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="shrink-0"
+              onClick={acakToken}
+              aria-label="Acak token"
+            >
+              <RefreshCw className="size-4" />
+            </Button>
+          </div>
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor={`durasi-${ujianId}`}>Waktu ujian (menit)</Label>
+          <Input
+            id={`durasi-${ujianId}`}
+            type="number"
+            min={1}
+            max={600}
+            value={nilaiDurasi}
+            onChange={(e) => setNilaiDurasi(e.target.value)}
+          />
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <Button size="sm" onClick={simpan} disabled={busy}>
+          Simpan pengaturan
+        </Button>
+        <p className="text-xs leading-5 text-muted-foreground">
+          Siswa wajib memasukkan token ini untuk mengunduh soal; durasi dihitung
+          sejak tombol Mulai Ujian.
+        </p>
       </div>
     </div>
   );

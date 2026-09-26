@@ -7,6 +7,7 @@ const Pilihan = v.union(
   v.literal("B"),
   v.literal("C"),
   v.literal("D"),
+  v.literal("E"),
 );
 
 /**
@@ -47,11 +48,13 @@ export const kirim = mutation({
     }
 
     let benar = 0;
-    const jawabanTervalidasi: { soal_id: typeof soalList[number]["_id"]; pilihan?: "A" | "B" | "C" | "D" }[] = [];
+    const jawabanTervalidasi: {
+      soal_id: typeof soalList[number]["_id"];
+      pilihan?: "A" | "B" | "C" | "D" | "E";
+    }[] = [];
     for (const s of soalList) {
       const pilihan = jawabanMap.get(s._id);
-      if (pilihan !== undefined && pilihan === s.kunci_jawaban) benar++;
-      jawabanTervalidasi.push({ soal_id: s._id, pilihan: pilihan as "A" | "B" | "C" | "D" | undefined });
+      if (pilihan !== undefined && pilihan === s.kunci_jawaban) benar++;        jawabanTervalidasi.push({ soal_id: s._id, pilihan: pilihan as "A" | "B" | "C" | "D" | "E" | undefined });
     }
 
     const total_soal = soalList.length;

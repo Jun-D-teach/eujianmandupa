@@ -8,6 +8,9 @@
 
 export type Fase = "setup" | "instruksi" | "ujian" | "kirim" | "selesai";
 
+/** Huruf pilihan jawaban — hanya huruf inilah yang disimpan saat siswa menjawab. */
+export type Pilihan = "A" | "B" | "C" | "D" | "E";
+
 export type SoalUjian = {
   _id: string;
   pertanyaan: string;
@@ -15,6 +18,7 @@ export type SoalUjian = {
   opsi_b: string;
   opsi_c: string;
   opsi_d: string;
+  opsi_e?: string;
   urutan: number;
 };
 
@@ -38,11 +42,15 @@ export type SesiUjian = {
   fase: Fase;
   nama: string;
   kelas: string;
+  /** Durasi ujian (menit) yang diset admin. */
+  durasi_menit?: number;
+  /** Batas waktu pengerjaan (epoch ms), dihitung saat ujian dimulai. */
+  batasWaktu?: number;
   unduhPada: number;
   mulaiPada?: number;
   kirimPada?: number;
   soal: SoalUjian[];
-  jawaban: Record<string, "A" | "B" | "C" | "D">;
+  jawaban: Record<string, Pilihan>;
   indeks: number;
   /** Hitungan strike menuju kunci layar (direset saat PIN pengawas dibuka). */
   strike: number;

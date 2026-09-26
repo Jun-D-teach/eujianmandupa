@@ -1,9 +1,38 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { ROLES } from "./schema";
 import { PETUGAS, requireRole, requireUser } from "./lib";
 import { tulisSoalContoh } from "./soal";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+
+const DURASI_DEFAULT = 60;
+const HURUF_TOKEN = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // tanpa 0/O/1/I
+
+/** Token ujian acak, mis. "K7XM3P". */
+export function buatTokenAcak(): string {
+  let out = "";
+  for (let i = 0; i < 6; i++) {
+    out += HURUF_TOKEN[Math.floor(Math.random() * HURUF_TOKEN.length)];
+  }
+  return out;
+}
+
+function normalisasiToken(token: string): string {
+  const t = token.trim().toUpperCase();
+  if (!/^[A-Z0-9]{4,12}$/.test(t)) {
+    throw new Error("Token harus 4–12 karakter (huruf/angka).");
+  }
+  return t;
+}
+
+function validasiDurasi(durasi: number): number {
+  const d = Math.floor(durasi);
+  if (!Number.isFinite(d) || d < 1 || d > 600) {
+    throw new Error("Durasi ujian harus 1–600 menit.");
+  }
+  return d;
+}
 
 async function hitungSoal(ctx: QueryCtx | MutationCtx, ujianId: Id<"ujian">) {
   const rows = await ctx.db
@@ -21,7 +50,7 @@ async function hitungHasil(ctx: QueryCtx | MutationCtx, ujianId: Id<"ujian">) {
   return rows.length;
 }
 
-/** Daftar ujian AKTIF untuk siswa (setara unduhan soal via GAS). */
+/** Daftar ujian AKTIF untuk siswa (tanpa token — token dimasukkan manual). */
 export const listAktif = query({
   args: {},
   handler: async (ctx) => {
@@ -36,6 +65,7 @@ export const listAktif = query({
         judul: u.judul,
         deskripsi: u.deskripsi,
         aktif: u.aktif,
+        durasi_menit: u.durasi_menit ?? DURASI_DEFAULT,
         dibuat_pada: u.dibuat_pada,
         jumlah_soal: await hitungSoal(ctx, u._id),
       })),
@@ -44,7 +74,7 @@ export const listAktif = query({
   },
 });
 
-/** Semua ujian untuk guru/admin. */
+/** Semua ujian + token/pengaturan untuk guru/admin. */
 export const listSemua = query({
   args: {},
   handler: async (ctx) => {
@@ -53,6 +83,8 @@ export const listSemua = query({
     const hasil = await Promise.all(
       rows.map(async (u) => ({
         ...u,
+        durasi_menit: u.durasi_menit ?? DURASI_DEFAULT,
+        token: u.token ?? "",
         jumlah_soal: await hitungSoal(ctx, u._id),
         jumlah_hasil: await hitungHasil(ctx, u._id),
       })),
@@ -61,7 +93,7 @@ export const listSemua = query({
   },
 });
 
-/** Info satu ujian (untuk layar setup siswa & pengelola). */
+/** Info satu ujian untuk layar setup siswa — TOKEN TIDAK DISERTAKAN. */
 export const get = query({
   args: { ujianId: v.id("ujian") },
   handler: async (ctx, args) => {
@@ -73,35 +105,66 @@ export const get = query({
       judul: ujian.judul,
       deskripsi: ujian.deskripsi,
       aktif: ujian.aktif,
+      durasi_menit: ujian.durasi_menit ?? DURASI_DEFAULT,
       dibuat_pada: ujian.dibuat_pada,
       jumlah_soal: await hitungSoal(ctx, ujian._id),
     };
   },
 });
 
+/** Buat ujian — ADMIN (token & durasi juga diset di sini). */
 export const buat = mutation({
   args: {
     judul: v.string(),
     deskripsi: v.optional(v.string()),
+    token: v.optional(v.string()),
+    durasi_menit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const user = await requireRole(ctx, PETUGAS);
+    const user = await requireRole(ctx, [ROLES.ADMIN]);
     const judul = args.judul.trim();
     if (judul.length === 0) throw new Error("Judul ujian wajib diisi.");
+    const token = args.token?.trim()
+      ? normalisasiToken(args.token)
+      : buatTokenAcak();
+    const durasi = args.durasi_menit
+      ? validasiDurasi(args.durasi_menit)
+      : DURASI_DEFAULT;
     return await ctx.db.insert("ujian", {
       judul,
       deskripsi: args.deskripsi?.trim() || undefined,
       aktif: false, // dibuat belum aktif; diaktifkan setelah soal lengkap
+      token,
+      durasi_menit: durasi,
       dibuat_oleh: user._id,
       dibuat_pada: Date.now(),
     });
   },
 });
 
+/** Ubah token & durasi ujian — ADMIN. */
+export const aturPengaturan = mutation({
+  args: {
+    ujianId: v.id("ujian"),
+    token: v.string(),
+    durasi_menit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await requireRole(ctx, [ROLES.ADMIN]);
+    const ujian = await ctx.db.get(args.ujianId);
+    if (ujian === null) throw new Error("Ujian tidak ditemukan.");
+    await ctx.db.patch(args.ujianId, {
+      token: normalisasiToken(args.token),
+      durasi_menit: validasiDurasi(args.durasi_menit),
+    });
+  },
+});
+
+/** Aktif/nonaktifkan ujian — ADMIN. */
 export const setAktif = mutation({
   args: { ujianId: v.id("ujian"), aktif: v.boolean() },
   handler: async (ctx, args) => {
-    await requireRole(ctx, PETUGAS);
+    await requireRole(ctx, [ROLES.ADMIN]);
     const ujian = await ctx.db.get(args.ujianId);
     if (ujian === null) throw new Error("Ujian tidak ditemukan.");
     if (args.aktif && (await hitungSoal(ctx, args.ujianId)) === 0) {
@@ -111,10 +174,11 @@ export const setAktif = mutation({
   },
 });
 
+/** Hapus ujian beserta soal & hasil — ADMIN. */
 export const hapus = mutation({
   args: { ujianId: v.id("ujian") },
   handler: async (ctx, args) => {
-    await requireRole(ctx, PETUGAS);
+    await requireRole(ctx, [ROLES.ADMIN]);
     const ujian = await ctx.db.get(args.ujianId);
     if (ujian === null) throw new Error("Ujian tidak ditemukan.");
     const soal = await ctx.db
@@ -141,6 +205,8 @@ export async function buatUjianContoh(
     deskripsi:
       "Ujian percontohan untuk menguji alur unduh-soal offline. Boleh dihapus.",
     aktif: true,
+    token: buatTokenAcak(),
+    durasi_menit: DURASI_DEFAULT,
     dibuat_oleh: dibuatOleh,
     dibuat_pada: Date.now(),
   });

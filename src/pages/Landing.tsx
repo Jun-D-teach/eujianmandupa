@@ -57,7 +57,7 @@ function Logo({ className = "" }: { className?: string }) {
 const LANGKAH = [
   {
     judul: "Unduh soal (online)",
-    teks: "Siswa mengisi nama & kelas, menekan “Unduh Soal”. Soal disimpan ke penyimpanan HP.",
+    teks: "Siswa mengisi nama, kelas, dan token ujian lalu menekan “Unduh Soal”. Soal disimpan ke penyimpanan HP.",
     ikon: Download,
   },
   {
@@ -67,7 +67,7 @@ const LANGKAH = [
   },
   {
     judul: "Kerjakan offline",
-    teks: "Soal dibaca dari HP. Sirene menyala bila terdeteksi online atau pindah aplikasi.",
+    teks: "Berjalan dengan hitung mundur sesuai durasi yang diset admin. Sirene menyala bila terdeteksi online atau pindah aplikasi.",
     ikon: Power,
   },
   {
@@ -285,6 +285,10 @@ export default function Landing() {
               <li className="flex items-center gap-1.5">
                 <CheckCircle2 className="size-3.5 text-emerald-400" /> Sirene
                 otomatis saat online
+              </li>
+              <li className="flex items-center gap-1.5">
+                <CheckCircle2 className="size-3.5 text-emerald-400" /> Token &
+                durasi diset admin
               </li>
               <li className="flex items-center gap-1.5">
                 <CheckCircle2 className="size-3.5 text-emerald-400" /> 3 strike →

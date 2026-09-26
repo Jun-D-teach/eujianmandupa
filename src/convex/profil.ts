@@ -3,7 +3,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { ROLES, roleValidator } from "./schema";
 import { requireRole } from "./lib";
-import { buatUjianContoh } from "./ujian";
+import { buatUjianContoh, buatTokenAcak } from "./ujian";
 
 /**
  * Dipanggil sekali oleh Dashboard setelah masuk.
@@ -18,6 +18,16 @@ export const siapkan = mutation({
     if (userId === null) throw new Error("Anda harus masuk terlebih dahulu.");
     const user = await ctx.db.get(userId);
     if (user === null) throw new Error("Data pengguna tidak ditemukan.");
+
+    // Backfill pengaturan ujian lama: beri token & durasi bila belum ada.
+    const semuaUjian = await ctx.db.query("ujian").collect();
+    for (const u of semuaUjian) {
+      const patch: { token?: string; durasi_menit?: number } = {};
+      if (!u.token) patch.token = buatTokenAcak();
+      if (!u.durasi_menit) patch.durasi_menit = 60;
+      if (Object.keys(patch).length > 0) await ctx.db.patch(u._id, patch);
+    }
+
     if (user.role !== undefined) return user.role;
 
     const semua = await ctx.db.query("users").collect();

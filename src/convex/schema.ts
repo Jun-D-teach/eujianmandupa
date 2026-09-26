@@ -16,12 +16,13 @@ export const roleValidator = v.union(
 );
 export type Role = Infer<typeof roleValidator>;
 
-/** Kunci jawaban hanya boleh A/B/C/D — sama seperti kolom kunci_jawaban di Sheet. */
+/** Kunci jawaban hanya boleh A–E — sama seperti kolom kunci_jawaban di Sheet. */
 export const pilihanValidator = v.union(
   v.literal("A"),
   v.literal("B"),
   v.literal("C"),
   v.literal("D"),
+  v.literal("E"),
 );
 export type Pilihan = Infer<typeof pilihanValidator>;
 
@@ -47,11 +48,13 @@ const schema = defineSchema(
       judul: v.string(),
       deskripsi: v.optional(v.string()),
       aktif: v.boolean(), // aktif = siswa bisa mengunduh soal
+      token: v.optional(v.string()), // token ujian, diset & bisa diacak admin
+      durasi_menit: v.optional(v.number()), // waktu ujian (menit), diset admin
       dibuat_oleh: v.id("users"),
       dibuat_pada: v.number(),
     }).index("by_aktif", ["aktif"]),
 
-    // Setara Sheet "Soal": id_soal, pertanyaan, opsi_a..d, kunci_jawaban.
+    // Setara Sheet "Soal": id_soal, pertanyaan, opsi_a..e, kunci_jawaban.
     soal: defineTable({
       ujian_id: v.id("ujian"),
       pertanyaan: v.string(),
@@ -59,6 +62,7 @@ const schema = defineSchema(
       opsi_b: v.string(),
       opsi_c: v.string(),
       opsi_d: v.string(),
+      opsi_e: v.optional(v.string()), // opsi kelima (opsional)
       kunci_jawaban: pilihanValidator, // tidak pernah dikirim ke siswa
       urutan: v.number(),
     }).index("by_ujian", ["ujian_id"]),

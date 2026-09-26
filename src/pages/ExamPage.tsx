@@ -40,6 +40,7 @@ import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
+  Clock,
   Download,
   Grid3X3,
   Lock,
@@ -55,8 +56,8 @@ import { toast } from "sonner";
 /** PIN pengawas/admin untuk membuka layar terkunci (3 strike). */
 const PIN_PENGAWAS = "123456";
 
-const PILIHAN = ["A", "B", "C", "D"] as const;
-type Pilihan = (typeof PILIHAN)[number];
+/** Huruf jawaban siswa — hanya huruf A–E yang disimpan di sesi & server. */
+type Pilihan = SesiUjian["jawaban"][string];
 
 function PilKoneksi({
   online,
@@ -139,6 +140,9 @@ export default function ExamPage() {
   const [tampilGrid, setTampilGrid] = useState(false);
   const [nama, setNama] = useState(user?.name ?? "");
   const [kelas, setKelas] = useState(user?.kelas ?? "");
+  const [token, setToken] = useState("");
+  const [sisaWaktu, setSisaWaktu] = useState<number | null>(null);
+  const waktuHabisRef = useRef(false);
 
   const faseRef = useRef<Fase | undefined>(sesi?.fase);
   const strikeRef = useRef(sesi?.strike ?? 0);
@@ -229,6 +233,44 @@ export default function ExamPage() {
     }
   }, [sesi?.fase, catatPelanggaran]);
 
+  // --- Waktu ujian (diset admin) ---------------------------------------
+  // Sesi lama tanpa batas waktu: mulai hitung mundur saat ujian dibuka.
+  useEffect(() => {
+    if (sesi?.fase !== "ujian" || sesi.batasWaktu) return;
+    setSesi((prev) =>
+      prev && prev.fase === "ujian" && !prev.batasWaktu
+        ? {
+            ...prev,
+            durasi_menit: prev.durasi_menit ?? 60,
+            batasWaktu: Date.now() + (prev.durasi_menit ?? 60) * 60_000,
+          }
+        : prev,
+    );
+  }, [sesi?.fase, sesi?.batasWaktu]);
+
+  // Hitung mundur: saat habis, otomatis pindah ke tahap pengiriman.
+  useEffect(() => {
+    const batas = sesi?.batasWaktu;
+    if (sesi?.fase !== "ujian" || !batas) {
+      setSisaWaktu(null);
+      return;
+    }
+    const tick = () => {
+      const sisa = Math.max(0, Math.ceil((batas - Date.now()) / 1000));
+      setSisaWaktu(sisa);
+      if (sisa <= 0 && !waktuHabisRef.current) {
+        waktuHabisRef.current = true;
+        toast("Waktu ujian habis — lanjutkan ke pengiriman jawaban.");
+        setSesi((prev) =>
+          prev && prev.fase === "ujian" ? { ...prev, fase: "kirim" } : prev,
+        );
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [sesi?.fase, sesi?.batasWaktu]);
+
   // --- Deteksi pindah aplikasi / tab ----------------------------------
   useEffect(() => {
     const onVisibility = () => {
@@ -251,14 +293,22 @@ export default function ExamPage() {
     if (!ujianId) return;
     const n = nama.trim();
     const k = kelas.trim();
+    const t = token.trim().toUpperCase();
     if (!n || !k) {
       toast.error("Nama dan kelas wajib diisi sebelum mengunduh soal.");
+      return;
+    }
+    if (!t) {
+      toast.error("Masukkan token ujian yang diberikan pengawas.");
       return;
     }
     setBusy(true);
     setPesan(null);
     try {
-      const data = await convex.query(api.soal.untukSiswa, { ujianId });
+      const data = await convex.query(api.soal.untukSiswa, {
+        ujianId,
+        token: t,
+      });
       if (data.soal.length === 0) {
         throw new Error("Ujian ini belum memiliki soal.");
       }
@@ -270,6 +320,7 @@ export default function ExamPage() {
         fase: "instruksi",
         nama: n,
         kelas: k,
+        durasi_menit: data.ujian.durasi_menit,
         unduhPada: Date.now(),
         soal: data.soal,
         jawaban: {},
@@ -293,12 +344,15 @@ export default function ExamPage() {
   };
 
   const mulaiUjian = () => {
+    const now = Date.now();
+    waktuHabisRef.current = false;
     setSesi((prev) =>
       prev
         ? {
             ...prev,
             fase: "ujian",
-            mulaiPada: Date.now(),
+            mulaiPada: now,
+            batasWaktu: now + (prev.durasi_menit ?? 60) * 60_000,
             strike: 0,
             pelanggaran: [],
           }
@@ -450,7 +504,21 @@ export default function ExamPage() {
             <span>
               Terjawab {totalTerjawab}/{sesi.soal.length}
             </span>
-            <span className="flex items-center gap-2">
+            <span className="flex items-center gap-3">
+              {sisaWaktu !== null && (
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-bold tabular-nums ${
+                    sisaWaktu <= 60
+                      ? "bg-red-500/15 text-red-600"
+                      : "bg-muted text-foreground"
+                  }`}
+                  aria-label="Sisa waktu ujian"
+                >
+                  <Clock className="size-3.5" />
+                  {String(Math.floor(sisaWaktu / 60)).padStart(2, "0")}:
+                  {String(sisaWaktu % 60).padStart(2, "0")}
+                </span>
+              )}
               <StrikeDots strike={sesi.strike} />
             </span>
           </div>
@@ -463,10 +531,13 @@ export default function ExamPage() {
             judul={sesi?.judul ?? ujianMeta?.judul ?? ""}
             deskripsi={sesi?.deskripsi ?? ujianMeta?.deskripsi}
             jumlahSoal={sesi?.soal.length ?? ujianMeta?.jumlah_soal ?? 0}
+            durasiMenit={sesi?.durasi_menit ?? ujianMeta?.durasi_menit ?? 60}
             nama={nama}
             kelas={kelas}
             setNama={setNama}
             setKelas={setKelas}
+            token={token}
+            setToken={setToken}
             pesan={pesan}
             busy={busy}
             online={online}
@@ -497,9 +568,11 @@ export default function ExamPage() {
             online={online}
             busy={busy}
             onKirim={kirimJawaban}
-            onKembali={() =>
-              setSesi({ ...sesi, fase: "ujian" })
-            }
+            onKembali={() => {
+              if (!sesi) return;
+              waktuHabisRef.current = false;
+              setSesi({ ...sesi, fase: "ujian" });
+            }}
           />
         )}
 
@@ -697,10 +770,13 @@ function SetupFase(props: {
   judul: string;
   deskripsi?: string;
   jumlahSoal: number;
+  durasiMenit: number;
   nama: string;
   kelas: string;
   setNama: (v: string) => void;
   setKelas: (v: string) => void;
+  token: string;
+  setToken: (v: string) => void;
   pesan: string | null;
   busy: boolean;
   online: boolean;
@@ -721,7 +797,7 @@ function SetupFase(props: {
           </p>
         )}
         <p className="mt-2 text-sm font-semibold text-muted-foreground">
-          {props.jumlahSoal} soal
+          {props.jumlahSoal} soal · durasi {props.durasiMenit} menit
         </p>
       </div>
 
@@ -746,6 +822,24 @@ function SetupFase(props: {
                 placeholder="cth. XII-IPA-2"
               />
             </div>
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="token">Token ujian</Label>
+            <Input
+              id="token"
+              value={props.token}
+              onChange={(e) => props.setToken(e.target.value.toUpperCase())}
+              placeholder="cth. K7XM3P"
+              maxLength={12}
+              autoComplete="off"
+              autoCapitalize="characters"
+              className="font-mono text-lg font-bold uppercase tracking-[0.35em]"
+            />
+            <p className="text-xs text-muted-foreground">
+              Token diset admin/pengawas dan dibagikan saat ujian dimulai.
+              Soal tidak bisa diunduh tanpa token yang benar.
+            </p>
           </div>
 
           <div
@@ -811,6 +905,7 @@ function InstruksiFase(props: {
   const aturan = [
     "MATIKAN WiFi dan paket data seluler sekarang. Ujian hanya boleh dikerjakan dalam keadaan offline.",
     "Jangan berpindah aplikasi, membuka tab lain, atau meminimize browser selama ujian.",
+    `Waktu ujian ${props.sesi.durasi_menit ?? 60} menit, dihitung sejak tombol Mulai Ujian. Saat waktu habis sistem otomatis berpindah ke pengiriman jawaban.`,
     "Setiap pelanggaran membunyikan sirene dan menambah 1 strike.",
     "Pada strike ke-3 layar terkunci total — hanya PIN pengawas yang dapat membukanya.",
     "Jawaban tersimpan otomatis di HP. Setelah selesai, nyalakan internet kembali untuk mengirim.",
@@ -826,8 +921,10 @@ function InstruksiFase(props: {
           Baca aturan sebelum mulai
         </h1>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          {props.sesi.judul} · {props.sesi.soal.length} soal · {props.sesi.nama}{" "}
-          ({props.sesi.kelas})
+          {props.sesi.judul} · {props.sesi.soal.length} soal · durasi{" "}
+          {props.sesi.durasi_menit ?? 60} menit · {props.sesi.nama} ({
+          props.sesi.kelas
+          })
         </p>
       </div>
 
@@ -922,6 +1019,19 @@ function UjianFase(props: {
   const soal = sesi.soal[sesi.indeks];
   const terjawab = sesi.jawaban[soal?._id ?? ""];
 
+  // Opsi ditampilkan A–E; E hanya bila guru mengisinya.
+  const opsi: { huruf: Pilihan; teks: string }[] = soal
+    ? [
+        { huruf: "A", teks: soal.opsi_a },
+        { huruf: "B", teks: soal.opsi_b },
+        { huruf: "C", teks: soal.opsi_c },
+        { huruf: "D", teks: soal.opsi_d },
+        ...(soal.opsi_e
+          ? [{ huruf: "E" as Pilihan, teks: soal.opsi_e }]
+          : []),
+      ]
+    : [];
+
   return (
     <div className="space-y-4">
       {/* Navigasi cepat */}
@@ -979,14 +1089,13 @@ function UjianFase(props: {
           </p>
 
           <div className="mt-5 space-y-2.5">
-            {PILIHAN.map((p) => {
-              const teks = p === "A" ? soal?.opsi_a : p === "B" ? soal?.opsi_b : p === "C" ? soal?.opsi_c : soal?.opsi_d;
-              const aktif = terjawab === p;
+            {opsi.map(({ huruf, teks }) => {
+              const aktif = terjawab === huruf;
               return (
                 <button
-                  key={p}
+                  key={huruf}
                   type="button"
-                  onClick={() => props.onJawab(p)}
+                  onClick={() => props.onJawab(huruf)}
                   className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3.5 text-left text-sm transition-all ${
                     aktif
                       ? "border-emerald-600 bg-emerald-500/10 font-semibold shadow-[0_0_0_1px_rgba(16,185,129,0.5)]"
@@ -1000,7 +1109,7 @@ function UjianFase(props: {
                         : "bg-muted text-muted-foreground"
                     }`}
                   >
-                    {p}
+                    {huruf}
                   </span>
                   <span className="leading-6">{teks}</span>
                   {aktif && (
