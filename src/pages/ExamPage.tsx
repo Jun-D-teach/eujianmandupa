@@ -53,9 +53,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-/** PIN pengawas/admin untuk membuka layar terkunci (3 strike). */
-const PIN_PENGAWAS = "123456";
-
 /** Huruf jawaban siswa — hanya huruf A–E yang disimpan di sesi & server. */
 type Pilihan = SesiUjian["jawaban"][string];
 
@@ -130,6 +127,7 @@ export default function ExamPage() {
   );
   const kirimHasil = useMutation(api.hasil.kirim);
   const perbaruiProfil = useMutation(api.profil.perbarui);
+  const bukaKunciServer = useMutation(api.ujian.bukaKunci);
 
   const [busy, setBusy] = useState(false);
   const [pesan, setPesan] = useState<string | null>(null);
@@ -137,6 +135,8 @@ export default function ExamPage() {
   const [tanyaSelesai, setTanyaSelesai] = useState(false);
   const [pin, setPin] = useState("");
   const [pinSalah, setPinSalah] = useState(0);
+  const [pesanKunci, setPesanKunci] = useState<string | null>(null);
+  const [bukaBusy, setBukaBusy] = useState(false);
   const [tampilGrid, setTampilGrid] = useState(false);
   const [nama, setNama] = useState(user?.name ?? "");
   const [kelas, setKelas] = useState(user?.kelas ?? "");
@@ -148,6 +148,8 @@ export default function ExamPage() {
   const strikeRef = useRef(sesi?.strike ?? 0);
   const onlineFlagRef = useRef(false);
   const hiddenFlagRef = useRef(false);
+  /** Jeda grace setelah kunci dibuka (waktu untuk mematikan internet). */
+  const graceRef = useRef(0);
 
   useEffect(() => {
     faseRef.current = sesi?.fase;
@@ -188,6 +190,7 @@ export default function ExamPage() {
   useEffect(() => {
     const handleOnline = () => {
       if (faseRef.current !== "ujian" || strikeRef.current >= 3) return;
+      if (Date.now() < graceRef.current) return; // masih dalam jeda setelah unlock
       if (onlineFlagRef.current) return;
       onlineFlagRef.current = true;
       catatPelanggaran("online");
@@ -203,7 +206,7 @@ export default function ExamPage() {
     const id = window.setInterval(() => {
       if (faseRef.current !== "ujian" || strikeRef.current >= 3) return;
       if (navigator.onLine) {
-        if (!onlineFlagRef.current) {
+        if (!onlineFlagRef.current && Date.now() >= graceRef.current) {
           onlineFlagRef.current = true;
           catatPelanggaran("online");
         }
@@ -227,7 +230,7 @@ export default function ExamPage() {
       onlineFlagRef.current = false;
       return;
     }
-    if (!onlineFlagRef.current) {
+    if (!onlineFlagRef.current && Date.now() >= graceRef.current) {
       onlineFlagRef.current = true;
       catatPelanggaran("online");
     }
@@ -379,16 +382,43 @@ export default function ExamPage() {
     setSesi({ ...sesi, indeks: i });
   };
 
-  const bukaKunci = (nilaiPin: string) => {
-    if (nilaiPin === PIN_PENGAWAS) {
+  /**
+   * Buka kunci layar: wajib HP ONLINE (dikirim ke server), PIN diverifikasi
+   * di server, dan pembukaan dicatat sebagai audit. Sesi & jawaban lama tidak
+   * disentuh — siswa melanjutkan ujian secara offline setelah internet
+   * dimatikan lagi.
+   */
+  const bukaKunci = async (nilaiPin: string) => {
+    if (bukaBusy) return;
+    setPesanKunci(null);
+    if (!ujianId) return;
+    if (!online) {
+      setPesanKunci(
+        "HP masih offline. Sambungkan internet (di depan pengawas) untuk membuka kunci.",
+      );
+      setPinSalah((n) => n + 1);
+      return;
+    }
+    setBukaBusy(true);
+    try {
+      await bukaKunciServer({ ujianId, pin: nilaiPin });
+      // Jawaban & sesi TIDAK dihapus — hanya strike yang direset.
+      graceRef.current = Date.now() + 15_000; // 15 detik untuk mematikan internet
       setSesi((prev) => (prev ? { ...prev, strike: 0 } : prev));
       strikeRef.current = 0;
       onlineFlagRef.current = false;
       hiddenFlagRef.current = false;
       setPin("");
-      toast.success("Layar dibuka pengawas. Ujian dilanjutkan.");
-    } else {
+      toast.success(
+        "PIN terverifikasi. Matikan internet dalam 15 detik, lalu lanjutkan ujian.",
+      );
+    } catch (err) {
       setPinSalah((n) => n + 1);
+      setPesanKunci(
+        err instanceof Error ? err.message : "Gagal memverifikasi PIN.",
+      );
+    } finally {
+      setBukaBusy(false);
     }
   };
 
@@ -661,8 +691,8 @@ export default function ExamPage() {
             </h2>
             <p className="mt-3 text-sm leading-6 text-white/80">
               Terdeteksi <strong>3 pelanggaran</strong> selama ujian berlangsung.
-              Aplikasi dikunci total. Serahkan HP kepada pengawas untuk membuka
-              dengan PIN.
+              Aplikasi dikunci total. Serahkan HP kepada pengawas — kunci hanya
+              terbuka saat HP <strong>ONLINE</strong> dan PIN diverifikasi server.
             </p>
 
             <div className="mt-5 flex justify-center gap-2">
@@ -684,19 +714,36 @@ export default function ExamPage() {
               transition={{ duration: 0.35 }}
               className="mt-7 rounded-3xl bg-white/10 p-5 ring-1 ring-white/15"
             >
-              <Label
-                htmlFor="pin"
-                className="text-xs font-bold uppercase tracking-wider text-white/70"
-              >
-                PIN Pengawas
-              </Label>
+              <div className="flex items-center justify-between gap-3">
+                <Label
+                  htmlFor="pin"
+                  className="text-xs font-bold uppercase tracking-wider text-white/70"
+                >
+                  PIN Pengawas
+                </Label>
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${
+                    online
+                      ? "bg-emerald-400/15 text-emerald-300"
+                      : "bg-amber-400/15 text-amber-300"
+                  }`}
+                >
+                  <span
+                    className={`size-1.5 rounded-full ${
+                      online ? "bg-emerald-400" : "bg-amber-400"
+                    }`}
+                  />
+                  {online ? "Online · siap verifikasi" : "Offline · sambungkan internet"}
+                </span>
+              </div>
               <div className="mt-3 flex justify-center">
                 <InputOTP
                   maxLength={6}
                   value={pin}
+                  disabled={!online || bukaBusy}
                   onChange={(v) => {
                     setPin(v);
-                    if (v.length === 6) bukaKunci(v);
+                    if (v.length === 6) void bukaKunci(v);
                   }}
                 >
                   <InputOTPGroup>
@@ -710,9 +757,16 @@ export default function ExamPage() {
                   </InputOTPGroup>
                 </InputOTP>
               </div>
-              <p className="mt-3 text-xs text-white/60">
-                6 digit PIN yang diberikan pengawas/admin.
+              <p className="mt-3 text-xs leading-5 text-white/65">
+                {online
+                  ? "Kunci hanya bisa dibuka saat HP online. Setelah terbuka, matikan internet lagi dan lanjutkan jawaban sebelumnya."
+                  : "Wajib online untuk membuka kunci — sambungkan internet di depan pengawas terlebih dahulu."}
               </p>
+              {pesanKunci && (
+                <p className="mt-2 rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-amber-300">
+                  {pesanKunci}
+                </p>
+              )}
             </motion.div>
 
             <button
@@ -907,7 +961,7 @@ function InstruksiFase(props: {
     "Jangan berpindah aplikasi, membuka tab lain, atau meminimize browser selama ujian.",
     `Waktu ujian ${props.sesi.durasi_menit ?? 60} menit, dihitung sejak tombol Mulai Ujian. Saat waktu habis sistem otomatis berpindah ke pengiriman jawaban.`,
     "Setiap pelanggaran membunyikan sirene dan menambah 1 strike.",
-    "Pada strike ke-3 layar terkunci total — hanya PIN pengawas yang dapat membukanya.",
+    "Pada strike ke-3 layar terkunci total; hanya terbuka saat HP online dengan PIN pengawas yang diverifikasi server.",
     "Jawaban tersimpan otomatis di HP. Setelah selesai, nyalakan internet kembali untuk mengirim.",
   ];
 

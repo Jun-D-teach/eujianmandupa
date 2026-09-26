@@ -9,6 +9,12 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 const DURASI_DEFAULT = 60;
 const HURUF_TOKEN = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // tanpa 0/O/1/I
 
+/**
+ * PIN pengawas untuk membuka layar terkunci — HANYA disimpan di server
+ * sehingga tidak pernah masuk ke bundle JavaScript klien.
+ */
+const PIN_PENGAWAS = "123456";
+
 /** Token ujian acak, mis. "K7XM3P". */
 export function buatTokenAcak(): string {
   let out = "";
@@ -157,6 +163,32 @@ export const aturPengaturan = mutation({
       token: normalisasiToken(args.token),
       durasi_menit: validasiDurasi(args.durasi_menit),
     });
+  },
+});
+
+/**
+ * Membuka kunci layar setelah 3 strike.
+ * Siswa HARUS online (mutasi ini adalah bukti koneksi ke server), PIN
+ * diverifikasi di server, lalu pembukaan dicatat sebagai audit — sehingga
+ * setelah terbuka siswa kembali mengerjakan ujian secara OFFLINE dengan
+ * jawaban yang sudah tersimpan.
+ */
+export const bukaKunci = mutation({
+  args: { ujianId: v.id("ujian"), pin: v.string() },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    if (args.pin.trim() !== PIN_PENGAWAS) {
+      throw new Error("PIN pengawas salah.");
+    }
+    const ujian = await ctx.db.get(args.ujianId);
+    if (ujian === null) throw new Error("Ujian tidak ditemukan.");
+    const waktu = Date.now();
+    await ctx.db.insert("buka_kunci", {
+      ujian_id: args.ujianId,
+      user_id: user._id,
+      waktu,
+    });
+    return { berhasil: true, waktu };
   },
 });
 

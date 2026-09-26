@@ -135,6 +135,22 @@ export const perUjian = query({
       .query("hasil")
       .withIndex("by_ujian", (q) => q.eq("ujian_id", args.ujianId))
       .collect();
-    return rows.sort((a, b) => b.nilai - a.nilai || b.timestamp - a.timestamp);
+
+    // Berapa kali layar terkunci siswa dibuka oleh pengawas (audit online).
+    const logBuka = await ctx.db
+      .query("buka_kunci")
+      .withIndex("by_ujian", (q) => q.eq("ujian_id", args.ujianId))
+      .collect();
+    const jumlahPerUser = new Map<string, number>();
+    for (const l of logBuka) {
+      jumlahPerUser.set(l.user_id, (jumlahPerUser.get(l.user_id) ?? 0) + 1);
+    }
+
+    return rows
+      .sort((a, b) => b.nilai - a.nilai || b.timestamp - a.timestamp)
+      .map((h) => ({
+        ...h,
+        jumlah_buka_kunci: jumlahPerUser.get(h.user_id) ?? 0,
+      }));
   },
 });

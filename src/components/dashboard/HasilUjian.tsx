@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Empty, EmptyContent, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ShieldAlert, Trophy } from "lucide-react";
+import { Lock, ShieldAlert, Trophy } from "lucide-react";
 
 /** Rekap hasil per ujian (guru & admin). */
 export function HasilUjian() {
@@ -92,6 +92,7 @@ export function HasilUjian() {
                       <th className="px-5 py-3">Kelas</th>
                       <th className="px-5 py-3">Benar</th>
                       <th className="px-5 py-3">Pelanggaran</th>
+                      <th className="px-5 py-3">Buka kunci</th>
                       <th className="px-5 py-3 text-right">Nilai</th>
                       <th className="px-5 py-3 text-right">Dikirim</th>
                     </tr>
@@ -122,6 +123,16 @@ export function HasilUjian() {
                             <ShieldAlert className="size-3.5" />
                             {h.total_pelanggaran}
                           </Badge>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          {h.jumlah_buka_kunci > 0 ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                              <Lock className="size-3.5" />
+                              {h.jumlah_buka_kunci}×
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </td>
                         <td className="px-5 py-3.5 text-right">
                           <span className="inline-flex items-center gap-1.5 font-bold">

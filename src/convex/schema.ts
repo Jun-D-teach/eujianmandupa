@@ -88,6 +88,16 @@ const schema = defineSchema(
       .index("by_ujian", ["ujian_id"])
       .index("by_user", ["user_id"])
       .index("by_ujian_user", ["ujian_id", "user_id"]),
+
+    // Audit pembukaan kunci layar (3 strike) — hanya bisa terjadi saat siswa
+    // online di depan pengawas; PIN diverifikasi di server.
+    buka_kunci: defineTable({
+      ujian_id: v.id("ujian"),
+      user_id: v.id("users"),
+      waktu: v.number(),
+    })
+      .index("by_ujian", ["ujian_id"])
+      .index("by_user", ["user_id"]),
   },
   {
     schemaValidation: false,
