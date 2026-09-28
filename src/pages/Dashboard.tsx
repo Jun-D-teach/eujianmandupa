@@ -19,8 +19,9 @@ import {
 import { KelolaUjian } from "@/components/dashboard/KelolaUjian";
 import { HasilUjian } from "@/components/dashboard/HasilUjian";
 import { Pengguna } from "@/components/dashboard/Pengguna";
+import { DataSiswa } from "@/components/dashboard/DataSiswa";
 
-type TabId = "ujian" | "riwayat" | "kelola" | "hasil" | "pengguna";
+type TabId = "ujian" | "riwayat" | "kelola" | "hasil" | "siswa" | "pengguna";
 
 const LABEL_PERAN: Record<string, string> = {
   admin: "Admin",
@@ -33,11 +34,12 @@ const TABS: Record<TabId, { label: string; ikon: typeof Users }> = {
   riwayat: { label: "Riwayat Nilai", ikon: History },
   kelola: { label: "Kelola Ujian", ikon: ClipboardList },
   hasil: { label: "Hasil Ujian", ikon: ShieldCheck },
+  siswa: { label: "Data Siswa", ikon: Users },
   pengguna: { label: "Pengguna", ikon: UserCog },
 };
 
 function tabsUntuk(role: string | undefined): TabId[] {
-  if (role === "admin") return ["kelola", "hasil", "pengguna"];
+  if (role === "admin") return ["kelola", "hasil", "siswa", "pengguna"];
   if (role === "guru") return ["kelola", "hasil"];
   return ["ujian", "riwayat"];
 }
@@ -145,6 +147,7 @@ export default function Dashboard() {
         {tabAktif === "riwayat" && <SiswaRiwayat />}
         {tabAktif === "kelola" && <KelolaUjian />}
         {tabAktif === "hasil" && <HasilUjian />}
+        {tabAktif === "siswa" && <DataSiswa />}
         {tabAktif === "pengguna" && <Pengguna />}
       </div>
     </main>

@@ -45,6 +45,8 @@ export type SesiUjian = {
   token?: string;
   /** Durasi ujian (menit) yang diset admin. */
   durasi_menit?: number;
+  /** Jadwal mulai "YYYY-MM-DDTHH:mm" — gerbang waktu diperiksa lokal. */
+  tglMulai?: string;
   /** Batas waktu pengerjaan (epoch ms), dihitung saat ujian dimulai. */
   batasWaktu?: number;
   unduhPada: number;

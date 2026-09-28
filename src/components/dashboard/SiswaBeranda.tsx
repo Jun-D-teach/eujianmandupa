@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { gasCall, type HasilGas, type UjianGas } from "@/lib/api";
-import { muatSesi, hapusSesi, type SesiUjian } from "@/lib/exam-storage";
+import { gasCall, type HasilGas, type UjianGas } from "@/lib/api";import { muatSesi, hapusSesi, type SesiUjian } from "@/lib/exam-storage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -31,7 +30,7 @@ export function SiswaUjian() {
     let hidup = true;
     setUjian(null);
     setError(null);
-    gasCall<{ ujian: UjianGas[] }>("getUjianSiswa")
+    gasCall<{ ujian: UjianGas[] }>("getUjianSiswa", { kelas: user?.kelas ?? "" })
       .then((res) => {
         if (hidup) setUjian(res.ujian);
       })
@@ -42,7 +41,7 @@ export function SiswaUjian() {
     return () => {
       hidup = false;
     };
-  }, [versi]);
+  }, [versi, user?.kelas]);
 
   if (error) {
     return (
@@ -114,10 +113,13 @@ export function SiswaUjian() {
             {ujian.map((u) => {
               const sesi: SesiUjian | null = muatSesi(u.id);
               const lanjut = sesi && sesi.fase !== "setup";
+              const takBoleh = u.boleh === false; // server: kelas tidak termasuk sasaran
               return (
                 <Card
                   key={u.id}
-                  className="group relative overflow-hidden border-border/70 shadow-[0_1px_2px_rgba(16,20,24,0.04)] transition-shadow hover:shadow-[0_18px_40px_-26px_rgba(16,20,24,0.4)]"
+                  className={`group relative overflow-hidden border-border/70 shadow-[0_1px_2px_rgba(16,20,24,0.04)] transition-shadow hover:shadow-[0_18px_40px_-26px_rgba(16,20,24,0.4)] ${
+                    takBoleh ? "opacity-60" : ""
+                  }`}
                 >
                   <CardContent className="p-6">
                     <div className="flex items-start justify-between gap-3">
@@ -143,15 +145,26 @@ export function SiswaUjian() {
                       Token dibagikan pengawas saat mulai ujian
                     </p>
 
-                    {lanjut && (
+                    {u.sasaran && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Sasaran: <span className="font-semibold text-foreground">{u.sasaran}</span>
+                      </p>
+                    )}
+
+                    {takBoleh ? (
+                      <p className="mt-2 rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-700">
+                        Kelasmu tidak terdaftar untuk ujian ini.
+                      </p>
+                    ) : lanjut ? (
                       <p className="mt-2 text-xs font-semibold text-emerald-700">
                         Sesi tersimpan · fase {sesi!.fase}
                       </p>
-                    )}
+                    ) : null}
 
                     <div className="mt-5 flex items-center gap-2">
                       <Button
                         className="gap-2"
+                        disabled={takBoleh}
                         onClick={() => navigate(`/ujian/${u.id}`)}
                       >
                         {lanjut ? (

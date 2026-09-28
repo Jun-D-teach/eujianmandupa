@@ -24,8 +24,26 @@ export type UjianGas = {
   durasi_menit: number;
   aktif: boolean;
   jumlah_soal: number;
+  /** "YYYY-MM-DDTHH:mm" — wajib nol di sisi siswa sampai waktu ini. */
+  tgl_mulai?: string;
+  /** "" | "tingkat" | "kelas" */
+  sasar_jenis?: string;
+  /** tingkat: "X|XI|XII" · kelas: "X.1,X.2" */
+  sasar_nilai?: string;
+  /** Label ramah baca dari server. */
+  sasaran?: string;
+  /** Server: apakah kelas siswa lolos sasaran (undefined utk admin). */
+  boleh?: boolean;
   /** Hanya ada pada daftar admin/petugas — TIDAK PERNAH dikirim ke siswa. */
   token?: string;
+};
+
+export type SiswaGas = {
+  id: string;
+  nisn: string;
+  nama: string;
+  tgllahir: string;
+  kelas: string;
 };
 
 export type SoalGas = {

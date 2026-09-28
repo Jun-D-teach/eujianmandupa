@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { gasCall, tokenValid, type SoalGas, type UjianGas } from "@/lib/api";
+import { gasCall, tokenValid, type SoalGas, type SiswaGas, type UjianGas } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Empty, EmptyContent, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -26,13 +27,16 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  CalendarClock,
   ClipboardList,
   KeyRound,
   Plus,
   Power,
   RefreshCw,
   Sparkles,
+  Target,
   Trash2,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -40,6 +44,7 @@ const PILIHAN = ["A", "B", "C", "D", "E"] as const;
 const OPSI_WAJIB = ["A", "B", "C", "D"] as const;
 
 type Kunci = "A" | "B" | "C" | "D" | "E";
+type SasarJenis = "" | "tingkat" | "kelas";
 
 const ACAPAN_TOKEN = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -50,10 +55,189 @@ function tokenAcak(): string {
   ).join("");
 }
 
+/** Hook kecil: daftar kelas & tingkat dari Data Siswa. */
+function useKelasSiswa() {
+  const [kelas, setKelas] = useState<string[]>([]);
+  const [tingkat, setTingkat] = useState<string[]>([]);
+  useEffect(() => {
+    let hidup = true;
+    gasCall<{ siswa: SiswaGas[] }>("getSiswa")
+      .then((res) => {
+        if (!hidup) return;
+        const urut = ["X", "XI", "XII"];
+        const tDari = (k: string) => (k.includes(".") ? k.split(".")[0] : k).trim().toUpperCase();
+        const unik = Array.from(new Set(res.siswa.map((s) => s.kelas.trim()).filter(Boolean)));
+        unik.sort((a, b) => {
+          const ta = urut.indexOf(tDari(a));
+          const tb = urut.indexOf(tDari(b));
+          if (ta !== tb) return (ta === -1 ? 99 : ta) - (tb === -1 ? 99 : tb);
+          return a.localeCompare(b, "id", { numeric: true });
+        });
+        setKelas(unik);
+        setTingkat(Array.from(new Set(unik.map(tDari))).sort(
+          (a, b) => urut.indexOf(a) - urut.indexOf(b),
+        ));
+      })
+      .catch(() => {});
+    return () => {
+      hidup = false;
+    };
+  }, []);
+  return { kelas, tingkat };
+}
+
+/** Pemilih sasaran: tingkat saja ATAU centang kelas. */
+function PemilihSasaran(props: {
+  jenis: SasarJenis;
+  setJenis: (v: SasarJenis) => void;
+  nilai: string;
+  setNilai: (v: string) => void;
+  kelasList: string[];
+  tingkatList: string[];
+}) {
+  const kelasTerpilih = props.nilai ? props.nilai.split(",").filter(Boolean) : [];
+
+  const toggleKelas = (k: string) => {
+    const ada = kelasTerpilih.includes(k);
+    const baru = ada
+      ? kelasTerpilih.filter((x) => x !== k)
+      : [...kelasTerpilih, k];
+    props.setNilai(baru.join(","));
+  };
+
+  const toggleTingkat = (t: string) => {
+    props.setJenis("tingkat");
+    props.setNilai(t);
+  };
+
+  return (
+    <div className="space-y-3 rounded-2xl border border-border/70 bg-background/60 p-4">
+      <div className="flex items-center gap-2">
+        <Target className="size-4 text-muted-foreground" />
+        <p className="text-sm font-bold">Siapa yang melaksanakan?</p>
+      </div>
+
+      <label
+        className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 transition-colors ${
+          props.jenis === ""
+            ? "border-emerald-600 bg-emerald-500/10"
+            : "border-border/70 bg-card hover:border-foreground/30"
+        }`}
+      >
+        <input
+          type="radio"
+          name="sasar"
+          className="mt-1 accent-emerald-600"
+          checked={props.jenis === ""}
+          onChange={() => {
+            props.setJenis("");
+            props.setNilai("");
+          }}
+        />
+        <span>
+          <span className="block text-sm font-semibold">Semua siswa</span>
+          <span className="text-xs text-muted-foreground">
+            Tanpa batasan tingkat/kelas.
+          </span>
+        </span>
+      </label>
+
+      <label
+        className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 transition-colors ${
+          props.jenis === "tingkat"
+            ? "border-emerald-600 bg-emerald-500/10"
+            : "border-border/70 bg-card hover:border-foreground/30"
+        }`}
+      >
+        <input
+          type="radio"
+          name="sasar"
+          className="mt-1 accent-emerald-600"
+          checked={props.jenis === "tingkat"}
+          onChange={() => toggleTingkat(props.tingkatList[0] ?? "X")}
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold">Seluruh tingkat</span>
+          <span className="text-xs text-muted-foreground">
+            Pilih tingkat yang melaksanakan ujian.
+          </span>
+          {props.jenis === "tingkat" && (
+            <span className="mt-2 flex flex-wrap gap-2">
+              {props.tingkatList.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    props.setNilai(t);
+                  }}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors ${
+                    props.nilai === t
+                      ? "border-emerald-600 bg-emerald-600 text-white"
+                      : "border-border/70 bg-card text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Tingkat {t}
+                </button>
+              ))}
+            </span>
+          )}
+        </span>
+      </label>
+
+      <label
+        className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 transition-colors ${
+          props.jenis === "kelas"
+            ? "border-emerald-600 bg-emerald-500/10"
+            : "border-border/70 bg-card hover:border-foreground/30"
+        }`}
+      >
+        <input
+          type="radio"
+          name="sasar"
+          className="mt-1 accent-emerald-600"
+          checked={props.jenis === "kelas"}
+          onChange={() => {
+            props.setJenis("kelas");
+            if (kelasTerpilih.length === 0) props.setNilai(props.kelasList[0] ?? "");
+          }}
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold">Kelas tertentu</span>
+          <span className="text-xs text-muted-foreground">
+            Centang kelas mana saja yang boleh melaksanakan.
+          </span>
+          {props.jenis === "kelas" && (
+            <span className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
+              {props.kelasList.length === 0 ? (
+                <span className="text-xs font-semibold text-amber-600">
+                  Belum ada kelas — isi Data Siswa dulu.
+                </span>
+              ) : (
+                props.kelasList.map((k) => (
+                  <label key={k} className="flex cursor-pointer items-center gap-1.5 text-sm">
+                    <Checkbox
+                      checked={kelasTerpilih.includes(k)}
+                      onCheckedChange={() => toggleKelas(k)}
+                    />
+                    {k}
+                  </label>
+                ))
+              )}
+            </span>
+          )}
+        </span>
+      </label>
+    </div>
+  );
+}
+
 /** Kelola ujian: buat, aktifkan, susun soal, hapus. (guru & admin) */
 export function KelolaUjian() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const { kelas: kelasList, tingkat: tingkatList } = useKelasSiswa();
+
   const [ujian, setUjian] = useState<UjianGas[] | null>(null);
   const [versi, setVersi] = useState(0);
 
@@ -61,10 +245,11 @@ export function KelolaUjian() {
   const [deskripsi, setDeskripsi] = useState("");
   const [tokenBaru, setTokenBaru] = useState("");
   const [durasi, setDurasi] = useState(60);
+  const [tglMulai, setTglMulai] = useState("");
+  const [sasarJenis, setSasarJenis] = useState<SasarJenis>("");
+  const [sasarNilai, setSasarNilai] = useState("");
   const [busy, setBusy] = useState(false);
-  const [hapusTarget, setHapusTarget] = useState<{ id: string; judul: string } | null>(
-    null,
-  );
+  const [hapusTarget, setHapusTarget] = useState<{ id: string; judul: string } | null>(null);
 
   useEffect(() => {
     let hidup = true;
@@ -75,9 +260,7 @@ export function KelolaUjian() {
       })
       .catch((err) => {
         if (hidup) {
-          toast.error(
-            err instanceof Error ? err.message : "Gagal memuat daftar ujian.",
-          );
+          toast.error(err instanceof Error ? err.message : "Gagal memuat daftar ujian.");
           setUjian([]);
         }
       });
@@ -97,6 +280,10 @@ export function KelolaUjian() {
       toast.error("Token harus 4–12 huruf/angka tanpa spasi.");
       return;
     }
+    if (sasarJenis === "kelas" && !sasarNilai) {
+      toast.error("Centang minimal satu kelas.");
+      return;
+    }
     setBusy(true);
     try {
       await gasCall("buatUjian", {
@@ -104,11 +291,17 @@ export function KelolaUjian() {
         deskripsi: deskripsi.trim(),
         token: tokenBaru.trim() || undefined,
         durasi_menit: durasi,
+        tgl_mulai: tglMulai,
+        sasar_jenis: sasarJenis,
+        sasar_nilai: sasarNilai,
       });
       setJudul("");
       setDeskripsi("");
       setTokenBaru("");
       setDurasi(60);
+      setTglMulai("");
+      setSasarJenis("");
+      setSasarNilai("");
       segarkan();
       toast.success("Ujian dibuat (draft). Susun soal lalu aktifkan.");
     } catch (err) {
@@ -124,7 +317,7 @@ export function KelolaUjian() {
       segarkan();
       toast.success(
         aktif
-          ? `"${judulUjian}" aktif — siswa bisa mengunduh soal.`
+          ? `"${judulUjian}" aktif — siswa sesuai sasaran bisa mengunduh soal.`
           : `"${judulUjian}" dinonaktifkan.`,
       );
     } catch (err) {
@@ -161,7 +354,7 @@ export function KelolaUjian() {
         <h1 className="text-2xl font-extrabold tracking-tight">Kelola ujian</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {isAdmin
-            ? "Buat ujian, atur token & waktu, lalu aktifkan; token dibagikan ke pengawas ruang."
+            ? "Atur jadwal & sasaran, aktifkan; token dibagikan ke pengawas ruang."
             : "Susun soal, pilihan jawaban, dan kunci jawaban ujian yang sudah dibuat admin."}
         </p>
       </div>
@@ -189,21 +382,24 @@ export function KelolaUjian() {
                 rows={2}
               />
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
+
+            <div className="grid gap-4 sm:grid-cols-3">
               <div className="grid gap-2">
-                <Label htmlFor="token-baru">Token ujian (opsional)</Label>
+                <Label htmlFor="token-baru" className="gap-1.5">
+                  <KeyRound className="size-3.5" /> Token
+                </Label>
                 <Input
                   id="token-baru"
                   value={tokenBaru}
                   onChange={(e) => setTokenBaru(e.target.value.toUpperCase())}
-                  placeholder="kosong = dibuat otomatis"
+                  placeholder="otomatis bila kosong"
                   maxLength={12}
                   autoComplete="off"
-                  className="font-mono font-bold uppercase tracking-[0.3em]"
+                  className="font-mono font-bold uppercase tracking-[0.25em]"
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="durasi-baru">Waktu ujian (menit)</Label>
+                <Label htmlFor="durasi-baru">Durasi (menit)</Label>
                 <Input
                   id="durasi-baru"
                   type="number"
@@ -213,7 +409,32 @@ export function KelolaUjian() {
                   onChange={(e) => setDurasi(Number(e.target.value))}
                 />
               </div>
+              <div className="grid gap-2">
+                <Label htmlFor="tgl-mulai" className="gap-1.5">
+                  <CalendarClock className="size-3.5" /> Mulai ujian
+                </Label>
+                <Input
+                  id="tgl-mulai"
+                  type="datetime-local"
+                  value={tglMulai}
+                  onChange={(e) => setTglMulai(e.target.value)}
+                />
+              </div>
             </div>
+            <p className="-mt-2 text-xs leading-5 text-muted-foreground">
+              Kosongkan "Mulai ujian" bila boleh langsung; jika diisi, siswa baru
+              bisa mengunduh & memulai pada tanggal/jam tersebut.
+            </p>
+
+            <PemilihSasaran
+              jenis={sasarJenis}
+              setJenis={setSasarJenis}
+              nilai={sasarNilai}
+              setNilai={setSasarNilai}
+              kelasList={kelasList}
+              tingkatList={tingkatList}
+            />
+
             <Button onClick={buat} disabled={busy} className="gap-2">
               <Plus className="size-4" /> Buat ujian
             </Button>
@@ -221,7 +442,7 @@ export function KelolaUjian() {
         </Card>
       ) : (
         <div className="rounded-2xl border border-dashed border-border/70 bg-muted/50 px-4 py-3 text-sm leading-6 text-muted-foreground">
-          Token, waktu, dan status aktif ujian diset oleh{" "}
+          Jadwal, sasaran, token, dan status aktif diset oleh{" "}
           <strong className="text-foreground">admin</strong>. Kamu fokus menyusun
           soal dan kunci jawabannya.
         </div>
@@ -254,10 +475,14 @@ export function KelolaUjian() {
                       {u.judul}
                     </span>
                     <span className="mt-0.5 block text-xs text-muted-foreground">
-                      {u.jumlah_soal} soal · durasi {u.durasi_menit} menit
+                      {u.jumlah_soal} soal · {u.durasi_menit} menit
+                      {u.tgl_mulai ? ` · mulai ${u.tgl_mulai.replace("T", " ")}` : ""}
                     </span>
                   </span>
                   <span className="ml-auto flex items-center gap-2">
+                    <Badge variant="outline" className="gap-1 text-[11px]">
+                      <Users className="size-3" /> {u.sasaran}
+                    </Badge>
                     <Badge
                       variant={u.aktif ? "default" : "secondary"}
                       className={u.aktif ? "bg-emerald-600 text-white" : ""}
@@ -300,7 +525,16 @@ export function KelolaUjian() {
                   )}
 
                   {isAdmin && (
-                    <PanelPengaturan ujianId={u.id} token={u.token ?? ""} durasi={u.durasi_menit} />
+                    <PanelPengaturan
+                      ujianId={u.id}
+                      token={u.token ?? ""}
+                      durasi={u.durasi_menit}
+                      tglMulai={u.tgl_mulai ?? ""}
+                      sasarJenis={(u.sasar_jenis ?? "") as SasarJenis}
+                      sasarNilai={u.sasar_nilai ?? ""}
+                      kelasList={kelasList}
+                      tingkatList={tingkatList}
+                    />
                   )}
 
                   <PanelSoal ujianId={u.id} />
@@ -547,18 +781,22 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
   );
 }
 
-/** Pengaturan ujian khusus admin: token & durasi waktu. */
-function PanelPengaturan({
-  ujianId,
-  token,
-  durasi,
-}: {
+/** Pengaturan ujian khusus admin: token, durasi, jadwal, sasaran. */
+function PanelPengaturan(props: {
   ujianId: string;
   token: string;
   durasi: number;
+  tglMulai: string;
+  sasarJenis: SasarJenis;
+  sasarNilai: string;
+  kelasList: string[];
+  tingkatList: string[];
 }) {
-  const [nilaiToken, setNilaiToken] = useState(token);
-  const [nilaiDurasi, setNilaiDurasi] = useState(String(durasi));
+  const [nilaiToken, setNilaiToken] = useState(props.token);
+  const [nilaiDurasi, setNilaiDurasi] = useState(String(props.durasi));
+  const [tgl, setTgl] = useState(props.tglMulai);
+  const [jenis, setJenis] = useState<SasarJenis>(props.sasarJenis);
+  const [nilai, setNilai] = useState(props.sasarNilai);
   const [busy, setBusy] = useState(false);
 
   const simpan = async () => {
@@ -571,14 +809,21 @@ function PanelPengaturan({
       toast.error("Durasi harus 1–600 menit.");
       return;
     }
+    if (jenis === "kelas" && !nilai) {
+      toast.error("Centang minimal satu kelas.");
+      return;
+    }
     setBusy(true);
     try {
       await gasCall("aturUjian", {
-        id: ujianId,
+        id: props.ujianId,
         token: nilaiToken.trim().toUpperCase(),
         durasi_menit: menit,
+        tgl_mulai: tgl,
+        sasar_jenis: jenis,
+        sasar_nilai: nilai,
       });
-      toast.success("Token & waktu ujian disimpan.");
+      toast.success("Pengaturan ujian disimpan.");
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Gagal menyimpan pengaturan.",
@@ -592,17 +837,18 @@ function PanelPengaturan({
     <div className="rounded-2xl border border-border/70 bg-background/60 p-4">
       <div className="flex items-center gap-2">
         <KeyRound className="size-4 text-muted-foreground" />
-        <p className="text-sm font-bold">Token & waktu ujian</p>
+        <p className="text-sm font-bold">Token, waktu & sasaran</p>
         <Badge variant="outline" className="ml-auto text-[10px] uppercase tracking-wider">
           Admin
         </Badge>
       </div>
+
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <div className="grid gap-2">
-          <Label htmlFor={`token-${ujianId}`}>Token ujian</Label>
+          <Label htmlFor={`token-${props.ujianId}`}>Token ujian</Label>
           <div className="flex gap-2">
             <Input
-              id={`token-${ujianId}`}
+              id={`token-${props.ujianId}`}
               value={nilaiToken}
               onChange={(e) => setNilaiToken(e.target.value.toUpperCase())}
               maxLength={12}
@@ -622,9 +868,9 @@ function PanelPengaturan({
           </div>
         </div>
         <div className="grid gap-2">
-          <Label htmlFor={`durasi-${ujianId}`}>Waktu ujian (menit)</Label>
+          <Label htmlFor={`durasi-${props.ujianId}`}>Durasi (menit)</Label>
           <Input
-            id={`durasi-${ujianId}`}
+            id={`durasi-${props.ujianId}`}
             type="number"
             min={1}
             max={600}
@@ -632,14 +878,38 @@ function PanelPengaturan({
             onChange={(e) => setNilaiDurasi(e.target.value)}
           />
         </div>
+        <div className="grid gap-2 sm:col-span-2">
+          <Label htmlFor={`tgl-${props.ujianId}`} className="gap-1.5">
+            <CalendarClock className="size-3.5" /> Tanggal & jam mulai
+          </Label>
+          <Input
+            id={`tgl-${props.ujianId}`}
+            type="datetime-local"
+            value={tgl}
+            onChange={(e) => setTgl(e.target.value)}
+            className="sm:max-w-xs"
+          />
+        </div>
       </div>
+
+      <div className="mt-3">
+        <PemilihSasaran
+          jenis={jenis}
+          setJenis={setJenis}
+          nilai={nilai}
+          setNilai={setNilai}
+          kelasList={props.kelasList}
+          tingkatList={props.tingkatList}
+        />
+      </div>
+
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <Button size="sm" onClick={simpan} disabled={busy}>
           Simpan pengaturan
         </Button>
         <p className="text-xs leading-5 text-muted-foreground">
           Token dibagikan ke <strong>pengawas ruang</strong>; siswa memasukkannya
-          saat menekan Mulai Ujian (validasi lokal, bisa offline).
+          saat Mulai Ujian (validasi lokal, bisa offline).
         </p>
       </div>
     </div>

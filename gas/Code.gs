@@ -2,34 +2,30 @@
  * ============================================================================
  * UjianAman — Google Apps Script (Backend Google Sheets)
  * ----------------------------------------------------------------------------
- * SATU-SATUNYA backend aplikasi. Tidak ada auth penyedia lain: semua akun
- * (admin / guru / siswa) dibuat & diatur admin di sheet "Pengguna".
+ * SATU-SATUNYA backend aplikasi. Semua akun (admin/guru/siswa) dibuat &
+ * diatur admin di sheet "Pengguna". Data siswa (NISN, nama, tgl lahir, kelas)
+ * dikelola admin di sheet "Siswa" — daftar kelas ujian dibaca dari sini.
  *
- * STRUKTUR GOOGLE SHEETS (dibuat otomatis oleh setupSheet)
- * --------------------------------------------------------
+ * STRUKTUR GOOGLE SHEETS (dibuat/ dilengkapi otomatis oleh pastikanStruktur_)
  * Ujian    : id | judul | deskripsi | token | durasi_menit | aktif | dibuat
- * Soal     : id | ujian_id | pertanyaan | opsi_a..opsi_e | kunci_jawaban | dibuat
+ *            | tgl_mulai | sasar_jenis | sasar_nilai
+ * Soal     : id | ujian_id | pertanyaan | opsi_a..e | kunci_jawaban | dibuat
  * Hasil    : id | ujian_id | ujian_judul | nama | kelas | token | benar |
  *            total_soal | nilai | total_pelanggaran | timestamp
  * Pengguna : id | username | password | nama | kelas | role | dibuat
+ * Siswa    : id | nisn | nama | tgllahir | kelas | dibuat
  * BukaKunci: timestamp | ujian_id | nama | catatan
  *
- * ALUR SISWA (sesuai permintaan)
- *  - Unduh soal TANPA token : action=getSoal&id=...
- *  - Token diset admin dan DIBAGIKAN PENGAWAS RUANG; siswa memasukkannya
- *    saat menekan "Mulai Ujian". Validasi token dilakukan LOKAL di perangkat
- *    siswa sehingga ujian tetap bisa dimulai saat offline.
- *  - Kirim jawaban saat online: action=submitJawaban — nilai dihitung di
- *    server dari huruf A–E lalu disimpan ke sheet "Hasil".
+ * PENARGETAN UJIAN (sasar)
+ *  - sasar_jenis ""          : semua tingkat & kelas (tanpa batasan)
+ *  - sasar_jenis "tingkat"   : sasar_nilai = X | XI | XII (seluruh tingkat)
+ *  - sasar_jenis "kelas"     : sasar_nilai = "X.1,X.2" (daftar kelas)
+ *  - tgl_mulai               : "YYYY-MM-DDTHH:mm" (waktu sekolah). Gerbang
+ *    waktu diperiksa di perangkat siswa (zona sama dengan admin); gerbang
+ *    kelas/tingkat diperiksa di server saat unduh soal.
  *
- * CARA PASANG
- * 1. Buat Spreadsheet kosong, Extensions > Apps Script, tempel berkas ini.
- * 2. Jalankan setupSheet() sekali (beri izin) — opsional, sheet dibuat otomatis.
- * 3. Deploy > New deployment > Web app — Execute as: Me, access: Anyone.
- * 4. Salin URL /exec ke aplikasi (diisi di halaman login aplikasi).
- *
- * SEMUA action GET mendukung JSONP (tambahkan &callback=fn). POST menerima
- * JSON body; klien web memakai GET+JSONP dengan payloadB64 agar bebas CORS.
+ * Deploy: Deploy > New deployment > Web app — Execute as Me, access Anyone.
+ * Semua action GET mendukung JSONP (&callback=fn) + payloadB64 (bebas CORS).
  * ============================================================================
  */
 
@@ -37,21 +33,25 @@ var SHEET_UJIAN = "Ujian";
 var SHEET_SOAL = "Soal";
 var SHEET_HASIL = "Hasil";
 var SHEET_PENGGUNA = "Pengguna";
+var SHEET_SISWA = "Siswa";
 var SHEET_BUKA_KUNCI = "BukaKunci";
 
-var HEADER_UJIAN = ["id", "judul", "deskripsi", "token", "durasi_menit", "aktif", "dibuat"];
+var HEADER_UJIAN = ["id", "judul", "deskripsi", "token", "durasi_menit", "aktif", "dibuat", "tgl_mulai", "sasar_jenis", "sasar_nilai"];
 var HEADER_SOAL = ["id", "ujian_id", "pertanyaan", "opsi_a", "opsi_b", "opsi_c", "opsi_d", "opsi_e", "kunci_jawaban", "dibuat"];
 var HEADER_HASIL = ["id", "ujian_id", "ujian_judul", "nama", "kelas", "token", "benar", "total_soal", "nilai", "total_pelanggaran", "timestamp"];
 var HEADER_PENGGUNA = ["id", "username", "password", "nama", "kelas", "role", "dibuat"];
+var HEADER_SISWA = ["id", "nisn", "nama", "tgllahir", "kelas", "dibuat"];
 var HEADER_BUKA_KUNCI = ["timestamp", "ujian_id", "nama", "catatan"];
 
-function setupSheet() {
+/** Pastikan semua sheet ada & header lengkap (menambah kolom baru bila perlu). */
+function pastikanStruktur_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var defs = [
     [SHEET_UJIAN, HEADER_UJIAN],
     [SHEET_SOAL, HEADER_SOAL],
     [SHEET_HASIL, HEADER_HASIL],
     [SHEET_PENGGUNA, HEADER_PENGGUNA],
+    [SHEET_SISWA, HEADER_SISWA],
     [SHEET_BUKA_KUNCI, HEADER_BUKA_KUNCI],
   ];
   defs.forEach(function (item) {
@@ -60,17 +60,30 @@ function setupSheet() {
     if (sh.getLastRow() === 0) {
       sh.appendRow(item[1]);
       sh.setFrozenRows(1);
+      return;
+    }
+    var head = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    var ada = {};
+    head.forEach(function (h) { ada[String(h).trim()] = true; });
+    var kurang = item[1].filter(function (h) { return !ada[h]; });
+    if (kurang.length) {
+      sh.getRange(1, sh.getLastColumn() + 1, 1, kurang.length).setValues([kurang]);
+      sh.setFrozenRows(1);
     }
   });
+}
+
+/** Jalankan sekali dari editor bila perlu — sama dengan yang dipanggil router. */
+function setupSheet() {
+  pastikanStruktur_();
   return { success: true, message: "Sheet siap." };
 }
 
 function getSheet_(name) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sh = ss.getSheetByName(name);
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
   if (!sh) {
-    setupSheet();
-    sh = ss.getSheetByName(name);
+    pastikanStruktur_();
+    sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
   }
   if (!sh) throw new Error('Sheet "' + name + '" tidak ditemukan.');
   return sh;
@@ -126,6 +139,7 @@ function kirimOutput_(e, payload) {
 
 function doGet(e) {
   try {
+    pastikanStruktur_();
     var params = (e && e.parameter) || {};
     var payload = {};
     if (params.payloadB64) {
@@ -144,6 +158,7 @@ function doGet(e) {
 
 function doPost(e) {
   try {
+    pastikanStruktur_();
     var body = JSON.parse(e.postData.contents);
     return kirimOutput_(e, jalankan_(String(body.action || ""), body));
   } catch (err) {
@@ -156,7 +171,7 @@ function jalankan_(action, data) {
     case "ping": return ping_();
     case "setupAdmin": return setupAdmin_(data);
     case "login": return login_(data);
-    case "getUjianSiswa": return getUjianSiswa_();
+    case "getUjianSiswa": return getUjianSiswa_(data);
     case "getUjianInfo": return getUjianInfo_(data);
     case "getUjian": return getUjian_();
     case "getSoal": return getSoal_(data);
@@ -164,6 +179,12 @@ function jalankan_(action, data) {
     case "getHasil": return getHasil_(data);
     case "getHasilSaya": return getHasilSaya_(data);
     case "getPengguna": return getPengguna_();
+    case "getSiswa": return getSiswa_();
+    case "getKelasList": return getKelasList_();
+    case "tambahSiswa": return tambahSiswa_(data);
+    case "ubahSiswa": return ubahSiswa_(data);
+    case "hapusSiswa": return hapusSiswa_(data);
+    case "importSiswa": return importSiswa_(data);
     case "buatUjian": return buatUjian_(data);
     case "aturUjian": return aturUjian_(data);
     case "setAktifUjian": return setAktifUjian_(data);
@@ -198,11 +219,10 @@ function setupAdmin_(data) {
   if (password.length < 4) return { success: false, message: "Password minimal 4 karakter." };
   getSheet_(SHEET_PENGGUNA).appendRow([idBaru_("p"), username, password, "Administrator", "", "admin", new Date()]);
 
-  // Ujian contoh + 5 soal contoh agar langsung bisa dicoba.
   var ujianId = idBaru_("u");
   getSheet_(SHEET_UJIAN).appendRow([
     ujianId, "Contoh Ujian — Trigonometri", "Ujian percobaan 5 soal pilihan ganda.",
-    buatTokenAcak_(), 60, true, new Date(),
+    buatTokenAcak_(), 60, true, new Date(), "", "", "",
   ]);
   SOAL_CONTOH.forEach(function (s) {
     getSheet_(SHEET_SOAL).appendRow([
@@ -293,7 +313,143 @@ function getPengguna_() {
 }
 
 /* ------------------------------------------------------------------ */
-/* UJIAN                                                               */
+/* DATA SISWA (NISN, nama, tgl lahir, kelas)                           */
+/* ------------------------------------------------------------------ */
+
+function barisSiswa_(row, idx) {
+  return {
+    id: String(row[idx.id]),
+    nisn: String(row[idx.nisn] || ""),
+    nama: String(row[idx.nama] || ""),
+    tgllahir: idx.tgllahir !== undefined ? String(row[idx.tgllahir] || "") : "",
+    kelas: String(row[idx.kelas] || ""),
+  };
+}
+
+function getSiswa_() {
+  var siswa = bacaBaris_(SHEET_SISWA);
+  return { success: true, siswa: siswa.rows.map(function (row) { return barisSiswa_(row, siswa.idx); }) };
+}
+
+function validasiSiswa_(data) {
+  var nisn = String(data.nisn || "").trim();
+  var nama = String(data.nama || "").trim();
+  var kelas = String(data.kelas || "").trim();
+  if (!nisn) return { error: "NISN wajib diisi." };
+  if (!nama) return { error: "Nama siswa wajib diisi." };
+  if (!kelas) return { error: "Kelas wajib diisi (cth. X.1)." };
+  return {
+    nisn: nisn,
+    nama: nama,
+    tgllahir: String(data.tgllahir || "").trim(),
+    kelas: kelas,
+  };
+}
+
+function tambahSiswa_(data) {
+  var v = validasiSiswa_(data);
+  if (v.error) return { success: false, message: v.error };
+  var siswa = bacaBaris_(SHEET_SISWA);
+  for (var i = 0; i < siswa.rows.length; i++) {
+    if (String(siswa.rows[i][siswa.idx.nisn]).trim() === v.nisn) {
+      return { success: false, message: 'NISN "' + v.nisn + '" sudah terdaftar (' + String(siswa.rows[i][siswa.idx.nama]) + ")." };
+    }
+  }
+  var id = idBaru_("sw");
+  getSheet_(SHEET_SISWA).appendRow([id, v.nisn, v.nama, v.tgllahir, v.kelas, new Date()]);
+  return { success: true, id: id, message: 'Siswa "' + v.nama + '" ditambahkan.' };
+}
+
+function ubahSiswa_(data) {
+  var v = validasiSiswa_(data);
+  if (v.error) return { success: false, message: v.error };
+  var sh = getSheet_(SHEET_SISWA);
+  var values = sh.getDataRange().getValues();
+  var idx = indexHeader_(values[0]);
+  var cari = String(data.id || "");
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][idx.id]) === cari) {
+      values[r][idx.nisn] = v.nisn;
+      values[r][idx.nama] = v.nama;
+      values[r][idx.tgllahir] = v.tgllahir;
+      values[r][idx.kelas] = v.kelas;
+      sh.getRange(r + 1, 1, 1, values[0].length).setValues([values[r]]);
+      return { success: true, message: "Data siswa diperbarui." };
+    }
+  }
+  return { success: false, message: "Siswa tidak ditemukan." };
+}
+
+function hapusSiswa_(data) {
+  hapusBaris_(getSheet_(SHEET_SISWA), "id", String(data.id || ""));
+  return { success: true, message: "Siswa dihapus." };
+}
+
+/**
+ * Impor massal dari tempelan Excel/CSV.
+ * data.rows = [["123","Ayu","2008-05-12","X.1"], ...] (tab/koma dipisah klien).
+ */
+function importSiswa_(data) {
+  var rows = data.rows || [];
+  if (!rows.length) return { success: false, message: "Tidak ada baris untuk diimpor." };
+  var siswa = bacaBaris_(SHEET_SISWA);
+  var adaNisn = {};
+  siswa.rows.forEach(function (row) {
+    adaNisn[String(row[siswa.idx.nisn]).trim()] = true;
+  });
+  var sh = getSheet_(SHEET_SISWA);
+  var masuk = 0, lewati = 0;
+  rows.forEach(function (r) {
+    var nisn = String(r[0] || "").trim();
+    var nama = String(r[1] || "").trim();
+    var tgllahir = String(r[2] || "").trim();
+    var kelas = String(r[3] || "").trim();
+    if (!nisn || !nama || !kelas || adaNisn[nisn]) { lewati++; return; }
+    adaNisn[nisn] = true;
+    sh.appendRow([idBaru_("sw"), nisn, nama, tgllahir, kelas, new Date()]);
+    masuk++;
+  });
+  return {
+    success: true,
+    masuk: masuk,
+    lewati: lewati,
+    message: masuk + " siswa diimpor, " + lewati + " dilewati (kosong/NISN duplikat).",
+  };
+}
+
+/** Daftar kelas & tingkat unik — dari sheet Siswa (+ kelas akun Pengguna). */
+function getKelasList_() {
+  var urutTingkat = ["X", "XI", "XII"];
+  var kelas = {};
+  var s = bacaBaris_(SHEET_SISWA);
+  s.rows.forEach(function (row) {
+    var k = String(row[s.idx.kelas] || "").trim();
+    if (k) kelas[k] = true;
+  });
+  var p = bacaBaris_(SHEET_PENGGUNA);
+  p.rows.forEach(function (row) {
+    var k = String(row[p.idx.kelas] || "").trim();
+    if (k) kelas[k] = true;
+  });
+  var daftar = Object.keys(kelas).sort(function (a, b) {
+    var ta = urutTingkat.indexOf(tingkatDari_(a));
+    var tb = urutTingkat.indexOf(tingkatDari_(b));
+    if (ta !== tb) return (ta === -1 ? 99 : ta) - (tb === -1 ? 99 : tb);
+    return a.localeCompare(b, "id", { numeric: true });
+  });
+  var tingkat = {};
+  daftar.forEach(function (k) { tingkat[tingkatDari_(k)] = true; });
+  var daftarTingkat = Object.keys(tingkat).sort(function (a, b) {
+    var ia = urutTingkat.indexOf(a);
+    var ib = urutTingkat.indexOf(b);
+    if (ia !== ib) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    return a.localeCompare(b);
+  });
+  return { success: true, kelas: daftar, tingkat: daftarTingkat };
+}
+
+/* ------------------------------------------------------------------ */
+/* UJIAN + PENARGETAN (tingkat / kelas)                                */
 /* ------------------------------------------------------------------ */
 
 function hitungSoal_(ujianId) {
@@ -305,38 +461,72 @@ function hitungSoal_(ujianId) {
   return n;
 }
 
-function barisUjian_(row, idx, sertakanToken) {
+/** "X.2" -> "X" (tingkat = bagian sebelum titik pertama). */
+function tingkatDari_(kelas) {
+  var k = String(kelas || "").trim().toUpperCase();
+  if (!k) return "";
+  var titik = k.indexOf(".");
+  return titik > 0 ? k.slice(0, titik).trim() : k;
+}
+
+function sasaranLabel_(jenis, nilai) {
+  jenis = String(jenis || "").trim().toLowerCase();
+  nilai = String(nilai || "").trim();
+  if (!jenis || !nilai) return "Semua tingkat & kelas";
+  if (jenis === "tingkat") return "Seluruh tingkat " + nilai.toUpperCase();
+  return "Kelas: " + nilai;
+}
+
+/** Cocokkan kelas siswa dengan sasaran ujian. */
+function cocokSasar_(u, kelas) {
+  var jenis = String(u.sasar_jenis || "").trim().toLowerCase();
+  var nilai = String(u.sasar_nilai || "").trim();
+  if (!jenis || !nilai) return true; // tanpa batasan
+  kelas = String(kelas || "").trim().toUpperCase();
+  if (!kelas) return false;
+  if (jenis === "tingkat") return tingkatDari_(kelas) === nilai.toUpperCase();
+  var daftar = nilai.split(",").map(function (s) { return s.trim().toUpperCase(); });
+  return daftar.indexOf(kelas) !== -1;
+}
+
+function barisUjian_(row, idx, sertakanToken, kelasSiswa) {
   var id = String(row[idx.id]);
-  var out = {
+  var u = {
     id: id,
     judul: String(row[idx.judul] || ""),
     deskripsi: String(row[idx.deskripsi] || ""),
     durasi_menit: Number(row[idx.durasi_menit]) || 60,
     aktif: String(row[idx.aktif]).trim().toUpperCase() === "TRUE",
     jumlah_soal: hitungSoal_(id),
+    tgl_mulai: idx.tgl_mulai !== undefined ? String(row[idx.tgl_mulai] || "").trim() : "",
+    sasar_jenis: idx.sasar_jenis !== undefined ? String(row[idx.sasar_jenis] || "").trim() : "",
+    sasar_nilai: idx.sasar_nilai !== undefined ? String(row[idx.sasar_nilai] || "").trim() : "",
   };
-  if (sertakanToken) out.token = String(row[idx.token] || "");
-  return out;
+  u.sasaran = sasaranLabel_(u.sasar_jenis, u.sasar_nilai);
+  u.boleh = kelasSiswa === undefined ? true : cocokSasar_(u, kelasSiswa);
+  if (sertakanToken) u.token = String(row[idx.token] || "");
+  return u;
 }
 
-/** Daftar ujian untuk siswa: hanya yang aktif, TANPA token. */
-function getUjianSiswa_() {
+/** Daftar ujian aktif untuk siswa (tanpa token) + kelayakan per kelas. */
+function getUjianSiswa_(data) {
+  var kelas = String((data && data.kelas) || "").trim();
   var ujian = bacaBaris_(SHEET_UJIAN);
   var daftar = [];
   ujian.rows.forEach(function (row) {
-    var u = barisUjian_(row, ujian.idx, false);
+    var u = barisUjian_(row, ujian.idx, false, kelas);
     if (u.aktif) daftar.push(u);
   });
   return { success: true, ujian: daftar };
 }
 
-/** Info satu ujian untuk siswa (tanpa token). */
+/** Info satu ujian untuk siswa (tanpa token, tanpa gerbang kelas — info saja). */
 function getUjianInfo_(data) {
   var ujian = bacaBaris_(SHEET_UJIAN);
   var cari = String(data.id || "");
   for (var i = 0; i < ujian.rows.length; i++) {
     if (String(ujian.rows[i][ujian.idx.id]) === cari) {
-      var u = barisUjian_(ujian.rows[i], ujian.idx, false);
+      var u = barisUjian_(ujian.rows[i], ujian.idx, false, undefined);
       if (!u.aktif) return { success: false, message: "Ujian belum diaktifkan admin." };
       return { success: true, ujian: u };
     }
@@ -349,8 +539,35 @@ function getUjian_() {
   var ujian = bacaBaris_(SHEET_UJIAN);
   return {
     success: true,
-    ujian: ujian.rows.map(function (row) { return barisUjian_(row, ujian.idx, true); }),
+    ujian: ujian.rows.map(function (row) { return barisUjian_(row, ujian.idx, true, undefined); }),
   };
+}
+
+function validasiSasar_(jenis, nilai) {
+  jenis = String(jenis || "").trim().toLowerCase();
+  nilai = String(nilai || "").trim();
+  if (!jenis) return { jenis: "", nilai: "" };
+  if (jenis === "tingkat") {
+    var t = nilai.toUpperCase();
+    if (["X", "XI", "XII"].indexOf(t) === -1) return { error: "Tingkat harus X, XI, atau XII." };
+    return { jenis: "tingkat", nilai: t };
+  }
+  if (jenis === "kelas") {
+    if (!nilai) return { error: "Pilih minimal satu kelas." };
+    var bersih = nilai.split(",").map(function (s) { return s.trim(); }).filter(Boolean).join(",");
+    if (!bersih) return { error: "Pilih minimal satu kelas." };
+    return { jenis: "kelas", nilai: bersih };
+  }
+  return { error: "Jenis sasaran tidak valid." };
+}
+
+function validasiTglMulai_(nilai) {
+  var t = String(nilai || "").trim();
+  if (!t) return "";
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t)) {
+    throw new Error("Format tanggal/jam mulai tidak valid.");
+  }
+  return t.slice(0, 16);
 }
 
 function buatUjian_(data) {
@@ -360,9 +577,17 @@ function buatUjian_(data) {
   if (!/^[A-Z0-9]{4,12}$/.test(token)) return { success: false, message: "Token harus 4–12 huruf/angka tanpa spasi." };
   var durasi = Math.floor(Number(data.durasi_menit) || 60);
   if (durasi < 1 || durasi > 600) return { success: false, message: "Durasi harus 1–600 menit." };
-  var id = idBaru_("u");
-  getSheet_(SHEET_UJIAN).appendRow([id, judul, String(data.deskripsi || "").trim(), token, durasi, false, new Date()]);
-  return { success: true, id: id, token: token, message: "Ujian dibuat (masih draft)." };
+  var sasar;
+  try {
+    sasar = validasiSasar_(data.sasar_jenis, data.sasar_nilai);
+    if (sasar.error) return { success: false, message: sasar.error };
+    var tgl = validasiTglMulai_(data.tgl_mulai);
+    var id = idBaru_("u");
+    getSheet_(SHEET_UJIAN).appendRow([id, judul, String(data.deskripsi || "").trim(), token, durasi, false, new Date(), tgl, sasar.jenis, sasar.nilai]);
+    return { success: true, id: id, token: token, message: "Ujian dibuat (masih draft)." };
+  } catch (err) {
+    return { success: false, message: String(err && err.message ? err.message : err) };
+  }
 }
 
 function aturUjian_(data) {
@@ -374,12 +599,23 @@ function aturUjian_(data) {
   var durasi = Math.floor(Number(data.durasi_menit) || 0);
   if (!/^[A-Z0-9]{4,12}$/.test(token)) return { success: false, message: "Token harus 4–12 huruf/angka." };
   if (durasi < 1 || durasi > 600) return { success: false, message: "Durasi harus 1–600 menit." };
+  var sasar = validasiSasar_(data.sasar_jenis, data.sasar_nilai);
+  if (sasar.error) return { success: false, message: sasar.error };
+  var tgl;
+  try {
+    tgl = validasiTglMulai_(data.tgl_mulai);
+  } catch (err) {
+    return { success: false, message: String(err && err.message ? err.message : err) };
+  }
   for (var r = 1; r < values.length; r++) {
     if (String(values[r][idx.id]) === cari) {
       values[r][idx.token] = token;
       values[r][idx.durasi_menit] = durasi;
+      values[r][idx.tgl_mulai] = tgl;
+      values[r][idx.sasar_jenis] = sasar.jenis;
+      values[r][idx.sasar_nilai] = sasar.nilai;
       sh.getRange(r + 1, 1, 1, values[0].length).setValues([values[r]]);
-      return { success: true, message: "Token & waktu disimpan." };
+      return { success: true, message: "Pengaturan ujian disimpan." };
     }
   }
   return { success: false, message: "Ujian tidak ditemukan." };
@@ -445,19 +681,31 @@ function barisSoal_(row, idx, denganKunci) {
   return out;
 }
 
-/** Soal untuk siswa: TANPA token, TANPA kunci jawaban. */
+/**
+ * Soal untuk siswa: TANPA token, TANPA kunci.
+ * Gerbang: ujian aktif + kelas/tingkat sesuai sasaran (data.kelas).
+ * Gerbang tanggal/jam diperiksa di perangkat siswa (zona waktu sekolah).
+ */
 function getSoal_(data) {
   var ujian = bacaBaris_(SHEET_UJIAN);
   var cari = String(data.id || "");
+  var kelas = String(data.kelas || "").trim();
   var meta = null;
   for (var i = 0; i < ujian.rows.length; i++) {
     if (String(ujian.rows[i][ujian.idx.id]) === cari) {
-      meta = barisUjian_(ujian.rows[i], ujian.idx, false);
+      meta = barisUjian_(ujian.rows[i], ujian.idx, false, kelas || undefined);
       break;
     }
   }
   if (!meta) return { success: false, message: "Ujian tidak ditemukan." };
   if (!meta.aktif) return { success: false, message: "Ujian belum diaktifkan admin." };
+  if (!meta.boleh) {
+    return {
+      success: false,
+      message: meta.sasaran + " — kelasmu tidak terdaftar untuk ujian ini." +
+        (kelas ? "" : " Lengkapi kelas pada data siswa/akunmu."),
+    };
+  }
 
   var soal = bacaBaris_(SHEET_SOAL);
   var daftar = [];
@@ -532,7 +780,7 @@ function submitJawaban_(data) {
   var ujian = bacaBaris_(SHEET_UJIAN);
   for (var i = 0; i < ujian.rows.length; i++) {
     if (String(ujian.rows[i][ujian.idx.id]) === ujianId) {
-      meta = barisUjian_(ujian.rows[i], ujian.idx, true);
+      meta = barisUjian_(ujian.rows[i], ujian.idx, true, kelas);
       break;
     }
   }

@@ -47,6 +47,22 @@ import {
   SelesaiFase,
 } from "@/pages/exam-fases";
 
+/** Belum waktunya? "YYYY-MM-DDTHH:mm" dibandingkan dengan waktu lokal. */
+function belumMulai(tglMulai?: string): boolean {
+  if (!tglMulai) return false;
+  const t = new Date(tglMulai).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() < t;
+}
+
+/** Label waktu mulai yang ramah baca (id-ID). */
+function labelTgl(tglMulai?: string): string {
+  if (!tglMulai) return "";
+  const d = new Date(tglMulai);
+  if (Number.isNaN(d.getTime())) return tglMulai;
+  return d.toLocaleString("id-ID", { dateStyle: "full", timeStyle: "short" });
+}
+
 function PilKoneksi({
   online,
   mode,
@@ -308,12 +324,16 @@ export default function ExamPage() {
       toast.error("Nama dan kelas wajib diisi sebelum mengunduh soal.");
       return;
     }
+    if (belumMulai(sesi?.tglMulai ?? meta?.tgl_mulai)) {
+      toast.error(`Ujian baru boleh diunduh pada ${labelTgl(meta?.tgl_mulai)}.`);
+      return;
+    }
     setBusy(true);
     setPesan(null);
     try {
       const data = await gasCall<{ ujian: UjianGas; soal: import("@/lib/api").SoalGas[] }>(
         "getSoal",
-        { id: ujianId },
+        { id: ujianId, kelas: k },
       );
       if (data.soal.length === 0) {
         throw new Error("Ujian ini belum memiliki soal.");
@@ -327,6 +347,7 @@ export default function ExamPage() {
         nama: n,
         kelas: k,
         durasi_menit: data.ujian.durasi_menit,
+        tglMulai: data.ujian.tgl_mulai || undefined,
         unduhPada: Date.now(),
         soal: data.soal.map((s) => ({
           id: s.id,
@@ -361,6 +382,10 @@ export default function ExamPage() {
     const t = token.trim().toUpperCase();
     if (!tokenValid(t)) {
       toast.error("Token tidak valid (4–12 huruf/angka, tanpa spasi).");
+      return;
+    }
+    if (belumMulai(sesi?.tglMulai)) {
+      toast.error(`Ujian baru bisa dimulai pada ${labelTgl(sesi?.tglMulai)}.`);
       return;
     }
     const now = Date.now();
@@ -579,6 +604,8 @@ export default function ExamPage() {
             deskripsi={sesi?.deskripsi ?? meta?.deskripsi}
             jumlahSoal={sesi?.soal.length ?? meta?.jumlah_soal ?? 0}
             durasiMenit={sesi?.durasi_menit ?? meta?.durasi_menit ?? 60}
+            tglMulai={meta?.tgl_mulai}
+            sasaran={meta?.sasaran}
             nama={nama}
             kelas={kelas}
             setNama={setNama}
@@ -587,6 +614,7 @@ export default function ExamPage() {
             busy={busy}
             online={online}
             onUnduh={unduhSoal}
+            terkunciJadwal={belumMulai(meta?.tgl_mulai)}
           />
         )}
 

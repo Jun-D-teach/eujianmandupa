@@ -17,6 +17,14 @@ import {
 } from "lucide-react";
 import type { Pilihan, SesiUjian } from "@/lib/exam-storage";
 
+/** Label waktu mulai id-ID (duplikat ringan dari ExamPage). */
+function labelTgl(tglMulai?: string): string {
+  if (!tglMulai) return "";
+  const d = new Date(tglMulai);
+  if (Number.isNaN(d.getTime())) return tglMulai;
+  return d.toLocaleString("id-ID", { dateStyle: "full", timeStyle: "short" });
+}
+
 /* ------------------------------------------------------------------ */
 /* FASE: SETUP — isi nama/kelas + unduh soal (online) — TANPA TOKEN    */
 /* ------------------------------------------------------------------ */
@@ -25,6 +33,8 @@ export function SetupFase(props: {
   deskripsi?: string;
   jumlahSoal: number;
   durasiMenit: number;
+  tglMulai?: string;
+  sasaran?: string;
   nama: string;
   kelas: string;
   setNama: (v: string) => void;
@@ -33,6 +43,7 @@ export function SetupFase(props: {
   busy: boolean;
   online: boolean;
   onUnduh: () => void;
+  terkunciJadwal: boolean;
 }) {
   return (
     <div className="space-y-5">
@@ -51,6 +62,20 @@ export function SetupFase(props: {
         <p className="mt-2 text-sm font-semibold text-muted-foreground">
           {props.jumlahSoal} soal · durasi {props.durasiMenit} menit
         </p>
+        {(props.sasaran || props.tglMulai) && (
+          <div className="mt-3 space-y-1 text-xs leading-5 text-muted-foreground">
+            {props.sasaran && (
+              <p>
+                Sasaran: <span className="font-semibold text-foreground">{props.sasaran}</span>
+              </p>
+            )}
+            {props.tglMulai && (
+              <p>
+                Dibuka: <span className="font-semibold text-foreground">{labelTgl(props.tglMulai)}</span>
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       <Card className="border-border/70">
@@ -112,10 +137,14 @@ export function SetupFase(props: {
             className="w-full gap-2"
             size="lg"
             onClick={props.onUnduh}
-            disabled={props.busy || !props.online}
+            disabled={props.busy || !props.online || props.terkunciJadwal}
           >
             <Download className="size-4" />
-            {props.busy ? "Mengunduh…" : "Unduh Soal"}
+            {props.terkunciJadwal
+              ? "Belum dibuka — lihat jadwal di atas"
+              : props.busy
+                ? "Mengunduh…"
+                : "Unduh Soal"}
           </Button>
           <p className="text-center text-[11px] leading-5 text-muted-foreground">
             Soal disimpan ke penyimpanan HP dan dibaca lokal saat ujian. Kunci
