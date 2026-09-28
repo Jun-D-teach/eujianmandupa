@@ -138,7 +138,7 @@ function panggilJsonp(url: string, timeoutMs = 20000): Promise<unknown> {
     const nama = `ujianaman_cb_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
     const script = document.createElement("script");
     const bersih = () => {
-      delete (window as Record<string, unknown>)[nama];
+      delete (window as unknown as Record<string, unknown>)[nama];
       script.remove();
       window.clearTimeout(timer);
     };
@@ -147,7 +147,7 @@ function panggilJsonp(url: string, timeoutMs = 20000): Promise<unknown> {
       reject(new Error("Server tidak menjawab (timeout). Periksa URL Web App GAS."));
     }, timeoutMs);
 
-    (window as Record<string, unknown>)[nama] = (data: unknown) => {
+    (window as unknown as Record<string, unknown>)[nama] = (data: unknown) => {
       bersih();
       resolve(data);
     };

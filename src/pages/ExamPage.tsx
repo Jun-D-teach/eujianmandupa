@@ -165,7 +165,7 @@ export default function ExamPage() {
   const [nama, setNama] = useState(user?.nama ?? "");
   const [kelas, setKelas] = useState(user?.kelas ?? "");
   const [token, setToken] = useState("");
-  const [sisaWaktu, setSisaWaktu] = useState<number | null>(null);
+  const [sekarang, setSekarang] = useState(() => Date.now());
   const waktuHabisRef = useRef(false);
 
   const faseRef = useRef<Fase | undefined>(sesi?.fase);
@@ -243,28 +243,27 @@ export default function ExamPage() {
     };
   }, [catatPelanggaran]);
 
-  // --- Hitung mundur ----------------------------------------------------
+  // --- Hitung mundur (state `sekarang` diperbarui interval, sisa waktu dihitung turunan) ----
   useEffect(() => {
     const batas = sesi?.batasWaktu;
-    if (sesi?.fase !== "ujian" || !batas) {
-      setSisaWaktu(null);
-      return;
-    }
-    const tick = () => {
-      const sisa = Math.max(0, Math.ceil((batas - Date.now()) / 1000));
-      setSisaWaktu(sisa);
-      if (sisa <= 0 && !waktuHabisRef.current) {
+    if (sesi?.fase !== "ujian" || !batas) return;
+    const id = window.setInterval(() => {
+      setSekarang(Date.now());
+      if (batas - Date.now() <= 0 && !waktuHabisRef.current) {
         waktuHabisRef.current = true;
         toast("Waktu ujian habis — lanjutkan ke pengiriman jawaban.");
         setSesi((prev) =>
           prev && prev.fase === "ujian" ? { ...prev, fase: "kirim" } : prev,
         );
       }
-    };
-    tick();
-    const id = window.setInterval(tick, 1000);
+    }, 1000);
     return () => window.clearInterval(id);
   }, [sesi?.fase, sesi?.batasWaktu]);
+
+  const sisaWaktu =
+    sesi?.fase === "ujian" && sesi.batasWaktu
+      ? Math.max(0, Math.ceil((sesi.batasWaktu - sekarang) / 1000))
+      : null;
 
   // --- Deteksi pindah aplikasi / tab ----------------------------------
   useEffect(() => {

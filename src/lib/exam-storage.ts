@@ -69,9 +69,10 @@ export function muatSesi(ujianId: string): SesiUjian | null {
     const data = JSON.parse(raw) as SesiUjian;
     if (!data || data.versi !== 1 || !Array.isArray(data.soal)) return null;
     // Normalisasi soal lama yang memakai _id (sebelum migrasi ke GAS).
-    data.soal = data.soal.map((s) =>
-      "id" in s ? s : { ...s, id: String((s as { _id?: string })._id ?? "") },
-    );
+    data.soal = data.soal.map((s) => {
+      const lama = s as unknown as { _id?: string };
+      return { ...s, id: s.id || String(lama._id ?? "") };
+    });
     return data;
   } catch {
     return null;
