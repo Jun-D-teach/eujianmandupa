@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { useEffect, useState } from "react";
+import { useAuth } from "@/hooks/use-auth";
+import { gasCall, tokenValid, type SoalGas, type UjianGas } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -35,7 +35,6 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useAuth } from "@/hooks/use-auth";
 
 const PILIHAN = ["A", "B", "C", "D", "E"] as const;
 const OPSI_WAJIB = ["A", "B", "C", "D"] as const;
@@ -55,10 +54,8 @@ function tokenAcak(): string {
 export function KelolaUjian() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
-  const ujian = useQuery(api.ujian.listSemua);
-  const buatUjian = useMutation(api.ujian.buat);
-  const setAktif = useMutation(api.ujian.setAktif);
-  const hapusUjian = useMutation(api.ujian.hapus);
+  const [ujian, setUjian] = useState<UjianGas[] | null>(null);
+  const [versi, setVersi] = useState(0);
 
   const [judul, setJudul] = useState("");
   const [deskripsi, setDeskripsi] = useState("");
@@ -69,25 +66,51 @@ export function KelolaUjian() {
     null,
   );
 
+  useEffect(() => {
+    let hidup = true;
+    setUjian(null);
+    gasCall<{ ujian: UjianGas[] }>("getUjian")
+      .then((res) => {
+        if (hidup) setUjian(res.ujian);
+      })
+      .catch((err) => {
+        if (hidup) {
+          toast.error(
+            err instanceof Error ? err.message : "Gagal memuat daftar ujian.",
+          );
+          setUjian([]);
+        }
+      });
+    return () => {
+      hidup = false;
+    };
+  }, [versi]);
+
+  const segarkan = () => setVersi((v) => v + 1);
+
   const buat = async () => {
     if (!judul.trim()) {
       toast.error("Judul ujian wajib diisi.");
       return;
     }
+    if (tokenBaru.trim() && !tokenValid(tokenBaru)) {
+      toast.error("Token harus 4–12 huruf/angka tanpa spasi.");
+      return;
+    }
     setBusy(true);
     try {
-      await buatUjian({
+      await gasCall("buatUjian", {
         judul: judul.trim(),
-        deskripsi: deskripsi.trim() || undefined,
+        deskripsi: deskripsi.trim(),
         token: tokenBaru.trim() || undefined,
-        durasi_menit:
-          Number.isFinite(durasi) && durasi > 0 ? Math.floor(durasi) : undefined,
+        durasi_menit: durasi,
       });
       setJudul("");
       setDeskripsi("");
       setTokenBaru("");
       setDurasi(60);
-      toast.success("Ujian dibuat. Susun soalnya lalu aktifkan.");
+      segarkan();
+      toast.success("Ujian dibuat (draft). Susun soal lalu aktifkan.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal membuat ujian.");
     } finally {
@@ -95,13 +118,14 @@ export function KelolaUjian() {
     }
   };
 
-  const ubahAktif = async (id: string, aktif: boolean, judul: string) => {
+  const ubahAktif = async (id: string, aktif: boolean, judulUjian: string) => {
     try {
-      await setAktif({ ujianId: id as never, aktif });
+      await gasCall("setAktifUjian", { id, aktif });
+      segarkan();
       toast.success(
         aktif
-          ? `"${judul}" aktif — siswa bisa mengunduh soal.`
-          : `"${judul}" dinonaktifkan.`,
+          ? `"${judulUjian}" aktif — siswa bisa mengunduh soal.`
+          : `"${judulUjian}" dinonaktifkan.`,
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal mengubah status.");
@@ -111,8 +135,9 @@ export function KelolaUjian() {
   const konfirmasiHapus = async () => {
     if (!hapusTarget) return;
     try {
-      await hapusUjian({ ujianId: hapusTarget.id as never });
+      await gasCall("hapusUjian", { id: hapusTarget.id });
       toast.success("Ujian beserta soal & hasilnya dihapus.");
+      segarkan();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal menghapus.");
     } finally {
@@ -120,7 +145,7 @@ export function KelolaUjian() {
     }
   };
 
-  if (ujian === undefined) {
+  if (ujian === null) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-56" />
@@ -136,7 +161,7 @@ export function KelolaUjian() {
         <h1 className="text-2xl font-extrabold tracking-tight">Kelola ujian</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {isAdmin
-            ? "Buat ujian, atur token & waktu, lalu aktifkan untuk siswa."
+            ? "Buat ujian, atur token & waktu, lalu aktifkan; token dibagikan ke pengawas ruang."
             : "Susun soal, pilihan jawaban, dan kunci jawaban ujian yang sudah dibuat admin."}
         </p>
       </div>
@@ -196,8 +221,9 @@ export function KelolaUjian() {
         </Card>
       ) : (
         <div className="rounded-2xl border border-dashed border-border/70 bg-muted/50 px-4 py-3 text-sm leading-6 text-muted-foreground">
-          Token, waktu, dan status aktif ujian diset oleh <strong className="text-foreground">admin</strong>.
-          Kamu fokus menyusun soal dan kunci jawabannya.
+          Token, waktu, dan status aktif ujian diset oleh{" "}
+          <strong className="text-foreground">admin</strong>. Kamu fokus menyusun
+          soal dan kunci jawabannya.
         </div>
       )}
 
@@ -214,8 +240,8 @@ export function KelolaUjian() {
         <Accordion type="multiple" className="space-y-4">
           {ujian.map((u) => (
             <AccordionItem
-              key={u._id}
-              value={u._id}
+              key={u.id}
+              value={u.id}
               className="overflow-hidden rounded-3xl border border-border/70 bg-card px-5 shadow-[0_1px_2px_rgba(16,20,24,0.04)]"
             >
               <AccordionTrigger className="hover:no-underline">
@@ -228,8 +254,7 @@ export function KelolaUjian() {
                       {u.judul}
                     </span>
                     <span className="mt-0.5 block text-xs text-muted-foreground">
-                      {u.jumlah_soal} soal · {u.jumlah_hasil} siswa mengirim
-                      jawaban
+                      {u.jumlah_soal} soal · durasi {u.durasi_menit} menit
                     </span>
                   </span>
                   <span className="ml-auto flex items-center gap-2">
@@ -251,7 +276,7 @@ export function KelolaUjian() {
                         variant={u.aktif ? "outline" : "default"}
                         size="sm"
                         className="gap-2"
-                        onClick={() => ubahAktif(u._id, !u.aktif, u.judul)}
+                        onClick={() => ubahAktif(u.id, !u.aktif, u.judul)}
                       >
                         <Power className="size-4" />
                         {u.aktif ? "Nonaktifkan" : "Aktifkan ujian"}
@@ -260,13 +285,10 @@ export function KelolaUjian() {
                         variant="outline"
                         size="sm"
                         className="gap-2 text-red-600 hover:text-red-700"
-                        onClick={() => setHapusTarget({ id: u._id, judul: u.judul })}
+                        onClick={() => setHapusTarget({ id: u.id, judul: u.judul })}
                       >
                         <Trash2 className="size-4" /> Hapus ujian
                       </Button>
-                      <Badge variant="secondary" className="ml-auto">
-                        Durasi {u.durasi_menit} menit
-                      </Badge>
                     </div>
                   ) : (
                     <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-muted-foreground">
@@ -278,14 +300,10 @@ export function KelolaUjian() {
                   )}
 
                   {isAdmin && (
-                    <PanelPengaturan
-                      ujianId={u._id}
-                      token={u.token}
-                      durasi={u.durasi_menit}
-                    />
+                    <PanelPengaturan ujianId={u.id} token={u.token ?? ""} durasi={u.durasi_menit} />
                   )}
 
-                  <PanelSoal ujianId={u._id} />
+                  <PanelSoal ujianId={u.id} />
                 </div>
               </AccordionContent>
             </AccordionItem>
@@ -302,7 +320,7 @@ export function KelolaUjian() {
             <AlertDialogTitle>Hapus ujian ini?</AlertDialogTitle>
             <AlertDialogDescription>
               "{hapusTarget?.judul}" beserta seluruh soal dan hasil siswanya akan
-              dihapus permanen.
+              dihapus permanen dari Google Sheets.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -320,13 +338,9 @@ export function KelolaUjian() {
   );
 }
 
-/** Daftar soal + form tambah soal untuk satu ujian. */
+/** Daftar soal + form tambah soal untuk satu ujian (GAS, dengan kunci). */
 function PanelSoal({ ujianId }: { ujianId: string }) {
-  const soal = useQuery(api.soal.daftar, { ujianId: ujianId as never });
-  const tambah = useMutation(api.soal.tambah);
-  const tambahContoh = useMutation(api.soal.tambahContoh);
-  const hapusSoal = useMutation(api.soal.hapus);
-
+  const [soal, setSoal] = useState<SoalGas[] | null>(null);
   const [form, setForm] = useState({
     pertanyaan: "",
     opsi_a: "",
@@ -338,8 +352,19 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
   const [kunci, setKunci] = useState<Kunci>("A");
   const [busy, setBusy] = useState(false);
 
-  const set = (field: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm((f) => ({ ...f, [field]: e.target.value }));
+  const muat = () => {
+    setSoal(null);
+    gasCall<{ soal: SoalGas[] }>("getSoalAdmin", { ujian_id: ujianId })
+      .then((res) => setSoal(res.soal))
+      .catch(() => setSoal([]));
+  };
+
+  useEffect(muat, [ujianId]);
+
+  const set =
+    (field: keyof typeof form) =>
+    (e: React.ChangeEvent<HTMLInputElement>) =>
+      setForm((f) => ({ ...f, [field]: e.target.value }));
 
   const simpan = async () => {
     if (!form.pertanyaan.trim()) {
@@ -350,16 +375,20 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       toast.error("Opsi A–D wajib diisi; opsi E bersifat opsional.");
       return;
     }
+    if (kunci === "E" && !form.opsi_e.trim()) {
+      toast.error("Opsi E kosong — pilih kunci A–D atau isi opsi E.");
+      return;
+    }
     setBusy(true);
     try {
-      await tambah({
-        ujianId: ujianId as never,
+      await gasCall("tambahSoal", {
+        ujian_id: ujianId,
         pertanyaan: form.pertanyaan.trim(),
         opsi_a: form.opsi_a.trim(),
         opsi_b: form.opsi_b.trim(),
         opsi_c: form.opsi_c.trim(),
         opsi_d: form.opsi_d.trim(),
-        opsi_e: form.opsi_e.trim() || undefined,
+        opsi_e: form.opsi_e.trim(),
         kunci_jawaban: kunci,
       });
       setForm({
@@ -371,6 +400,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
         opsi_e: "",
       });
       setKunci("A");
+      muat();
       toast.success("Soal ditambahkan.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal menambah soal.");
@@ -382,8 +412,9 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
   const isiContoh = async () => {
     setBusy(true);
     try {
-      const n = await tambahContoh({ ujianId: ujianId as never });
-      toast.success(`${n} soal contoh ditambahkan.`);
+      await gasCall("tambahSoalContoh", { ujian_id: ujianId });
+      muat();
+      toast.success("5 soal contoh ditambahkan.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal mengisi contoh.");
     } finally {
@@ -393,24 +424,23 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
 
   const buang = async (id: string) => {
     try {
-      await hapusSoal({ soalId: id as never });
+      await gasCall("hapusSoal", { id });
+      muat();
       toast.success("Soal dihapus.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal menghapus soal.");
     }
   };
 
-  if (soal === undefined) return <Skeleton className="h-32 w-full" />;
+  if (soal === null) return <Skeleton className="h-32 w-full" />;
 
   return (
     <div className="space-y-5">
-      {/* Daftar soal */}
       {soal.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border/70 px-4 py-8 text-center">
           <p className="text-sm font-semibold">Belum ada soal</p>
           <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
-            Tambahkan soal satu per satu, atau isi 5 soal contoh untuk
-            percobaan.
+            Tambahkan soal satu per satu, atau isi 5 soal contoh untuk percobaan.
           </p>
           <Button
             variant="outline"
@@ -426,7 +456,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
         <ol className="space-y-3">
           {soal.map((s, i) => (
             <li
-              key={s._id}
+              key={s.id}
               className="rounded-2xl border border-border/70 bg-background/60 p-4"
             >
               <div className="flex items-start justify-between gap-3">
@@ -452,7 +482,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                   variant="ghost"
                   size="icon"
                   className="shrink-0 text-muted-foreground hover:text-red-600"
-                  onClick={() => buang(s._id)}
+                  onClick={() => buang(s.id)}
                   aria-label="Hapus soal"
                 >
                   <Trash2 className="size-4" />
@@ -478,9 +508,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                 key={p}
                 value={form[`opsi_${p}` as keyof typeof form]}
                 onChange={set(`opsi_${p}` as keyof typeof form)}
-                placeholder={
-                  p === "E" ? "Opsi E (opsional)" : `Opsi ${p}`
-                }
+                placeholder={p === "E" ? "Opsi E (opsional)" : `Opsi ${p}`}
               />
             ))}
           </div>
@@ -529,17 +557,14 @@ function PanelPengaturan({
   token: string;
   durasi: number;
 }) {
-  const atur = useMutation(api.ujian.aturPengaturan);
   const [nilaiToken, setNilaiToken] = useState(token);
   const [nilaiDurasi, setNilaiDurasi] = useState(String(durasi));
   const [busy, setBusy] = useState(false);
 
-  const acakToken = () => setNilaiToken(tokenAcak());
-
   const simpan = async () => {
     const menit = Math.floor(Number(nilaiDurasi));
-    if (!nilaiToken.trim()) {
-      toast.error("Token ujian wajib diisi.");
+    if (!tokenValid(nilaiToken)) {
+      toast.error("Token harus 4–12 huruf/angka tanpa spasi.");
       return;
     }
     if (!Number.isFinite(menit) || menit < 1 || menit > 600) {
@@ -548,8 +573,8 @@ function PanelPengaturan({
     }
     setBusy(true);
     try {
-      await atur({
-        ujianId: ujianId as never,
+      await gasCall("aturUjian", {
+        id: ujianId,
         token: nilaiToken.trim().toUpperCase(),
         durasi_menit: menit,
       });
@@ -589,7 +614,7 @@ function PanelPengaturan({
               variant="outline"
               size="icon"
               className="shrink-0"
-              onClick={acakToken}
+              onClick={() => setNilaiToken(tokenAcak())}
               aria-label="Acak token"
             >
               <RefreshCw className="size-4" />
@@ -613,8 +638,8 @@ function PanelPengaturan({
           Simpan pengaturan
         </Button>
         <p className="text-xs leading-5 text-muted-foreground">
-          Siswa wajib memasukkan token ini untuk mengunduh soal; durasi dihitung
-          sejak tombol Mulai Ujian.
+          Token dibagikan ke <strong>pengawas ruang</strong>; siswa memasukkannya
+          saat menekan Mulai Ujian (validasi lokal, bisa offline).
         </p>
       </div>
     </div>

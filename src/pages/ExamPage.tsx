@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useConvex, useMutation, useQuery } from "convex/react";
-import { useParams, useNavigate } from "react-router";
-import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import { useNavigate, useParams } from "react-router";
 import { useAuth } from "@/hooks/use-auth";
 import { useOnline } from "@/hooks/use-online";
+import { gasCall, cekPin, tokenValid, type UjianGas } from "@/lib/api";
 import {
   hapusSesi,
   muatSesi,
@@ -14,11 +12,8 @@ import {
 } from "@/lib/exam-storage";
 import { bunyikanSirene } from "@/lib/siren";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
 import {
   InputOTP,
   InputOTPGroup,
@@ -38,23 +33,19 @@ import { motion } from "framer-motion";
 import {
   AlertTriangle,
   ArrowLeft,
-  ArrowRight,
-  CheckCircle2,
   Clock,
-  Download,
-  Grid3X3,
   Lock,
-  Send,
   ShieldAlert,
   Siren,
-  Trophy,
-  Wifi,
-  WifiOff,
 } from "lucide-react";
 import { toast } from "sonner";
-
-/** Huruf jawaban siswa — hanya huruf A–E yang disimpan di sesi & server. */
-type Pilihan = SesiUjian["jawaban"][string];
+import {
+  SetupFase,
+  InstruksiFase,
+  UjianFase,
+  KirimFase,
+  SelesaiFase,
+} from "@/pages/exam-fases";
 
 function PilKoneksi({
   online,
@@ -68,11 +59,11 @@ function PilKoneksi({
   if (mode === "kirim") {
     return online ? (
       <span className={`${dasar} bg-emerald-500/15 text-emerald-700`}>
-        <Wifi className="size-3.5" /> Terhubung · siap kirim
+        <WifiIcon className="size-3.5" /> Terhubung · siap kirim
       </span>
     ) : (
       <span className={`${dasar} bg-amber-500/15 text-amber-700`}>
-        <WifiOff className="size-3.5" /> Belum terhubung
+        <WifiOffIcon className="size-3.5" /> Belum terhubung
       </span>
     );
   }
@@ -86,6 +77,45 @@ function PilKoneksi({
       <span className="size-1.5 rounded-full bg-emerald-500" />
       Offline · aman
     </span>
+  );
+}
+
+function WifiIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M5 13a10 10 0 0 1 14 0" />
+      <path d="M8.5 16.5a5 5 0 0 1 7 0" />
+      <path d="M2 8.82a15 15 0 0 1 20 0" />
+      <line x1="12" x2="12.01" y1="20" y2="20" />
+    </svg>
+  );
+}
+
+function WifiOffIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <line x1="2" x2="22" y1="2" y2="22" />
+      <path d="M8.5 16.5a5 5 0 0 1 7 0" />
+      <path d="M2 8.82a15 15 0 0 1 4.17-2.65" />
+      <path d="M10.66 5c4.01-.36 8.14.9 11.34 3.76" />
+      <line x1="12" x2="12.01" y1="20" y2="20" />
+    </svg>
   );
 }
 
@@ -112,22 +142,16 @@ function StrikeDots({ strike }: { strike: number }) {
 
 export default function ExamPage() {
   const params = useParams<{ ujianId: string }>();
-  const ujianId = params.ujianId as Id<"ujian"> | undefined;
+  const ujianId = params.ujianId ?? "";
   const navigate = useNavigate();
   const { user } = useAuth();
   const online = useOnline();
-  const convex = useConvex();
 
   const [sesi, setSesi] = useState<SesiUjian | null>(() =>
     ujianId ? muatSesi(ujianId) : null,
   );
-  const ujianMeta = useQuery(
-    api.ujian.get,
-    ujianId ? { ujianId } : "skip",
-  );
-  const kirimHasil = useMutation(api.hasil.kirim);
-  const perbaruiProfil = useMutation(api.profil.perbarui);
-  const bukaKunciServer = useMutation(api.ujian.bukaKunci);
+  // Metadata ujian dari GAS (tanpa token). undefined = memuat.
+  const [meta, setMeta] = useState<UjianGas | null | undefined>(undefined);
 
   const [busy, setBusy] = useState(false);
   const [pesan, setPesan] = useState<string | null>(null);
@@ -138,7 +162,7 @@ export default function ExamPage() {
   const [pesanKunci, setPesanKunci] = useState<string | null>(null);
   const [bukaBusy, setBukaBusy] = useState(false);
   const [tampilGrid, setTampilGrid] = useState(false);
-  const [nama, setNama] = useState(user?.name ?? "");
+  const [nama, setNama] = useState(user?.nama ?? "");
   const [kelas, setKelas] = useState(user?.kelas ?? "");
   const [token, setToken] = useState("");
   const [sisaWaktu, setSisaWaktu] = useState<number | null>(null);
@@ -175,10 +199,7 @@ export default function ExamPage() {
         ? {
             ...prev,
             strike: nilaiStrike,
-            pelanggaran: [
-              ...prev.pelanggaran,
-              { jenis, waktu: Date.now() },
-            ],
+            pelanggaran: [...prev.pelanggaran, { jenis, waktu: Date.now() }],
           }
         : prev,
     );
@@ -222,36 +243,7 @@ export default function ExamPage() {
     };
   }, [catatPelanggaran]);
 
-  // Saat ujian dimulai / dilanjutkan, periksa koneksi sekali lagi
-  // (dilindungi onlineFlagRef agar tidak dobel di StrictMode).
-  useEffect(() => {
-    if (sesi?.fase !== "ujian") return;
-    if (!navigator.onLine) {
-      onlineFlagRef.current = false;
-      return;
-    }
-    if (!onlineFlagRef.current && Date.now() >= graceRef.current) {
-      onlineFlagRef.current = true;
-      catatPelanggaran("online");
-    }
-  }, [sesi?.fase, catatPelanggaran]);
-
-  // --- Waktu ujian (diset admin) ---------------------------------------
-  // Sesi lama tanpa batas waktu: mulai hitung mundur saat ujian dibuka.
-  useEffect(() => {
-    if (sesi?.fase !== "ujian" || sesi.batasWaktu) return;
-    setSesi((prev) =>
-      prev && prev.fase === "ujian" && !prev.batasWaktu
-        ? {
-            ...prev,
-            durasi_menit: prev.durasi_menit ?? 60,
-            batasWaktu: Date.now() + (prev.durasi_menit ?? 60) * 60_000,
-          }
-        : prev,
-    );
-  }, [sesi?.fase, sesi?.batasWaktu]);
-
-  // Hitung mundur: saat habis, otomatis pindah ke tahap pengiriman.
+  // --- Hitung mundur ----------------------------------------------------
   useEffect(() => {
     const batas = sesi?.batasWaktu;
     if (sesi?.fase !== "ujian" || !batas) {
@@ -291,27 +283,39 @@ export default function ExamPage() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [catatPelanggaran]);
 
+  // --- Muat metadata ujian dari GAS ------------------------------------
+  useEffect(() => {
+    if (!ujianId) return;
+    let hidup = true;
+    gasCall<{ ujian: UjianGas }>("getUjianInfo", { id: ujianId })
+      .then((res) => {
+        if (hidup) setMeta(res.ujian);
+      })
+      .catch(() => {
+        if (hidup) setMeta(null);
+      });
+    return () => {
+      hidup = false;
+    };
+  }, [ujianId]);
+
   // --- Aksi fase -------------------------------------------------------
+  /** Unduh soal TANPA token (online) — sesuai alur baru. */
   const unduhSoal = async () => {
     if (!ujianId) return;
     const n = nama.trim();
     const k = kelas.trim();
-    const t = token.trim().toUpperCase();
     if (!n || !k) {
       toast.error("Nama dan kelas wajib diisi sebelum mengunduh soal.");
-      return;
-    }
-    if (!t) {
-      toast.error("Masukkan token ujian yang diberikan pengawas.");
       return;
     }
     setBusy(true);
     setPesan(null);
     try {
-      const data = await convex.query(api.soal.untukSiswa, {
-        ujianId,
-        token: t,
-      });
+      const data = await gasCall<{ ujian: UjianGas; soal: import("@/lib/api").SoalGas[] }>(
+        "getSoal",
+        { id: ujianId },
+      );
       if (data.soal.length === 0) {
         throw new Error("Ujian ini belum memiliki soal.");
       }
@@ -325,7 +329,15 @@ export default function ExamPage() {
         kelas: k,
         durasi_menit: data.ujian.durasi_menit,
         unduhPada: Date.now(),
-        soal: data.soal,
+        soal: data.soal.map((s) => ({
+          id: s.id,
+          pertanyaan: s.pertanyaan,
+          opsi_a: s.opsi_a,
+          opsi_b: s.opsi_b,
+          opsi_c: s.opsi_c,
+          opsi_d: s.opsi_d,
+          opsi_e: s.opsi_e || undefined,
+        })),
         jawaban: {},
         indeks: 0,
         strike: 0,
@@ -333,7 +345,6 @@ export default function ExamPage() {
       };
       setSesi(baru);
       simpanSesi(baru);
-      void perbaruiProfil({ nama: n, kelas: k }).catch(() => {});
       toast.success(`${data.soal.length} soal tersimpan di HP.`);
     } catch (err) {
       setPesan(
@@ -346,7 +357,13 @@ export default function ExamPage() {
     }
   };
 
+  /** Mulai ujian: validasi token LOKAL — bisa dilakukan saat offline. */
   const mulaiUjian = () => {
+    const t = token.trim().toUpperCase();
+    if (!tokenValid(t)) {
+      toast.error("Token tidak valid (4–12 huruf/angka, tanpa spasi).");
+      return;
+    }
     const now = Date.now();
     waktuHabisRef.current = false;
     setSesi((prev) =>
@@ -354,6 +371,7 @@ export default function ExamPage() {
         ? {
             ...prev,
             fase: "ujian",
+            token: t,
             mulaiPada: now,
             batasWaktu: now + (prev.durasi_menit ?? 60) * 60_000,
             strike: 0,
@@ -366,13 +384,13 @@ export default function ExamPage() {
     hiddenFlagRef.current = false;
   };
 
-  const jawab = (pilihan: Pilihan) => {
+  const jawab = (pilihan: SesiUjian["jawaban"][string]) => {
     if (!sesi) return;
     const soal = sesi.soal[sesi.indeks];
     if (!soal) return;
     setSesi({
       ...sesi,
-      jawaban: { ...sesi.jawaban, [soal._id]: pilihan },
+      jawaban: { ...sesi.jawaban, [soal.id]: pilihan },
     });
   };
 
@@ -383,40 +401,34 @@ export default function ExamPage() {
   };
 
   /**
-   * Buka kunci layar: wajib HP ONLINE (dikirim ke server), PIN diverifikasi
-   * di server, dan pembukaan dicatat sebagai audit. Sesi & jawaban lama tidak
-   * disentuh — siswa melanjutkan ujian secara offline setelah internet
-   * dimatikan lagi.
+   * Buka kunci layar: PIN diverifikasi LOKAL di perangkat (bisa offline).
+   * Strike direset, jawaban tetap ada. Audit dikirim best-effort saat online.
    */
-  const bukaKunci = async (nilaiPin: string) => {
+  const bukaKunci = (nilaiPin: string) => {
     if (bukaBusy) return;
-    setPesanKunci(null);
-    if (!ujianId) return;
-    if (!online) {
-      setPesanKunci(
-        "HP masih offline. Sambungkan internet (di depan pengawas) untuk membuka kunci.",
-      );
-      setPinSalah((n) => n + 1);
-      return;
-    }
     setBukaBusy(true);
     try {
-      await bukaKunciServer({ ujianId, pin: nilaiPin });
-      // Jawaban & sesi TIDAK dihapus — hanya strike yang direset.
-      graceRef.current = Date.now() + 15_000; // 15 detik untuk mematikan internet
+      if (!cekPin(nilaiPin)) {
+        setPinSalah((n) => n + 1);
+        setPesanKunci("PIN salah. Minta PIN pengawas ruang.");
+        return;
+      }
+      // PIN benar → buka kunci (jawaban & sesi tidak disentuh).
+      graceRef.current = Date.now() + 15_000;
       setSesi((prev) => (prev ? { ...prev, strike: 0 } : prev));
       strikeRef.current = 0;
       onlineFlagRef.current = false;
       hiddenFlagRef.current = false;
       setPin("");
-      toast.success(
-        "PIN terverifikasi. Matikan internet dalam 15 detik, lalu lanjutkan ujian.",
-      );
-    } catch (err) {
-      setPinSalah((n) => n + 1);
-      setPesanKunci(
-        err instanceof Error ? err.message : "Gagal memverifikasi PIN.",
-      );
+      setPesanKunci(null);
+      toast.success("Kunci dibuka. Matikan internet lagi, lalu lanjutkan ujian.");
+      if (navigator.onLine) {
+        void gasCall("catatBukaKunci", {
+          ujian_id: ujianId,
+          nama: `${sesi?.nama ?? "-"} (${sesi?.kelas ?? "-"})`,
+          catatan: "PIN diverifikasi lokal oleh pengawas",
+        }).catch(() => {});
+      }
     } finally {
       setBukaBusy(false);
     }
@@ -426,14 +438,20 @@ export default function ExamPage() {
     if (!sesi || !ujianId) return;
     setBusy(true);
     try {
-      const res = await kirimHasil({
-        ujianId,
+      const res = await gasCall<{
+        nilai: number;
+        benar: number;
+        total_soal: number;
+        total_pelanggaran: number;
+      }>("submitJawaban", {
+        ujian_id: ujianId,
         nama: sesi.nama,
         kelas: sesi.kelas,
+        token: sesi.token ?? "",
         total_pelanggaran: sesi.pelanggaran.length,
         jawaban: sesi.soal.map((s) => ({
-          soal_id: s._id as Id<"soal">,
-          pilihan: sesi.jawaban[s._id],
+          id_soal: s.id,
+          pilihan: sesi.jawaban[s.id],
         })),
       });
       setSesi((prev) =>
@@ -472,7 +490,7 @@ export default function ExamPage() {
       </Shell>
     );
   }
-  if (sesi === null && ujianMeta === undefined) {
+  if (sesi === null && meta === undefined) {
     return (
       <Shell>
         <div className="space-y-4">
@@ -482,11 +500,11 @@ export default function ExamPage() {
       </Shell>
     );
   }
-  if (sesi === null && ujianMeta === null) {
+  if (sesi === null && meta === null) {
     return (
       <Shell>
         <p className="text-sm text-muted-foreground">
-          Ujian ini sudah dihapus atau tautannya salah.
+          Ujian ini sudah dihapus, belum aktif, atau tautannya salah.
         </p>
         <Button className="mt-4" onClick={() => navigate("/dashboard")}>
           Kembali ke beranda
@@ -496,7 +514,7 @@ export default function ExamPage() {
   }
 
   const totalTerjawab = sesi
-    ? sesi.soal.filter((s) => sesi.jawaban[s._id]).length
+    ? sesi.soal.filter((s) => sesi.jawaban[s.id]).length
     : 0;
 
   return (
@@ -520,7 +538,7 @@ export default function ExamPage() {
               </span>
             )}
             <span className="truncate text-sm font-bold tracking-tight">
-              {sesi?.judul ?? ujianMeta?.judul ?? "Ujian"}
+              {sesi?.judul ?? meta?.judul ?? "Ujian"}
             </span>
           </div>
 
@@ -558,16 +576,14 @@ export default function ExamPage() {
       <main className="mx-auto w-full max-w-2xl px-4 py-6 pb-24">
         {fase === "setup" && (
           <SetupFase
-            judul={sesi?.judul ?? ujianMeta?.judul ?? ""}
-            deskripsi={sesi?.deskripsi ?? ujianMeta?.deskripsi}
-            jumlahSoal={sesi?.soal.length ?? ujianMeta?.jumlah_soal ?? 0}
-            durasiMenit={sesi?.durasi_menit ?? ujianMeta?.durasi_menit ?? 60}
+            judul={sesi?.judul ?? meta?.judul ?? ""}
+            deskripsi={sesi?.deskripsi ?? meta?.deskripsi}
+            jumlahSoal={sesi?.soal.length ?? meta?.jumlah_soal ?? 0}
+            durasiMenit={sesi?.durasi_menit ?? meta?.durasi_menit ?? 60}
             nama={nama}
             kelas={kelas}
             setNama={setNama}
             setKelas={setKelas}
-            token={token}
-            setToken={setToken}
             pesan={pesan}
             busy={busy}
             online={online}
@@ -576,7 +592,18 @@ export default function ExamPage() {
         )}
 
         {fase === "instruksi" && sesi && (
-          <InstruksiFase sesi={sesi} online={online} onMulai={mulaiUjian} onUlang={() => { hapusSesi(sesi.ujianId); setSesi(null); }} />
+          <InstruksiFase
+            sesi={sesi}
+            online={online}
+            token={token}
+            setToken={setToken}
+            onMulai={mulaiUjian}
+            onUlang={() => {
+              hapusSesi(sesi.ujianId);
+              setSesi(null);
+              setToken("");
+            }}
+          />
         )}
 
         {fase === "ujian" && sesi && (
@@ -658,7 +685,7 @@ export default function ExamPage() {
               </div>
               <p className="text-xs text-white/50">
                 Pada strike ke-3 layar akan terkunci total dan hanya pengawas
-                yang dapat membukanya.
+                yang dapat membukanya dengan PIN.
               </p>
             </div>
             <div className="px-5 pb-5">
@@ -674,7 +701,7 @@ export default function ExamPage() {
         </div>
       )}
 
-      {/* Layar terkunci (3 strike) */}
+      {/* Layar terkunci (3 strike) — PIN pengawas, verifikasi lokal */}
       {terkunci && sesi && (
         <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-gradient-to-b from-[#7f1d1d] via-[#991b1b] to-[#5f1414] p-6 text-center text-white">
           <motion.div
@@ -691,8 +718,8 @@ export default function ExamPage() {
             </h2>
             <p className="mt-3 text-sm leading-6 text-white/80">
               Terdeteksi <strong>3 pelanggaran</strong> selama ujian berlangsung.
-              Aplikasi dikunci total. Serahkan HP kepada pengawas — kunci hanya
-              terbuka saat HP <strong>ONLINE</strong> dan PIN diverifikasi server.
+              Serahkan HP kepada pengawas untuk memasukkan PIN — setelah terbuka,
+              jawaban sebelumnya tetap ada dan ujian bisa dilanjutkan offline.
             </p>
 
             <div className="mt-5 flex justify-center gap-2">
@@ -714,36 +741,20 @@ export default function ExamPage() {
               transition={{ duration: 0.35 }}
               className="mt-7 rounded-3xl bg-white/10 p-5 ring-1 ring-white/15"
             >
-              <div className="flex items-center justify-between gap-3">
-                <Label
-                  htmlFor="pin"
-                  className="text-xs font-bold uppercase tracking-wider text-white/70"
-                >
-                  PIN Pengawas
-                </Label>
-                <span
-                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${
-                    online
-                      ? "bg-emerald-400/15 text-emerald-300"
-                      : "bg-amber-400/15 text-amber-300"
-                  }`}
-                >
-                  <span
-                    className={`size-1.5 rounded-full ${
-                      online ? "bg-emerald-400" : "bg-amber-400"
-                    }`}
-                  />
-                  {online ? "Online · siap verifikasi" : "Offline · sambungkan internet"}
-                </span>
-              </div>
+              <Label
+                htmlFor="pin"
+                className="text-xs font-bold uppercase tracking-wider text-white/70"
+              >
+                PIN Pengawas
+              </Label>
               <div className="mt-3 flex justify-center">
                 <InputOTP
                   maxLength={6}
                   value={pin}
-                  disabled={!online || bukaBusy}
+                  disabled={bukaBusy}
                   onChange={(v) => {
                     setPin(v);
-                    if (v.length === 6) void bukaKunci(v);
+                    if (v.length === 6) bukaKunci(v);
                   }}
                 >
                   <InputOTPGroup>
@@ -758,9 +769,8 @@ export default function ExamPage() {
                 </InputOTP>
               </div>
               <p className="mt-3 text-xs leading-5 text-white/65">
-                {online
-                  ? "Kunci hanya bisa dibuka saat HP online. Setelah terbuka, matikan internet lagi dan lanjutkan jawaban sebelumnya."
-                  : "Wajib online untuk membuka kunci — sambungkan internet di depan pengawas terlebih dahulu."}
+                Kunci dibuka dengan PIN pengawas di perangkat (tidak butuh
+                internet). Audit pembukaan dikirim ke server bila HP online.
               </p>
               {pesanKunci && (
                 <p className="mt-2 rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-amber-300">
@@ -787,7 +797,7 @@ export default function ExamPage() {
             <AlertDialogTitle>Selesaikan ujian?</AlertDialogTitle>
             <AlertDialogDescription>
               {totalTerjawab < (sesi?.soal.length ?? 0)
-                ? `Masih ada ${sesi!.soal.length - totalTerjawab} soal yang belum dijawab. Jawaban yang kosong dihitung salah.`
+                ? `Masih ada ${(sesi?.soal.length ?? 0) - totalTerjawab} soal yang belum dijawab. Jawaban yang kosong dihitung salah.`
                 : "Semua soal sudah terjawab. Lanjut ke halaman pengiriman."}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -814,557 +824,5 @@ function Shell({ children }: { children: React.ReactNode }) {
     <main className="flex min-h-screen flex-col items-center justify-center bg-background px-6 text-center">
       {children}
     </main>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* FASE: SETUP — isi nama/kelas + unduh soal (online)                  */
-/* ------------------------------------------------------------------ */
-function SetupFase(props: {
-  judul: string;
-  deskripsi?: string;
-  jumlahSoal: number;
-  durasiMenit: number;
-  nama: string;
-  kelas: string;
-  setNama: (v: string) => void;
-  setKelas: (v: string) => void;
-  token: string;
-  setToken: (v: string) => void;
-  pesan: string | null;
-  busy: boolean;
-  online: boolean;
-  onUnduh: () => void;
-}) {
-  return (
-    <div className="space-y-5">
-      <div>
-        <Badge variant="secondary" className="mb-3">
-          Tahap 1 · Unduh soal
-        </Badge>
-        <h1 className="text-2xl font-extrabold tracking-tight">
-          {props.judul || "Ujian"}
-        </h1>
-        {props.deskripsi && (
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            {props.deskripsi}
-          </p>
-        )}
-        <p className="mt-2 text-sm font-semibold text-muted-foreground">
-          {props.jumlahSoal} soal · durasi {props.durasiMenit} menit
-        </p>
-      </div>
-
-      <Card className="border-border/70">
-        <CardContent className="space-y-4 p-5">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label htmlFor="nama">Nama lengkap</Label>
-              <Input
-                id="nama"
-                value={props.nama}
-                onChange={(e) => props.setNama(e.target.value)}
-                placeholder="cth. Ayu Lestari"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="kelas">Kelas</Label>
-              <Input
-                id="kelas"
-                value={props.kelas}
-                onChange={(e) => props.setKelas(e.target.value)}
-                placeholder="cth. XII-IPA-2"
-              />
-            </div>
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="token">Token ujian</Label>
-            <Input
-              id="token"
-              value={props.token}
-              onChange={(e) => props.setToken(e.target.value.toUpperCase())}
-              placeholder="cth. K7XM3P"
-              maxLength={12}
-              autoComplete="off"
-              autoCapitalize="characters"
-              className="font-mono text-lg font-bold uppercase tracking-[0.35em]"
-            />
-            <p className="text-xs text-muted-foreground">
-              Token diset admin/pengawas dan dibagikan saat ujian dimulai.
-              Soal tidak bisa diunduh tanpa token yang benar.
-            </p>
-          </div>
-
-          <div
-            className={`flex items-start gap-2.5 rounded-2xl border px-4 py-3 text-xs leading-5 ${
-              props.online
-                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800"
-                : "border-amber-500/30 bg-amber-500/10 text-amber-800"
-            }`}
-          >
-            {props.online ? (
-              <>
-                <Wifi className="mt-0.5 size-4 shrink-0" />
-                <span>
-                  Terhubung internet — soal bisa diunduh sekarang. Setelah
-                  diunduh, matikan WiFi/data sebelum memulai ujian.
-                </span>
-              </>
-            ) : (
-              <>
-                <WifiOff className="mt-0.5 size-4 shrink-0" />
-                <span>
-                  Tidak ada koneksi. Sambungkan internet sementara untuk
-                  mengunduh soal.
-                </span>
-              </>
-            )}
-          </div>
-
-          {props.pesan && (
-            <p className="rounded-xl bg-red-500/10 px-4 py-3 text-xs font-semibold text-red-600">
-              {props.pesan}
-            </p>
-          )}
-
-          <Button
-            className="w-full gap-2"
-            size="lg"
-            onClick={props.onUnduh}
-            disabled={props.busy || !props.online}
-          >
-            <Download className="size-4" />
-            {props.busy ? "Mengunduh…" : "Unduh Soal"}
-          </Button>
-          <p className="text-center text-[11px] leading-5 text-muted-foreground">
-            Soal disimpan ke penyimpanan HP dan dibaca lokal saat ujian.
-            Kunci jawaban tidak pernah dikirim ke perangkat siswa.
-          </p>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* FASE: INSTRUKSI — persiapan offline                                 */
-/* ------------------------------------------------------------------ */
-function InstruksiFase(props: {
-  sesi: SesiUjian;
-  online: boolean;
-  onMulai: () => void;
-  onUlang: () => void;
-}) {
-  const aturan = [
-    "MATIKAN WiFi dan paket data seluler sekarang. Ujian hanya boleh dikerjakan dalam keadaan offline.",
-    "Jangan berpindah aplikasi, membuka tab lain, atau meminimize browser selama ujian.",
-    `Waktu ujian ${props.sesi.durasi_menit ?? 60} menit, dihitung sejak tombol Mulai Ujian. Saat waktu habis sistem otomatis berpindah ke pengiriman jawaban.`,
-    "Setiap pelanggaran membunyikan sirene dan menambah 1 strike.",
-    "Pada strike ke-3 layar terkunci total; hanya terbuka saat HP online dengan PIN pengawas yang diverifikasi server.",
-    "Jawaban tersimpan otomatis di HP. Setelah selesai, nyalakan internet kembali untuk mengirim.",
-  ];
-
-  return (
-    <div className="space-y-5">
-      <div>
-        <Badge variant="secondary" className="mb-3">
-          Tahap 2 · Persiapan offline
-        </Badge>
-        <h1 className="text-2xl font-extrabold tracking-tight">
-          Baca aturan sebelum mulai
-        </h1>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          {props.sesi.judul} · {props.sesi.soal.length} soal · durasi{" "}
-          {props.sesi.durasi_menit ?? 60} menit · {props.sesi.nama} ({
-          props.sesi.kelas
-          })
-        </p>
-      </div>
-
-      <Card
-        className={`border-2 ${
-          props.online
-            ? "border-red-500/50 bg-red-500/5"
-            : "border-emerald-500/40 bg-emerald-500/5"
-        }`}
-      >
-        <CardContent className="flex items-center gap-3 p-5">
-          {props.online ? (
-            <>
-              <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-red-500/15 text-red-600">
-                <Wifi className="size-5" />
-              </span>
-              <div>
-                <p className="text-sm font-extrabold text-red-600">
-                  Internet masih MENYALA
-                </p>
-                <p className="text-xs leading-5 text-red-600/80">
-                  Matikan WiFi & data seluler sekarang sebelum menekan Mulai
-                  Ujian.
-                </p>
-              </div>
-            </>
-          ) : (
-            <>
-              <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-700">
-                <WifiOff className="size-5" />
-              </span>
-              <div>
-                <p className="text-sm font-extrabold text-emerald-700">
-                  Internet sudah mati — siap!
-                </p>
-                <p className="text-xs leading-5 text-emerald-700/80">
-                  HP dalam keadaan offline. Ujian boleh dimulai.
-                </p>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className="border-border/70">
-        <CardContent className="p-5">
-          <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-            Ketentuan wajib
-          </p>
-          <ol className="mt-4 space-y-3">
-            {aturan.map((a, i) => (
-              <li key={a} className="flex gap-3 text-sm leading-6">
-                <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-ink text-[11px] font-bold text-white">
-                  {i + 1}
-                </span>
-                <span className={i === 0 ? "font-semibold text-foreground" : "text-muted-foreground"}>
-                  {a}
-                </span>
-              </li>
-            ))}
-          </ol>
-        </CardContent>
-      </Card>
-
-      <Button size="lg" className="w-full" onClick={props.onMulai}>
-        Saya sudah offline — Mulai Ujian
-      </Button>
-      <Button
-        variant="ghost"
-        className="w-full text-muted-foreground"
-        onClick={props.onUlang}
-      >
-        Hapus sesi & unduh ulang soal
-      </Button>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* FASE: UJIAN — wajib offline                                         */
-/* ------------------------------------------------------------------ */
-function UjianFase(props: {
-  sesi: SesiUjian;
-  totalTerjawab: number;
-  onJawab: (p: Pilihan) => void;
-  onPindah: (i: number) => void;
-  onSelesai: () => void;
-  onGrid: () => void;
-  tampilGrid: boolean;
-}) {
-  const { sesi } = props;
-  const soal = sesi.soal[sesi.indeks];
-  const terjawab = sesi.jawaban[soal?._id ?? ""];
-
-  // Opsi ditampilkan A–E; E hanya bila guru mengisinya.
-  const opsi: { huruf: Pilihan; teks: string }[] = soal
-    ? [
-        { huruf: "A", teks: soal.opsi_a },
-        { huruf: "B", teks: soal.opsi_b },
-        { huruf: "C", teks: soal.opsi_c },
-        { huruf: "D", teks: soal.opsi_d },
-        ...(soal.opsi_e
-          ? [{ huruf: "E" as Pilihan, teks: soal.opsi_e }]
-          : []),
-      ]
-    : [];
-
-  return (
-    <div className="space-y-4">
-      {/* Navigasi cepat */}
-      {props.tampilGrid && (
-        <Card className="border-border/70">
-          <CardContent className="p-4">
-            <p className="mb-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-              Daftar soal
-            </p>
-            <div className="grid grid-cols-6 gap-2 sm:grid-cols-8">
-              {sesi.soal.map((s, i) => {
-                const dijawab = Boolean(sesi.jawaban[s._id]);
-                const aktif = i === sesi.indeks;
-                return (
-                  <button
-                    key={s._id}
-                    type="button"
-                    onClick={() => props.onPindah(i)}
-                    className={`aspect-square rounded-xl text-xs font-bold transition-colors ${
-                      aktif
-                        ? "bg-ink text-white"
-                        : dijawab
-                          ? "bg-emerald-500/15 text-emerald-700 ring-1 ring-emerald-500/40"
-                          : "bg-muted text-muted-foreground hover:bg-muted/70"
-                    }`}
-                  >
-                    {i + 1}
-                  </button>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Soal */}
-      <Card className="border-border/70 shadow-[0_1px_2px_rgba(16,20,24,0.04)]">
-        <CardContent className="p-5">
-          <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-muted-foreground">
-            <span>
-              Soal {sesi.indeks + 1} dari {sesi.soal.length}
-            </span>
-            <button
-              type="button"
-              onClick={props.onGrid}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-[11px] transition-colors hover:bg-muted"
-            >
-              <Grid3X3 className="size-3.5" />
-              {props.tampilGrid ? "Tutup" : "Semua soal"}
-            </button>
-          </div>
-
-          <p className="mt-4 text-base font-semibold leading-7 sm:text-lg">
-            {soal?.pertanyaan}
-          </p>
-
-          <div className="mt-5 space-y-2.5">
-            {opsi.map(({ huruf, teks }) => {
-              const aktif = terjawab === huruf;
-              return (
-                <button
-                  key={huruf}
-                  type="button"
-                  onClick={() => props.onJawab(huruf)}
-                  className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3.5 text-left text-sm transition-all ${
-                    aktif
-                      ? "border-emerald-600 bg-emerald-500/10 font-semibold shadow-[0_0_0_1px_rgba(16,185,129,0.5)]"
-                      : "border-border/70 bg-card hover:border-foreground/30"
-                  }`}
-                >
-                  <span
-                    className={`flex size-8 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${
-                      aktif
-                        ? "bg-emerald-600 text-white"
-                        : "bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {huruf}
-                  </span>
-                  <span className="leading-6">{teks}</span>
-                  {aktif && (
-                    <CheckCircle2 className="ml-auto size-4 shrink-0 text-emerald-600" />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Navigasi bawah */}
-      <div className="flex items-center gap-3">
-        <Button
-          variant="outline"
-          className="gap-2"
-          disabled={sesi.indeks === 0}
-          onClick={() => props.onPindah(sesi.indeks - 1)}
-        >
-          <ArrowLeft className="size-4" /> Sebelumnya
-        </Button>
-        <Button
-          variant="outline"
-          className="gap-2"
-          disabled={sesi.indeks >= sesi.soal.length - 1}
-          onClick={() => props.onPindah(sesi.indeks + 1)}
-        >
-          Berikutnya <ArrowRight className="size-4" />
-        </Button>
-        <Button className="ml-auto gap-2" onClick={props.onSelesai}>
-          <Send className="size-4" /> Selesai
-        </Button>
-      </div>
-
-      <p className="text-center text-[11px] text-muted-foreground">
-        {props.totalTerjawab}/{sesi.soal.length} terjawab · jawaban tersimpan
-        otomatis di HP
-      </p>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* FASE: KIRIM — wajib online kembali                                  */
-/* ------------------------------------------------------------------ */
-function KirimFase(props: {
-  sesi: SesiUjian;
-  totalTerjawab: number;
-  online: boolean;
-  busy: boolean;
-  onKirim: () => void;
-  onKembali: () => void;
-}) {
-  const { sesi } = props;
-  const kosong = sesi.soal.length - props.totalTerjawab;
-
-  return (
-    <div className="space-y-5">
-      <div>
-        <Badge variant="secondary" className="mb-3">
-          Tahap 3 · Kirim jawaban
-        </Badge>
-        <h1 className="text-2xl font-extrabold tracking-tight">
-          Periksa lalu kirim
-        </h1>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Pengiriman hanya bisa dilakukan setelah internet dinyalakan kembali.
-        </p>
-      </div>
-
-      <Card className="border-border/70">
-        <CardContent className="divide-y divide-border/60 p-0">
-          {[
-            ["Nama", sesi.nama],
-            ["Kelas", sesi.kelas],
-            ["Terjawab", `${props.totalTerjawab} / ${sesi.soal.length}`],
-            ["Belum dijawab", String(kosong)],
-            [
-              "Total pelanggaran",
-              `${sesi.pelanggaran.length} strike`,
-            ],
-          ].map(([k, v]) => (
-            <div
-              key={k}
-              className="flex items-center justify-between px-5 py-3.5 text-sm"
-            >
-              <span className="text-muted-foreground">{k}</span>
-              <span
-                className={`font-semibold ${
-                  k === "Total pelanggaran" && sesi.pelanggaran.length > 0
-                    ? "text-red-600"
-                    : "text-foreground"
-                }`}
-              >
-                {v}
-              </span>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      <div
-        className={`flex items-start gap-3 rounded-2xl border px-4 py-4 text-sm leading-6 ${
-          props.online
-            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-800"
-            : "border-amber-500/40 bg-amber-500/10 text-amber-800"
-        }`}
-      >
-        {props.online ? (
-          <>
-            <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
-            <span>
-              Terhubung internet. Jawaban siap dikirim ke server untuk dinilai.
-            </span>
-          </>
-        ) : (
-          <>
-            <WifiOff className="mt-0.5 size-4 shrink-0" />
-            <span>
-              Nyalakan WiFi / paket data terlebih dahulu — pengiriman jawaban
-              membutuhkan koneksi.
-            </span>
-          </>
-        )}
-      </div>
-
-      <Button
-        size="lg"
-        className="w-full gap-2"
-        onClick={props.onKirim}
-        disabled={!props.online || props.busy}
-      >
-        <Send className="size-4" />
-        {props.busy ? "Mengirim…" : "Kirim Jawaban"}
-      </Button>
-      <Button
-        variant="ghost"
-        className="w-full text-muted-foreground"
-        onClick={props.onKembali}
-        disabled={props.busy}
-      >
-        Kembali memeriksa jawaban
-      </Button>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* FASE: SELESAI                                                       */
-/* ------------------------------------------------------------------ */
-function SelesaiFase(props: { sesi: SesiUjian; onBeranda: () => void }) {
-  const hasil = props.sesi.hasil;
-  const nilai = hasil?.nilai ?? 0;
-
-  return (
-    <div className="space-y-5">
-      <Card className="overflow-hidden border-border/70">
-        <div className="bg-ink px-6 py-8 text-center text-white">
-          <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15">
-            <Trophy className="size-6 text-emerald-400" />
-          </span>
-          <p className="mt-4 text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-            Jawaban terkirim
-          </p>
-          <p className="mt-2 text-6xl font-extrabold tracking-tight text-emerald-400">
-            {nilai}
-          </p>
-          <p className="mt-1 text-sm text-white/60">
-            {hasil?.benar ?? 0} benar dari {hasil?.total_soal ?? 0} soal
-          </p>
-        </div>
-        <CardContent className="divide-y divide-border/60 p-0">
-          {[
-            ["Nama", props.sesi.nama],
-            ["Kelas", props.sesi.kelas],
-            ["Pelanggaran", `${props.sesi.pelanggaran.length} strike`],
-            [
-              "Waktu kirim",
-              props.sesi.kirimPada
-                ? new Date(props.sesi.kirimPada).toLocaleString("id-ID", {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })
-                : "—",
-            ],
-          ].map(([k, v]) => (
-            <div
-              key={k}
-              className="flex items-center justify-between px-5 py-3.5 text-sm"
-            >
-              <span className="text-muted-foreground">{k}</span>
-              <span className="font-semibold">{v}</span>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      <Button size="lg" className="w-full" onClick={props.onBeranda}>
-        Kembali ke beranda
-      </Button>
-    </div>
   );
 }

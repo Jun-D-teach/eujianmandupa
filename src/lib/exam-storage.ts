@@ -2,8 +2,8 @@
  * Penyimpanan sesi ujian di LocalStorage HP siswa.
  *
  * Semua data yang dibutuhkan saat fase ujian (soal hasil unduhan, jawaban,
- * strike, riwayat pelanggaran) disimpan DI PERANGKAT sehingga ujian tetap
- * berjalan penuh saat internet dimatikan.
+ * token, strike, riwayat pelanggaran) disimpan DI PERANGKAT sehingga ujian
+ * tetap berjalan penuh saat internet dimatikan.
  */
 
 export type Fase = "setup" | "instruksi" | "ujian" | "kirim" | "selesai";
@@ -12,14 +12,13 @@ export type Fase = "setup" | "instruksi" | "ujian" | "kirim" | "selesai";
 export type Pilihan = "A" | "B" | "C" | "D" | "E";
 
 export type SoalUjian = {
-  _id: string;
+  id: string;
   pertanyaan: string;
   opsi_a: string;
   opsi_b: string;
   opsi_c: string;
   opsi_d: string;
   opsi_e?: string;
-  urutan: number;
 };
 
 export type Pelanggaran = {
@@ -42,6 +41,8 @@ export type SesiUjian = {
   fase: Fase;
   nama: string;
   kelas: string;
+  /** Token ujian yang dimasukkan siswa saat mulai (dibagikan pengawas). */
+  token?: string;
   /** Durasi ujian (menit) yang diset admin. */
   durasi_menit?: number;
   /** Batas waktu pengerjaan (epoch ms), dihitung saat ujian dimulai. */
@@ -54,7 +55,7 @@ export type SesiUjian = {
   indeks: number;
   /** Hitungan strike menuju kunci layar (direset saat PIN pengawas dibuka). */
   strike: number;
-  /** Seluruh pelanggaran sepanjang ujian (dilaporkan ke tabel hasil). */
+  /** Seluruh pelanggaran sepanjang ujian (dilaporkan ke sheet Hasil). */
   pelanggaran: Pelanggaran[];
   hasil?: HasilAkhir;
 };
@@ -67,6 +68,10 @@ export function muatSesi(ujianId: string): SesiUjian | null {
     if (!raw) return null;
     const data = JSON.parse(raw) as SesiUjian;
     if (!data || data.versi !== 1 || !Array.isArray(data.soal)) return null;
+    // Normalisasi soal lama yang memakai _id (sebelum migrasi ke GAS).
+    data.soal = data.soal.map((s) =>
+      "id" in s ? s : { ...s, id: String((s as { _id?: string })._id ?? "") },
+    );
     return data;
   } catch {
     return null;

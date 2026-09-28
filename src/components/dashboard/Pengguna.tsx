@@ -1,10 +1,13 @@
-import { useMutation, useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { useEffect, useState } from "react";
+import { gasCall, type PenggunaGas } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Empty, EmptyContent, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ShieldCheck } from "lucide-react";
+import { ShieldCheck, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 const PERAN = [
@@ -13,21 +16,66 @@ const PERAN = [
   { nilai: "siswa", label: "Siswa", ket: "Unduh soal & kerjakan ujian" },
 ] as const;
 
-/** Manajemen peran pengguna — khusus admin. */
+/** Manajemen akun & peran — khusus admin (sheet "Pengguna"). */
 export function Pengguna() {
-  const daftar = useQuery(api.profil.daftarPengguna);
-  const aturRole = useMutation(api.profil.aturRole);
+  const [daftar, setDaftar] = useState<PenggunaGas[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    username: "",
+    password: "",
+    nama: "",
+    kelas: "",
+    role: "siswa",
+  });
 
-  const ubah = async (userId: string, role: string) => {
+  const muat = () => {
+    setDaftar(null);
+    gasCall<{ pengguna: PenggunaGas[] }>("getPengguna")
+      .then((res) => setDaftar(res.pengguna))
+      .catch((err) => {
+        toast.error(err instanceof Error ? err.message : "Gagal memuat pengguna.");
+        setDaftar([]);
+      });
+  };
+
+  useEffect(muat, []);
+
+  const buatAkun = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!form.username.trim() || !form.password.trim()) {
+      toast.error("Username & password wajib diisi.");
+      return;
+    }
+    setBusy(true);
     try {
-      await aturRole({ userId: userId as never, role: role as never });
+      await gasCall("buatPengguna", {
+        username: form.username.trim(),
+        password: form.password,
+        nama: form.nama.trim() || form.username.trim(),
+        kelas: form.kelas.trim(),
+        role: form.role,
+      });
+      setForm({ username: "", password: "", nama: "", kelas: "", role: "siswa" });
+      muat();
+      toast.success("Akun dibuat — bagikan username & password ke pengguna.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal membuat akun.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const ubah = async (id: string, role: string) => {
+    try {
+      await gasCall("ubahPeran", { id, role });
+      muat();
       toast.success("Peran diperbarui.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal memperbarui peran.");
     }
   };
 
-  if (daftar === undefined) {
+  if (daftar === null) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-56" />
@@ -41,10 +89,79 @@ export function Pengguna() {
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Pengguna</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Akun pertama otomatis menjadi admin. Naikkan akun guru agar bisa
-          menyusun soal.
+          Semua akun dibuat & diatur admin di sheet "Pengguna" — tanpa email/OTP.
         </p>
       </div>
+
+      {/* Buat akun baru */}
+      <Card className="border-border/70">
+        <form onSubmit={buatAkun} className="grid gap-4 p-5 sm:grid-cols-2">
+          <div className="grid gap-2">
+            <Label htmlFor="bu-username">Username *</Label>
+            <Input
+              id="bu-username"
+              value={form.username}
+              onChange={(e) => setForm({ ...form, username: e.target.value })}
+              placeholder="cth. ayu.lestari"
+              autoComplete="off"
+              required
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="bu-password">Password *</Label>
+            <Input
+              id="bu-password"
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+              placeholder="minimal 4 karakter"
+              autoComplete="new-password"
+              required
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="bu-nama">Nama lengkap</Label>
+            <Input
+              id="bu-nama"
+              value={form.nama}
+              onChange={(e) => setForm({ ...form, nama: e.target.value })}
+              placeholder="cth. Ayu Lestari"
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="bu-kelas">Kelas</Label>
+            <Input
+              id="bu-kelas"
+              value={form.kelas}
+              onChange={(e) => setForm({ ...form, kelas: e.target.value })}
+              placeholder="cth. XII-IPA-2"
+            />
+          </div>
+          <div className="grid gap-2 sm:col-span-2">
+            <Label>Peran akun</Label>
+            <div className="flex flex-wrap gap-2">
+              {PERAN.map((p) => (
+                <button
+                  key={p.nilai}
+                  type="button"
+                  onClick={() => setForm({ ...form, role: p.nilai })}
+                  className={`rounded-xl border px-4 py-2 text-sm font-semibold transition-colors ${
+                    form.role === p.nilai
+                      ? "border-ink bg-ink text-white"
+                      : "border-border/70 bg-card text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="sm:col-span-2">
+            <Button type="submit" className="gap-2" disabled={busy}>
+              <UserPlus className="size-4" /> Buat akun
+            </Button>
+          </div>
+        </form>
+      </Card>
 
       <Card className="overflow-hidden border-border/70">
         {daftar.length === 0 ? (
@@ -52,7 +169,7 @@ export function Pengguna() {
             <EmptyContent>
               <EmptyTitle>Belum ada pengguna</EmptyTitle>
               <EmptyDescription>
-                Pengguna akan muncul setelah melakukan login.
+                Buat akun pertama menggunakan formulir di atas.
               </EmptyDescription>
             </EmptyContent>
           </Empty>
@@ -62,27 +179,27 @@ export function Pengguna() {
               <thead className="bg-muted/60 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 <tr>
                   <th className="px-5 py-3">Nama</th>
-                  <th className="px-5 py-3">Email</th>
+                  <th className="px-5 py-3">Username</th>
                   <th className="px-5 py-3">Kelas</th>
                   <th className="px-5 py-3 text-right">Peran</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
                 {daftar.map((u) => (
-                  <tr key={u._id} className="transition-colors hover:bg-muted/40">
+                  <tr key={u.id} className="transition-colors hover:bg-muted/40">
                     <td className="px-5 py-3.5">
                       <span className="flex items-center gap-2 font-semibold">
                         <span className="flex size-8 items-center justify-center rounded-full bg-accent text-xs font-bold text-accent-foreground">
-                          {(u.name || u.email || "?").slice(0, 1).toUpperCase()}
+                          {(u.nama || u.username).slice(0, 1).toUpperCase()}
                         </span>
-                        {u.name || "—"}
+                        {u.nama || "—"}
                       </span>
                     </td>
-                    <td className="px-5 py-3.5 text-muted-foreground">
-                      {u.email ?? "—"}
+                    <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">
+                      {u.username}
                     </td>
                     <td className="px-5 py-3.5 text-muted-foreground">
-                      {u.kelas ?? "—"}
+                      {u.kelas || "—"}
                     </td>
                     <td className="px-5 py-3.5 text-right">
                       <div className="inline-flex items-center gap-2">
@@ -92,10 +209,10 @@ export function Pengguna() {
                           </Badge>
                         )}
                         <select
-                          value={u.role ?? "siswa"}
-                          onChange={(e) => ubah(u._id, e.target.value)}
+                          value={u.role}
+                          onChange={(e) => ubah(u.id, e.target.value)}
                           className="rounded-xl border border-input bg-card px-3 py-1.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-ring"
-                          aria-label={`Peran ${u.name ?? u.email}`}
+                          aria-label={`Peran ${u.nama || u.username}`}
                         >
                           {PERAN.map((p) => (
                             <option key={p.nilai} value={p.nilai}>

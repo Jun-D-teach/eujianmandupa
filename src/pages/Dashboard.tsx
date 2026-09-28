@@ -1,6 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { useMutation } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,42 +46,19 @@ function tabsUntuk(role: string | undefined): TabId[] {
 export default function Dashboard() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
-  const siapkan = useMutation(api.profil.siapkan);
   const [tab, setTab] = useState<TabId>("ujian");
-  const [bootstrap, setBootstrap] = useState(false);
-  const diminta = useRef(false);
 
   const role = user?.role;
   const tabs = tabsUntuk(role);
+  // Tab aktif selalu salah satu yang valid untuk peran ini.
+  const tabAktif: TabId = tabs.includes(tab) ? tab : tabs[0];
 
-  // Bootstrap peran: akun pertama menjadi admin + ujian contoh.
-  useEffect(() => {
-    if (!user || diminta.current) return;
-    diminta.current = true;
-    void siapkan({})
-      .then(() => setBootstrap(true))
-      .catch((err) => {
-        console.warn("[bootstrap] gagal:", err);
-        setBootstrap(true);
-      });
-  }, [user, siapkan]);
-
-  // Pindahkan tab aktif ke tab pertama yang valid saat peran berubah.
-  useEffect(() => {
-    if (!tabs.includes(tab)) setTab(tabs[0]);
-  }, [tabs, tab]);
-
-  const handleSignOut = async () => {
-    try {
-      await signOut();
-      navigate("/");
-    } catch (err) {
-      console.error(err);
-      toast.error("Gagal keluar. Coba lagi.");
-    }
+  const handleSignOut = () => {
+    signOut();
+    navigate("/");
   };
 
-  if (!user || (user.role === undefined && !bootstrap)) {
+  if (!user) {
     return (
       <main className="min-h-screen bg-background p-6">
         <div className="mx-auto w-full max-w-6xl space-y-4">
@@ -116,7 +91,7 @@ export default function Dashboard() {
           <nav className="scrollbar-none flex flex-1 items-center gap-1 overflow-x-auto md:justify-center">
             {tabs.map((id) => {
               const item = TABS[id];
-              const aktif = tab === id;
+              const aktif = tabAktif === id;
               const Ikon = item.ikon;
               return (
                 <button
@@ -139,10 +114,10 @@ export default function Dashboard() {
           <div className="flex items-center gap-3">
             <div className="hidden text-right sm:block">
               <p className="max-w-[180px] truncate text-sm font-semibold leading-4">
-                {user.name || user.email || "Pengguna"}
+                {user.nama || user.username}
               </p>
               <p className="text-xs text-muted-foreground">
-                {LABEL_PERAN[user.role ?? "siswa"]}
+                {LABEL_PERAN[user.role]}
                 {user.kelas ? ` · ${user.kelas}` : ""}
               </p>
             </div>
@@ -150,7 +125,7 @@ export default function Dashboard() {
               variant="secondary"
               className="hidden uppercase tracking-wider sm:inline-flex"
             >
-              {LABEL_PERAN[user.role ?? "siswa"]}
+              {LABEL_PERAN[user.role]}
             </Badge>
             <Button
               type="button"
@@ -167,11 +142,11 @@ export default function Dashboard() {
       </header>
 
       <div className="mx-auto w-full max-w-6xl px-5 py-8">
-        {tab === "ujian" && <SiswaUjian />}
-        {tab === "riwayat" && <SiswaRiwayat />}
-        {tab === "kelola" && <KelolaUjian />}
-        {tab === "hasil" && <HasilUjian />}
-        {tab === "pengguna" && <Pengguna />}
+        {tabAktif === "ujian" && <SiswaUjian />}
+        {tabAktif === "riwayat" && <SiswaRiwayat />}
+        {tabAktif === "kelola" && <KelolaUjian />}
+        {tabAktif === "hasil" && <HasilUjian />}
+        {tabAktif === "pengguna" && <Pengguna />}
       </div>
     </main>
   );

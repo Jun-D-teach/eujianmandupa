@@ -1,27 +1,58 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { gasCall, type HasilGas, type UjianGas } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Lock, ShieldAlert, Trophy } from "lucide-react";
+import { Lock, RefreshCw, ShieldAlert, Trophy } from "lucide-react";
 
 /** Rekap hasil per ujian (guru & admin). */
 export function HasilUjian() {
-  const ujian = useQuery(api.ujian.listSemua);
+  const [ujian, setUjian] = useState<UjianGas[] | null>(null);
   const [pilih, setPilih] = useState<string | null>(null);
+  const [hasil, setHasil] = useState<HasilGas[] | null>(null);
+  const [versi, setVersi] = useState(0);
 
+  // Muat daftar ujian (dengan token, untuk petugas).
   useEffect(() => {
-    if (pilih === null && ujian && ujian.length > 0) setPilih(ujian[0]._id);
-  }, [ujian, pilih]);
+    let hidup = true;
+    setUjian(null);
+    gasCall<{ ujian: UjianGas[] }>("getUjian")
+      .then((res) => {
+        if (!hidup) return;
+        setUjian(res.ujian);
+        setPilih((sebelumnya) => sebelumnya ?? res.ujian[0]?.id ?? null);
+      })
+      .catch(() => {
+        if (hidup) setUjian([]);
+      });
+    return () => {
+      hidup = false;
+    };
+  }, [versi]);
 
-  const hasil = useQuery(
-    api.hasil.perUjian,
-    pilih ? { ujianId: pilih as never } : "skip",
-  );
+  // Muat hasil ujian terpilih.
+  useEffect(() => {
+    if (!pilih) {
+      setHasil(null);
+      return;
+    }
+    let hidup = true;
+    setHasil(null);
+    gasCall<{ hasil: HasilGas[] }>("getHasil", { ujian_id: pilih })
+      .then((res) => {
+        if (hidup) setHasil(res.hasil);
+      })
+      .catch(() => {
+        if (hidup) setHasil([]);
+      });
+    return () => {
+      hidup = false;
+    };
+  }, [pilih]);
 
-  if (ujian === undefined) {
+  if (ujian === null) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-56" />
@@ -32,11 +63,22 @@ export function HasilUjian() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-extrabold tracking-tight">Hasil ujian</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Nilai dihitung server-side; total pelanggaran ikut tercatat.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight">Hasil ujian</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Nilai dihitung server-side (Google Apps Script); total pelanggaran
+            ikut tercatat.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2"
+          onClick={() => setVersi((v) => v + 1)}
+        >
+          <RefreshCw className="size-4" /> Segarkan
+        </Button>
       </div>
 
       {ujian.length === 0 ? (
@@ -53,23 +95,23 @@ export function HasilUjian() {
           <div className="flex flex-wrap gap-2">
             {ujian.map((u) => (
               <button
-                key={u._id}
+                key={u.id}
                 type="button"
-                onClick={() => setPilih(u._id)}
+                onClick={() => setPilih(u.id)}
                 className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
-                  pilih === u._id
+                  pilih === u.id
                     ? "bg-ink text-white"
                     : "border border-border/70 bg-card text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {u.judul}
-                <span className="ml-2 text-xs opacity-70">{u.jumlah_hasil}</span>
+                <span className="ml-2 text-xs opacity-70">{u.jumlah_soal} soal</span>
               </button>
             ))}
           </div>
 
           <Card className="overflow-hidden border-border/70">
-            {hasil === undefined ? (
+            {hasil === null ? (
               <div className="p-6">
                 <Skeleton className="h-40 w-full" />
               </div>
@@ -90,25 +132,27 @@ export function HasilUjian() {
                       <th className="px-5 py-3">#</th>
                       <th className="px-5 py-3">Nama</th>
                       <th className="px-5 py-3">Kelas</th>
+                      <th className="px-5 py-3">Token</th>
                       <th className="px-5 py-3">Benar</th>
                       <th className="px-5 py-3">Pelanggaran</th>
-                      <th className="px-5 py-3">Buka kunci</th>
                       <th className="px-5 py-3 text-right">Nilai</th>
                       <th className="px-5 py-3 text-right">Dikirim</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/60">
                     {hasil.map((h, i) => (
-                      <tr
-                        key={h._id}
-                        className="transition-colors hover:bg-muted/40"
-                      >
+                      <tr key={h.id} className="transition-colors hover:bg-muted/40">
                         <td className="px-5 py-3.5 font-bold text-muted-foreground">
                           {i + 1}
                         </td>
                         <td className="px-5 py-3.5 font-semibold">{h.nama}</td>
                         <td className="px-5 py-3.5 text-muted-foreground">
                           {h.kelas}
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <span className="rounded-md bg-muted px-2 py-0.5 font-mono text-xs font-bold">
+                            {h.token || "—"}
+                          </span>
                         </td>
                         <td className="px-5 py-3.5 text-muted-foreground">
                           {h.benar}/{h.total_soal}
@@ -124,16 +168,6 @@ export function HasilUjian() {
                             {h.total_pelanggaran}
                           </Badge>
                         </td>
-                        <td className="px-5 py-3.5">
-                          {h.jumlah_buka_kunci > 0 ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                              <Lock className="size-3.5" />
-                              {h.jumlah_buka_kunci}×
-                            </span>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </td>
                         <td className="px-5 py-3.5 text-right">
                           <span className="inline-flex items-center gap-1.5 font-bold">
                             <Trophy
@@ -147,10 +181,12 @@ export function HasilUjian() {
                           </span>
                         </td>
                         <td className="px-5 py-3.5 text-right text-xs text-muted-foreground">
-                          {new Date(h.timestamp).toLocaleString("id-ID", {
-                            dateStyle: "medium",
-                            timeStyle: "short",
-                          })}
+                          {h.timestamp
+                            ? new Date(h.timestamp).toLocaleString("id-ID", {
+                                dateStyle: "medium",
+                                timeStyle: "short",
+                              })
+                            : "—"}
                         </td>
                       </tr>
                     ))}
@@ -159,6 +195,11 @@ export function HasilUjian() {
               </div>
             )}
           </Card>
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Lock className="size-3.5" />
+            Riwayat buka kunci tercatat di sheet "BukaKunci" saat pengawas
+            membuka layar siswa dalam keadaan online.
+          </p>
         </>
       )}
     </div>

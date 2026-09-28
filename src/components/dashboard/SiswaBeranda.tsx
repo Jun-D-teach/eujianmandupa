@@ -1,15 +1,12 @@
-import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
+import { gasCall, type HasilGas, type UjianGas } from "@/lib/api";
+import { muatSesi, hapusSesi, type SesiUjian } from "@/lib/exam-storage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Empty, EmptyContent, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import { muatSesi, hapusSesi, type SesiUjian } from "@/lib/exam-storage";
 import {
   ArrowRight,
   ClipboardList,
@@ -22,40 +19,53 @@ import {
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 
-function statusSesi(ujianId: string): SesiUjian | null {
-  return muatSesi(ujianId);
-}
-
-/** Daftar ujian aktif + pintasan melanjutkan sesi tersimpan. */
+/** Daftar ujian aktif (tanpa token) + pintasan melanjutkan sesi tersimpan. */
 export function SiswaUjian() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const ujian = useQuery(api.ujian.listAktif);
-  const perbarui = useMutation(api.profil.perbarui);
-  const [nama, setNama] = useState(user?.name ?? "");
-  const [kelas, setKelas] = useState(user?.kelas ?? "");
-  const [saving, setSaving] = useState(false);
-  const [, setSegarkan] = useState(0);
+  const [ujian, setUjian] = useState<UjianGas[] | null>(null); // null = memuat
+  const [error, setError] = useState<string | null>(null);
+  const [versi, setVersi] = useState(0); // memicu muat ulang daftar/sesi
 
-  const profilLengkap = Boolean(user?.name && user?.kelas);
+  useEffect(() => {
+    let hidup = true;
+    setUjian(null);
+    setError(null);
+    gasCall<{ ujian: UjianGas[] }>("getUjianSiswa")
+      .then((res) => {
+        if (hidup) setUjian(res.ujian);
+      })
+      .catch((err) => {
+        if (hidup)
+          setError(err instanceof Error ? err.message : "Gagal memuat ujian.");
+      });
+    return () => {
+      hidup = false;
+    };
+  }, [versi]);
 
-  const simpanProfil = async () => {
-    if (!nama.trim() || !kelas.trim()) {
-      toast.error("Nama dan kelas wajib diisi.");
-      return;
-    }
-    setSaving(true);
-    try {
-      await perbarui({ nama: nama.trim(), kelas: kelas.trim() });
-      toast.success("Data tersimpan.");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Gagal menyimpan.");
-    } finally {
-      setSaving(false);
-    }
-  };
+  if (error) {
+    return (
+      <Empty className="rounded-3xl border border-dashed border-border/70 py-14">
+        <EmptyContent>
+          <EmptyTitle>Gagal memuat</EmptyTitle>
+          <EmptyDescription>
+            {error}
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => setVersi((v) => v + 1)}
+            >
+              Coba lagi
+            </Button>
+          </EmptyDescription>
+        </EmptyContent>
+      </Empty>
+    );
+  }
 
-  if (ujian === undefined) {
+  if (ujian === null) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-24 w-full" />
@@ -66,44 +76,27 @@ export function SiswaUjian() {
 
   return (
     <div className="space-y-8">
-      {!profilLengkap && (
-        <Card className="border-border/70">
-          <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-end">
-            <div className="grid flex-1 gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="nama">Nama lengkap</Label>
-                <Input
-                  id="nama"
-                  value={nama}
-                  onChange={(e) => setNama(e.target.value)}
-                  placeholder="cth. Ayu Lestari"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="kelas">Kelas</Label>
-                <Input
-                  id="kelas"
-                  value={kelas}
-                  onChange={(e) => setKelas(e.target.value)}
-                  placeholder="cth. XII-IPA-2"
-                />
-              </div>
-            </div>
-            <Button onClick={simpanProfil} disabled={saving}>
-              Simpan data
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
       <section>
         <div className="flex items-end justify-between gap-4">
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight">Ujian aktif</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Unduh soal saat online, kerjakan setelah internet dimatikan.
+              Unduh soal tanpa token; token dimasukkan saat mulai ujian sesuai
+              yang dibagikan pengawas ruang.
             </p>
+            {user?.kelas && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Kelas: {user.kelas}
+              </p>
+            )}
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setVersi((v) => v + 1)}
+          >
+            Muat ulang
+          </Button>
         </div>
 
         {ujian.length === 0 ? (
@@ -111,18 +104,19 @@ export function SiswaUjian() {
             <EmptyContent>
               <EmptyTitle>Belum ada ujian aktif</EmptyTitle>
               <EmptyDescription>
-                Pengawas atau guru belum mengaktifkan ujian untukmu.
+                Admin belum mengaktifkan ujian. Token akan dibagikan pengawas
+                ruang saat ujian dimulai.
               </EmptyDescription>
             </EmptyContent>
           </Empty>
         ) : (
           <div className="mt-6 grid gap-5 sm:grid-cols-2">
             {ujian.map((u) => {
-              const sesi = statusSesi(u._id);
+              const sesi: SesiUjian | null = muatSesi(u.id);
               const lanjut = sesi && sesi.fase !== "setup";
               return (
                 <Card
-                  key={u._id}
+                  key={u.id}
                   className="group relative overflow-hidden border-border/70 shadow-[0_1px_2px_rgba(16,20,24,0.04)] transition-shadow hover:shadow-[0_18px_40px_-26px_rgba(16,20,24,0.4)]"
                 >
                   <CardContent className="p-6">
@@ -146,7 +140,7 @@ export function SiswaUjian() {
 
                     <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold text-muted-foreground">
                       <KeyRound className="size-3" />
-                      Token dibutuhkan saat unduh soal
+                      Token dibagikan pengawas saat mulai ujian
                     </p>
 
                     {lanjut && (
@@ -158,7 +152,7 @@ export function SiswaUjian() {
                     <div className="mt-5 flex items-center gap-2">
                       <Button
                         className="gap-2"
-                        onClick={() => navigate(`/ujian/${u._id}`)}
+                        onClick={() => navigate(`/ujian/${u.id}`)}
                       >
                         {lanjut ? (
                           <>
@@ -175,9 +169,9 @@ export function SiswaUjian() {
                           variant="ghost"
                           className="gap-2 text-muted-foreground"
                           onClick={() => {
-                            hapusSesi(u._id);
+                            hapusSesi(u.id);
                             toast.success("Sesi dihapus, mulai dari awal.");
-                            setSegarkan((n) => n + 1);
+                            setVersi((v) => v + 1);
                           }}
                         >
                           <Pencil className="size-4" /> Mulai ulang
@@ -195,11 +189,41 @@ export function SiswaUjian() {
   );
 }
 
-/** Riwayat nilai milik siswa. */
+/** Riwayat nilai milik siswa (dicocokkan dari nama di sheet Hasil). */
 export function SiswaRiwayat() {
-  const hasil = useQuery(api.hasil.saya);
+  const { user } = useAuth();
+  const [hasil, setHasil] = useState<HasilGas[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  if (hasil === undefined) {
+  useEffect(() => {
+    let hidup = true;
+    setHasil(null);
+    setError(null);
+    gasCall<{ hasil: HasilGas[] }>("getHasilSaya", { nama: user?.nama ?? "" })
+      .then((res) => {
+        if (hidup) setHasil(res.hasil);
+      })
+      .catch((err) => {
+        if (hidup)
+          setError(err instanceof Error ? err.message : "Gagal memuat riwayat.");
+      });
+    return () => {
+      hidup = false;
+    };
+  }, [user?.nama]);
+
+  if (error) {
+    return (
+      <Empty className="rounded-3xl border border-dashed border-border/70 py-14">
+        <EmptyContent>
+          <EmptyTitle>Gagal memuat</EmptyTitle>
+          <EmptyDescription>{error}</EmptyDescription>
+        </EmptyContent>
+      </Empty>
+    );
+  }
+
+  if (hasil === null) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-56" />
@@ -242,8 +266,8 @@ export function SiswaRiwayat() {
               </thead>
               <tbody className="divide-y divide-border/60">
                 {hasil.map((h) => (
-                  <tr key={h._id} className="transition-colors hover:bg-muted/40">
-                    <td className="px-5 py-3.5 font-semibold">{h.judul_ujian}</td>
+                  <tr key={h.id} className="transition-colors hover:bg-muted/40">
+                    <td className="px-5 py-3.5 font-semibold">{h.ujian_judul}</td>
                     <td className="px-5 py-3.5 text-muted-foreground">{h.kelas}</td>
                     <td className="px-5 py-3.5 text-muted-foreground">
                       {h.benar}/{h.total_soal}
@@ -267,10 +291,12 @@ export function SiswaRiwayat() {
                       </span>
                     </td>
                     <td className="px-5 py-3.5 text-right text-xs text-muted-foreground">
-                      {new Date(h.timestamp).toLocaleString("id-ID", {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                      })}
+                      {h.timestamp
+                        ? new Date(h.timestamp).toLocaleString("id-ID", {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                          })
+                        : "—"}
                     </td>
                   </tr>
                 ))}
