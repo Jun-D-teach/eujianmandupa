@@ -218,10 +218,31 @@ export async function gasPost<T = Record<string, unknown>>(
 /* PIN pengawas (verifikasi lokal di perangkat)                        */
 /* ------------------------------------------------------------------ */
 
-export const PIN_PENGAWAS = "123456";
+/** PIN bila sheet Pengaturan belum diatur / tidak tersedia. */
+export const PIN_BAWAAN = "123456";
+const KUNCI_PIN = "ujianaman:pinPengawas";
 
+/** PIN aktif: cache dari sheet Pengaturan (ikutan unduh soal), fallback 123456. */
+export function pinPengawas(): string {
+  try {
+    return window.localStorage.getItem(KUNCI_PIN) || PIN_BAWAAN;
+  } catch {
+    return PIN_BAWAAN;
+  }
+}
+
+/** Simpan PIN hasil unduhan soal / dari menu admin (cache lokal, offline-safe). */
+export function simpanPinTersimpan(pin: string): void {
+  try {
+    window.localStorage.setItem(KUNCI_PIN, pin);
+  } catch {
+    /* noop */
+  }
+}
+
+/** Verifikasi PIN pengawas — dilakukan LOKAL agar layar kunci bisa dibuka offline. */
 export function cekPin(nilai: string): boolean {
-  return nilai.trim() === PIN_PENGAWAS;
+  return nilai.trim() === pinPengawas();
 }
 
 /* ------------------------------------------------------------------ */

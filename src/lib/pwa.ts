@@ -4,8 +4,10 @@ export function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
 
   const register = () => {
+    // Registrasi RELATIF — scope otomatis mengikuti subfolder hosting
+    // (mis. /eujian-mandupa/), tanpa perlu mengubah apa pun saat deploy.
     navigator.serviceWorker
-      .register("/sw.js", { scope: "/" })
+      .register("sw.js")
       .catch((err: unknown) => {
         console.warn("[PWA] Pendaftaran service worker gagal:", err);
       });

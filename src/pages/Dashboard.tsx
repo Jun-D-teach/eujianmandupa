@@ -7,6 +7,7 @@ import {
   ClipboardList,
   History,
   LogOut,
+  Settings,
   ShieldCheck,
   UserCog,
   Users,
@@ -20,8 +21,16 @@ import { KelolaUjian } from "@/components/dashboard/KelolaUjian";
 import { HasilUjian } from "@/components/dashboard/HasilUjian";
 import { Pengguna } from "@/components/dashboard/Pengguna";
 import { DataSiswa } from "@/components/dashboard/DataSiswa";
+import { PengaturanPin } from "@/components/dashboard/PengaturanPin";
 
-type TabId = "ujian" | "riwayat" | "kelola" | "hasil" | "siswa" | "pengguna";
+type TabId =
+  | "ujian"
+  | "riwayat"
+  | "kelola"
+  | "hasil"
+  | "siswa"
+  | "pengguna"
+  | "atur";
 
 const LABEL_PERAN: Record<string, string> = {
   admin: "Admin",
@@ -36,10 +45,11 @@ const TABS: Record<TabId, { label: string; ikon: typeof Users }> = {
   hasil: { label: "Hasil Ujian", ikon: ShieldCheck },
   siswa: { label: "Data Siswa", ikon: Users },
   pengguna: { label: "Pengguna", ikon: UserCog },
+  atur: { label: "Pengaturan", ikon: Settings },
 };
 
 function tabsUntuk(role: string | undefined): TabId[] {
-  if (role === "admin") return ["kelola", "hasil", "siswa", "pengguna"];
+  if (role === "admin") return ["kelola", "hasil", "siswa", "pengguna", "atur"];
   if (role === "guru") return ["kelola", "hasil"];
   return ["ujian", "riwayat"];
 }
@@ -149,6 +159,7 @@ export default function Dashboard() {
         {tabAktif === "hasil" && <HasilUjian />}
         {tabAktif === "siswa" && <DataSiswa />}
         {tabAktif === "pengguna" && <Pengguna />}
+        {tabAktif === "atur" && <PengaturanPin />}
       </div>
     </main>
   );

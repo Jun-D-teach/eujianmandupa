@@ -15,6 +15,7 @@
  * Pengguna : id | username | password | nama | kelas | role | dibuat
  * Siswa    : id | nisn | nama | tgllahir | kelas | dibuat
  * BukaKunci: timestamp | ujian_id | nama | catatan
+ * Pengaturan: kunci | nilai   (mis. kunci "pin_pengawas" → 6 angka)
  *
  * PENARGETAN UJIAN (sasar)
  *  - sasar_jenis ""          : semua tingkat & kelas (tanpa batasan)
@@ -35,6 +36,7 @@ var SHEET_HASIL = "Hasil";
 var SHEET_PENGGUNA = "Pengguna";
 var SHEET_SISWA = "Siswa";
 var SHEET_BUKA_KUNCI = "BukaKunci";
+var SHEET_PENGATURAN = "Pengaturan";
 
 var HEADER_UJIAN = ["id", "judul", "deskripsi", "token", "durasi_menit", "aktif", "dibuat", "tgl_mulai", "sasar_jenis", "sasar_nilai"];
 var HEADER_SOAL = ["id", "ujian_id", "pertanyaan", "opsi_a", "opsi_b", "opsi_c", "opsi_d", "opsi_e", "kunci_jawaban", "dibuat"];
@@ -42,6 +44,7 @@ var HEADER_HASIL = ["id", "ujian_id", "ujian_judul", "nama", "kelas", "token", "
 var HEADER_PENGGUNA = ["id", "username", "password", "nama", "kelas", "role", "dibuat"];
 var HEADER_SISWA = ["id", "nisn", "nama", "tgllahir", "kelas", "dibuat"];
 var HEADER_BUKA_KUNCI = ["timestamp", "ujian_id", "nama", "catatan"];
+var HEADER_PENGATURAN = ["kunci", "nilai"];
 
 /** Pastikan semua sheet ada & header lengkap (menambah kolom baru bila perlu). */
 function pastikanStruktur_() {
@@ -53,6 +56,7 @@ function pastikanStruktur_() {
     [SHEET_PENGGUNA, HEADER_PENGGUNA],
     [SHEET_SISWA, HEADER_SISWA],
     [SHEET_BUKA_KUNCI, HEADER_BUKA_KUNCI],
+    [SHEET_PENGATURAN, HEADER_PENGATURAN],
   ];
   defs.forEach(function (item) {
     var sh = ss.getSheetByName(item[0]);
@@ -194,6 +198,8 @@ function jalankan_(action, data) {
     case "hapusSoal": return hapusSoal_(data);
     case "submitJawaban": return submitJawaban_(data);
     case "catatBukaKunci": return catatBukaKunci_(data);
+    case "getPengaturan": return getPengaturan_();
+    case "aturPin": return aturPin_(data);
     case "buatPengguna": return buatPengguna_(data);
     case "ubahPeran": return ubahPeran_(data);
     default: return { success: false, message: "Action tidak dikenal: " + action };
@@ -712,7 +718,8 @@ function getSoal_(data) {
   soal.rows.forEach(function (row) {
     if (String(row[soal.idx.ujian_id]) === cari) daftar.push(barisSoal_(row, soal.idx, false));
   });
-  return { success: true, ujian: meta, soal: daftar };
+  // PIN pengawas ikut dikirim agar layar kunci bisa dibuka offline.
+  return { success: true, ujian: meta, soal: daftar, pin_pengawas: pinPengawas_() };
 }
 
 /** Soal untuk petugas: DENGAN kunci jawaban. */
@@ -855,6 +862,57 @@ function getHasilSaya_(data) {
     }
   });
   return { success: true, hasil: daftar };
+}
+
+/* ------------------------------------------------------------------ */
+/* PENGATURAN (sheet "Pengaturan" — pasangan kunci | nilai)            */
+/* ------------------------------------------------------------------ */
+
+var PIN_BAWAAN = "123456";
+
+function bacaPengaturan_(kunci, bawaan) {
+  try {
+    var p = bacaBaris_(SHEET_PENGATURAN);
+    for (var i = 0; i < p.rows.length; i++) {
+      if (String(p.rows[i][p.idx.kunci]).trim() === kunci) {
+        var v = String(p.rows[i][p.idx.nilai] || "").trim();
+        if (v) return v;
+      }
+    }
+  } catch (err) { /* sheet belum siap — pakai bawaan */ }
+  return bawaan;
+}
+
+function simpanPengaturan_(kunci, nilai) {
+  var sh = getSheet_(SHEET_PENGATURAN);
+  var values = sh.getDataRange().getValues();
+  var idx = indexHeader_(values[0]);
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][idx.kunci]).trim() === kunci) {
+      values[r][idx.nilai] = nilai;
+      sh.getRange(r + 1, 1, 1, values[0].length).setValues([values[r]]);
+      return;
+    }
+  }
+  sh.appendRow([kunci, nilai]);
+}
+
+function pinPengawas_() {
+  var pin = bacaPengaturan_("pin_pengawas", PIN_BAWAAN);
+  return /^\d{6}$/.test(pin) ? pin : PIN_BAWAAN;
+}
+
+function getPengaturan_() {
+  return { success: true, pin_pengawas: pinPengawas_() };
+}
+
+function aturPin_(data) {
+  var pin = String(data.pin || "").trim();
+  var ulang = String(data.pin_ulang || data.pin || "").trim();
+  if (!/^\d{6}$/.test(pin)) return { success: false, message: "PIN harus tepat 6 angka." };
+  if (pin !== ulang) return { success: false, message: "PIN dan konfirmasi PIN tidak sama." };
+  simpanPengaturan_("pin_pengawas", pin);
+  return { success: true, message: "PIN buka blokir diperbarui." };
 }
 
 /* ------------------------------------------------------------------ */

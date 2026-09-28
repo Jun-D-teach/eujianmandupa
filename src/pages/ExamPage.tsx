@@ -2,7 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useAuth } from "@/hooks/use-auth";
 import { useOnline } from "@/hooks/use-online";
-import { gasCall, cekPin, tokenValid, type UjianGas } from "@/lib/api";
+import {
+  gasCall,
+  cekPin,
+  tokenValid,
+  pinPengawas,
+  simpanPinTersimpan,
+  type UjianGas,
+} from "@/lib/api";
 import {
   hapusSesi,
   muatSesi,
@@ -331,10 +338,14 @@ export default function ExamPage() {
     setBusy(true);
     setPesan(null);
     try {
-      const data = await gasCall<{ ujian: UjianGas; soal: import("@/lib/api").SoalGas[] }>(
-        "getSoal",
-        { id: ujianId, kelas: k },
-      );
+      const data = await gasCall<
+        { ujian: UjianGas; soal: import("@/lib/api").SoalGas[]; pin_pengawas?: string }
+      >("getSoal", { id: ujianId, kelas: k });
+      // Cache PIN pengawas terbaru (dari sheet Pengaturan) agar layar kunci
+      // tetap bisa dibuka offline dengan PIN terkini.
+      if (typeof data.pin_pengawas === "string" && /^\d{6}$/.test(data.pin_pengawas)) {
+        simpanPinTersimpan(data.pin_pengawas);
+      }
       if (data.soal.length === 0) {
         throw new Error("Ujian ini belum memiliki soal.");
       }
@@ -797,7 +808,12 @@ export default function ExamPage() {
               </div>
               <p className="mt-3 text-xs leading-5 text-white/65">
                 Kunci dibuka dengan PIN pengawas di perangkat (tidak butuh
-                internet). Audit pembukaan dikirim ke server bila HP online.
+                internet). PIN aktif di perangkat ini:{" "}
+                <strong className="font-mono tracking-[0.25em] text-white">
+                  {pinPengawas()}
+                </strong>{" "}
+                — diatur admin di menu Pengaturan. Audit pembukaan dikirim ke
+                server bila HP online.
               </p>
               {pesanKunci && (
                 <p className="mt-2 rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-amber-300">

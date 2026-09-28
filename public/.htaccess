@@ -1,0 +1,24 @@
+# UjianAman — hosting Apache (bisa di root maupun subfolder,
+# cth. man2plg.sch.id/eujian-mandupa/)
+# Taruh file ini di folder yang sama dengan index.html hasil build.
+
+# 1) SPA routing: URL yang bukan file/folder nyata -> index.html.
+#    Substitusi RELATIF (tanpa "/" di depan) — aman untuk subfolder.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . index.html [L]
+</IfModule>
+
+# 2) Service worker: JANGAN di-cache supaya update aplikasi selalu terambil
+<IfModule mod_headers.c>
+  <FilesMatch "sw\.js$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+  </FilesMatch>
+
+  # index.html tidak di-cache (shell app selalu segar saat online)
+  <FilesMatch "index\.html$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>

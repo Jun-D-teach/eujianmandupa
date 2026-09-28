@@ -6,6 +6,9 @@ import { defineConfig } from "vite";
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Path aset RELATIF (./assets/...) agar hasil build bisa ditaruh di
+  // subfolder hosting mana pun (cth. man2plg.sch.id/eujian-mandupa/).
+  base: "./",
   plugins: [react(), vlyPlugin(), tailwindcss()],
   resolve: {
     alias: {

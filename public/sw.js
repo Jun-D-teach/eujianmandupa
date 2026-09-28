@@ -9,7 +9,9 @@
  *   LocalStorage (lihat src/lib/exam-storage.ts).
  */
 const CACHE_NAME = "ujianaman-v1";
-const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
+/* Path RELATIF — app tetap bekerja saat di-host di subfolder
+ * (mis. man2plg.sch.id/eujian-mandupa/). */
+const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -55,7 +57,7 @@ self.addEventListener("fetch", (event) => {
         const cached = await caches.match(request);
         if (cached) return cached;
         if (request.mode === "navigate") {
-          const shell = await caches.match("/index.html");
+          const shell = await caches.match("./index.html");
           if (shell) return shell;
         }
         return new Response("Offline", {
