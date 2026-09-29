@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/use-auth";
 import {
+  adaKonfigurasiBawaan,
   gasCall,
   muatUrlServer,
   simpanUrlServer,
@@ -52,6 +53,9 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
   const [busy, setBusy] = useState(false);
   const [pesan, setPesan] = useState<string | null>(null);
 
+  /** URL server sudah dikunci saat build (VITE_GAS_URL) → jangan tampilkan field. */
+  const terkunci = adaKonfigurasiBawaan();
+
   // Cek status server sekali saat halaman dibuka.
   useEffect(() => {
     let hidup = true;
@@ -82,7 +86,12 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
     setBusy(true);
     setPesan(null);
     try {
-      simpanUrlServer(bersih);
+      if (!simpanUrlServer(bersih)) {
+        setPesan(
+          "URL tidak valid — harus https://script.google.com/macros/s/…/exec",
+        );
+        return;
+      }
       const res = await gasCall<{ siap: boolean }>("ping");
       setIsi(res.siap);
       toast.success("Server Google Sheets terhubung.");
@@ -148,38 +157,47 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
           </CardHeader>
 
           <CardContent className="space-y-5 pb-6">
-            {/* URL server */}
-            <div className="space-y-2">
-              <Label htmlFor="gas-url" className="gap-1.5">
-                <Server className="size-3.5" /> URL Web App (…/exec)
-              </Label>
-              <div className="flex gap-2">
-                <Input
-                  id="gas-url"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  placeholder="https://script.google.com/macros/s/…/exec"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={pasangServer}
-                  disabled={busy}
-                >
-                  Hubungkan
-                </Button>
+            {/* URL server — hanya tampil saat perlu dipasang (belum terhubung
+                dan tidak dikunci dari build). Kalau sudah terpasang, siswa/guru
+                hanya melihat status koneksi tanpa bisa mengubah URL. */}
+            {!terkunci && isi === null && (
+              <div className="space-y-2">
+                <Label htmlFor="gas-url" className="gap-1.5">
+                  <Server className="size-3.5" /> URL Web App (…/exec)
+                </Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="gas-url"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="https://script.google.com/macros/s/…/exec"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={pasangServer}
+                    disabled={busy}
+                  >
+                    Hubungkan
+                  </Button>
+                </div>
               </div>
-              <p className="text-xs leading-5 text-muted-foreground">
+            )}
+            <div className="flex items-start gap-2 rounded-xl bg-muted/60 px-3 py-2 text-xs leading-5 text-muted-foreground">
+              <Server className="mt-0.5 size-3.5 shrink-0" />
+              <span>
                 {isi === undefined
                   ? "Memeriksa server…"
                   : isi === null
-                    ? "Belum terhubung — tempel URL /exec dari deployment GAS."
+                    ? terkunci
+                      ? "Server belum terhubung — periksa konfigurasi URL GAS pada aplikasi admin."
+                      : "Belum terhubung — tempel URL /exec dari deployment GAS."
                     : isi
                       ? "✓ Terhubung — akun sudah tersedia di sheet Pengguna."
                       : "✓ Terhubung — sheet masih kosong: buat akun admin pertama di bawah."}
-              </p>
+              </span>
             </div>
 
             {pesan && (

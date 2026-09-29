@@ -83,24 +83,52 @@ export type PenggunaGas = {
 const KUNCI_URL = "ujianaman:gasUrl";
 const KUNCI_USER = "ujianaman:user";
 
+/**
+ * URL Web App GAS yang dibake saat build (env VITE_GAS_URL).
+ * Kalau diisi (di tab Keys/API keys), app langsung tahu server sekolah tanpa
+ * perlu field URL di halaman login — siswa/guru cukup login.
+ */
+const GAS_URL_BAWAAN = (
+  (import.meta.env.VITE_GAS_URL as string | undefined) || ""
+).trim();
+
+/** URL /exec GAS harus berformat script.google.com agar app tidak bisa
+ *  diarahkan ke server palsu dari perangkat yang sama. */
+export function urlServerValid(url: string): boolean {
+  return /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/(exec|dev)$/.test(
+    url.trim(),
+  );
+}
+
+/** Apakah URL server sudah dibake saat build (VITE_GAS_URL). */
+export function adaKonfigurasiBawaan(): boolean {
+  return GAS_URL_BAWAAN !== "";
+}
+
 /* ------------------------------------------------------------------ */
 /* URL server GAS                                                      */
 /* ------------------------------------------------------------------ */
 
 export function muatUrlServer(): string {
   try {
-    return window.localStorage.getItem(KUNCI_URL) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-export function simpanUrlServer(url: string): void {
-  try {
-    window.localStorage.setItem(KUNCI_URL, url.trim());
+    const t = (window.localStorage.getItem(KUNCI_URL) ?? "").trim();
+    if (t) return t;
   } catch {
     /* noop */
   }
+  return GAS_URL_BAWAAN;
+}
+
+/** Simpan URL hanya bila formatnya URL /exec GAS yang sah. */
+export function simpanUrlServer(url: string): boolean {
+  const bersih = url.trim();
+  if (!urlServerValid(bersih)) return false;
+  try {
+    window.localStorage.setItem(KUNCI_URL, bersih);
+  } catch {
+    /* noop */
+  }
+  return true;
 }
 
 export function hapusUrlServer(): void {
@@ -185,6 +213,8 @@ export async function gasCall<T = Record<string, unknown>>(
 ): Promise<T> {
   const url = muatUrlServer();
   if (!url) throw new Error("URL server Google Sheets belum diatur.");
+  if (!urlServerValid(url))
+    throw new Error("URL server tidak valid — harus https://script.google.com/macros/s/…/exec");
   const penuh = `${url}?action=${encodeURIComponent(action)}&payloadB64=${encodeURIComponent(
     encodePayloadB64(data),
   )}`;
@@ -202,6 +232,8 @@ export async function gasPost<T = Record<string, unknown>>(
 ): Promise<T> {
   const url = muatUrlServer();
   if (!url) throw new Error("URL server Google Sheets belum diatur.");
+  if (!urlServerValid(url))
+    throw new Error("URL server tidak valid — harus https://script.google.com/macros/s/…/exec");
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
