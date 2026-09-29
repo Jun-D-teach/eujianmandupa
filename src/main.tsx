@@ -84,6 +84,17 @@ class RootErrorBoundary extends React.Component<
 // PWA: service worker untuk shell offline saat ujian berlangsung.
 registerServiceWorker();
 
+/** Auto-detect subfolder hosting (mis. /eujian-mandupa/) agar React Router
+ *  mencocokkan rute dengan benar saat app dideploy di subdirektori.
+ *  Vite `base: "./"` membuat BASE_URL tidak valid sebagai basename,
+ *  jadi dihitung runtime dari window.location.pathname. */
+function hitungRouterBasename(): string {
+  let path = window.location.pathname;
+  path = path.replace(/\/index\.html$/i, "");
+  if (path.length > 1) path = path.replace(/\/+$/, "");
+  return path === "/" ? "" : path;
+}
+
 function RouteSyncer() {
   const location = useLocation();
   useEffect(() => {
@@ -114,7 +125,7 @@ createRoot(document.getElementById("root")!).render(
         <VlyToolbar />
       </ToolbarErrorBoundary>
       <AuthProvider>
-        <BrowserRouter>
+        <BrowserRouter basename={hitungRouterBasename()}>
           <RouteSyncer />
           <Suspense fallback={<RouteLoading />}>
             <Routes>
