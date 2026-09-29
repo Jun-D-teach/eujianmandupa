@@ -26,7 +26,7 @@ function labelTgl(tglMulai?: string): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* FASE: SETUP — isi nama/kelas + unduh soal (online) — TANPA TOKEN    */
+/* FASE: SETUP — nama/kelas + TOKEN ujian, lalu unduh soal (online)     */
 /* ------------------------------------------------------------------ */
 export function SetupFase(props: {
   judul: string;
@@ -39,6 +39,8 @@ export function SetupFase(props: {
   kelas: string;
   setNama: (v: string) => void;
   setKelas: (v: string) => void;
+  token: string;
+  setToken: (v: string) => void;
   pesan: string | null;
   busy: boolean;
   online: boolean;
@@ -101,6 +103,26 @@ export function SetupFase(props: {
             </div>
           </div>
 
+          <div className="grid gap-2">
+            <Label htmlFor="token-ujian" className="gap-1.5">
+              <KeyRound className="size-3.5" /> Token ujian
+            </Label>
+            <Input
+              id="token-ujian"
+              value={props.token}
+              onChange={(e) => props.setToken(e.target.value.toUpperCase())}
+              placeholder="cth. K7XM3P"
+              maxLength={12}
+              autoComplete="off"
+              autoCapitalize="characters"
+              className="h-12 text-center font-mono text-xl font-bold uppercase tracking-[0.35em]"
+            />
+            <p className="text-xs leading-5 text-muted-foreground">
+              Token diperiksa server saat unduh — soal hanya terkirim kalau
+              token cocok. Token dibagikan pengawas/admin.
+            </p>
+          </div>
+
           <div
             className={`flex items-start gap-2.5 rounded-2xl border px-4 py-3 text-xs leading-5 ${
               props.online
@@ -112,8 +134,7 @@ export function SetupFase(props: {
               <>
                 <Wifi className="mt-0.5 size-4 shrink-0" />
                 <span>
-                  Terhubung internet — soal bisa diunduh sekarang (tanpa token).
-                  Token baru diminta saat mulai ujian.
+                  Terhubung internet — lengkapi data di atas lalu unduh soal.
                 </span>
               </>
             ) : (
@@ -157,19 +178,17 @@ export function SetupFase(props: {
 }
 
 /* ------------------------------------------------------------------ */
-/* FASE: INSTRUKSI — masukkan token, persiapan offline                 */
+/* FASE: INSTRUKSI — persiapan offline (token sudah lolos server)       */
 /* ------------------------------------------------------------------ */
 export function InstruksiFase(props: {
   sesi: SesiUjian;
   online: boolean;
-  token: string;
-  setToken: (v: string) => void;
   onMulai: () => void;
   onUlang: () => void;
 }) {
   const aturan = [
     "MATIKAN WiFi dan paket data seluler sekarang. Ujian hanya boleh dikerjakan dalam keadaan offline.",
-    "Masukkan token ujian dari pengawas ruang — token diverifikasi lokal, jadi ujian bisa dimulai walau HP sudah offline.",
+    "Token ujian sudah diverifikasi server saat unduh — ujian bisa langsung dimulai walau HP sudah offline.",
     `Waktu ujian ${props.sesi.durasi_menit ?? 60} menit dihitung sejak tombol Mulai Ujian. Saat habis, sistem otomatis berpindah ke pengiriman jawaban.`,
     "Setiap pelanggaran membunyikan sirene dan menambah 1 strike.",
     "Pada strike ke-3 layar terkunci; pengawas membukanya dengan PIN (tanpa internet).",
@@ -180,10 +199,10 @@ export function InstruksiFase(props: {
     <div className="space-y-5">
       <div>
         <Badge variant="secondary" className="mb-3">
-          Tahap 2 · Token & persiapan offline
+          Tahap 2 · Persiapan offline
         </Badge>
         <h1 className="text-2xl font-extrabold tracking-tight">
-          Masukkan token, lalu mulai
+          Matikan internet, lalu mulai
         </h1>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
           {props.sesi.judul} · {props.sesi.soal.length} soal · durasi{" "}
@@ -191,29 +210,6 @@ export function InstruksiFase(props: {
           {props.sesi.kelas})
         </p>
       </div>
-
-      <Card className="border-2 border-ink/20 bg-ink/[0.03]">
-        <CardContent className="space-y-3 p-5">
-          <div className="flex items-center gap-2">
-            <KeyRound className="size-4 text-muted-foreground" />
-            <p className="text-sm font-bold">Token ujian</p>
-          </div>
-          <Input
-            value={props.token}
-            onChange={(e) => props.setToken(e.target.value.toUpperCase())}
-            placeholder="cth. K7XM3P"
-            maxLength={12}
-            autoComplete="off"
-            autoCapitalize="characters"
-            className="h-12 text-center font-mono text-xl font-bold uppercase tracking-[0.35em]"
-          />
-          <p className="text-xs leading-5 text-muted-foreground">
-            Token dibagikan <strong>pengawas ruang</strong> (diperoleh dari
-            admin). Aplikasi memeriksa token secara lokal — ujian tetap bisa
-            dimulai meski HP sudah offline.
-          </p>
-        </CardContent>
-      </Card>
 
       <Card
         className={`border-2 ${
@@ -248,7 +244,7 @@ export function InstruksiFase(props: {
                   Internet sudah mati — siap!
                 </p>
                 <p className="text-xs leading-5 text-emerald-700/80">
-                  HP dalam keadaan offline. Isi token lalu ujian boleh dimulai.
+                  HP dalam keadaan offline. Ujian boleh dimulai kapan saja.
                 </p>
               </div>
             </>

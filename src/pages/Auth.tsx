@@ -13,6 +13,7 @@ import {
   adaKonfigurasiBawaan,
   gasCall,
   muatUrlServer,
+  simpanSesiToken,
   simpanUrlServer,
   simpanUser,
   type UserGas,
@@ -121,10 +122,11 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
     setBusy(true);
     setPesan(null);
     try {
-      const res = await gasCall<{ user: UserGas }>("setupAdmin", {
+      const res = await gasCall<{ user: UserGas; sesi?: string }>("setupAdmin", {
         username: username.trim(),
         password,
       });
+      simpanSesiToken(res.sesi ?? "");
       simpanUser(res.user);
       toast.success("Admin pertama dibuat. Selamat datang!");
       navigate(redirect);

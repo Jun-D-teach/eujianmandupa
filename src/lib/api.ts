@@ -82,6 +82,7 @@ export type PenggunaGas = {
 
 const KUNCI_URL = "ujianaman:gasUrl";
 const KUNCI_USER = "ujianaman:user";
+const KUNCI_SESI = "ujianaman:sesi";
 
 /**
  * URL Web App GAS yang dibake saat build (env VITE_GAS_URL).
@@ -172,8 +173,51 @@ export function hapusUser(): void {
 }
 
 /* ------------------------------------------------------------------ */
+/* Token sesi server (diterima saat login, dikirim ulang di tiap call) */
+/* ------------------------------------------------------------------ */
+
+export function muatSesiToken(): string {
+  try {
+    return (window.localStorage.getItem(KUNCI_SESI) ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
+export function simpanSesiToken(token: string): void {
+  try {
+    if (token) window.localStorage.setItem(KUNCI_SESI, token);
+  } catch {
+    /* noop */
+  }
+}
+
+export function hapusSesiToken(): void {
+  try {
+    window.localStorage.removeItem(KUNCI_SESI);
+  } catch {
+    /* noop */
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Transport: JSONP (bebas CORS) + POST fallback                       */
 /* ------------------------------------------------------------------ */
+
+/** Event: server menolak karena sesi habis/tidak sah → logout paksa. */
+export const EVENT_PERLU_LOGIN = "ujianaman:perlu-login";
+
+/** Bersihkan kredensial lokal + beri tahu provider auth, lalu gagalkan call. */
+function tanganiPerluLogin(pesan: string): never {
+  hapusSesiToken();
+  hapusUser();
+  try {
+    window.dispatchEvent(new CustomEvent(EVENT_PERLU_LOGIN, { detail: pesan }));
+  } catch {
+    /* noop */
+  }
+  throw new Error(pesan || "Sesi habis — silakan login ulang.");
+}
 
 function encodePayloadB64(data: Record<string, unknown>): string {
   return btoa(unescape(encodeURIComponent(JSON.stringify(data))));
@@ -206,7 +250,8 @@ function panggilJsonp(url: string, timeoutMs = 20000): Promise<unknown> {
   });
 }
 
-/** Panggilan utama ke GAS: GET + JSONP dengan payloadB64. */
+/** Panggilan utama ke GAS: GET + JSONP dengan payloadB64. Token sesi
+ *  server disisipkan otomatis (field "sesi") ke setiap payload. */
 export async function gasCall<T = Record<string, unknown>>(
   action: string,
   data: Record<string, unknown> = {},
@@ -216,9 +261,16 @@ export async function gasCall<T = Record<string, unknown>>(
   if (!urlServerValid(url))
     throw new Error("URL server tidak valid — harus https://script.google.com/macros/s/…/exec");
   const penuh = `${url}?action=${encodeURIComponent(action)}&payloadB64=${encodeURIComponent(
-    encodePayloadB64(data),
+    encodePayloadB64({ sesi: muatSesiToken(), ...data }),
   )}`;
-  const res = (await panggilJsonp(penuh)) as { success?: boolean; message?: string };
+  const res = (await panggilJsonp(penuh)) as {
+    success?: boolean;
+    message?: string;
+    perlu_login?: boolean;
+  };
+  if (res && res.perlu_login) {
+    tanganiPerluLogin(res.message || "Sesi habis — silakan login ulang.");
+  }
   if (res && res.success === false) {
     throw new Error(res.message || "Permintaan gagal di server.");
   }
@@ -237,9 +289,16 @@ export async function gasPost<T = Record<string, unknown>>(
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ action, ...data }),
+    body: JSON.stringify({ action, sesi: muatSesiToken(), ...data }),
   });
-  const json = (await res.json()) as { success?: boolean; message?: string };
+  const json = (await res.json()) as {
+    success?: boolean;
+    message?: string;
+    perlu_login?: boolean;
+  };
+  if (json && json.perlu_login) {
+    tanganiPerluLogin(json.message || "Sesi habis — silakan login ulang.");
+  }
   if (json && json.success === false) {
     throw new Error(json.message || "Permintaan gagal di server.");
   }

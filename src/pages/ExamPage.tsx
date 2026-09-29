@@ -322,13 +322,18 @@ export default function ExamPage() {
   }, [ujianId]);
 
   // --- Aksi fase -------------------------------------------------------
-  /** Unduh soal TANPA token (online) — sesuai alur baru. */
+  /** Unduh soal (online) — token ujian divalidasi server sebelum soal dikirim. */
   const unduhSoal = async () => {
     if (!ujianId) return;
     const n = nama.trim();
     const k = kelas.trim();
+    const t = token.trim().toUpperCase();
     if (!n || !k) {
       toast.error("Nama dan kelas wajib diisi sebelum mengunduh soal.");
+      return;
+    }
+    if (!tokenValid(t)) {
+      toast.error("Isi token ujian (4–12 huruf/angka, tanpa spasi).");
       return;
     }
     if (belumMulai(sesi?.tglMulai ?? meta?.tgl_mulai)) {
@@ -340,7 +345,7 @@ export default function ExamPage() {
     try {
       const data = await gasCall<
         { ujian: UjianGas; soal: import("@/lib/api").SoalGas[]; pin_pengawas?: string }
-      >("getSoal", { id: ujianId, kelas: k });
+      >("getSoal", { id: ujianId, kelas: k, token: t });
       // Cache PIN pengawas terbaru (dari sheet Pengaturan) agar layar kunci
       // tetap bisa dibuka offline dengan PIN terkini.
       if (typeof data.pin_pengawas === "string" && /^\d{6}$/.test(data.pin_pengawas)) {
@@ -357,6 +362,7 @@ export default function ExamPage() {
         fase: "instruksi",
         nama: n,
         kelas: k,
+        token: t,
         durasi_menit: data.ujian.durasi_menit,
         tglMulai: data.ujian.tgl_mulai || undefined,
         unduhPada: Date.now(),
@@ -388,13 +394,8 @@ export default function ExamPage() {
     }
   };
 
-  /** Mulai ujian: validasi token LOKAL — bisa dilakukan saat offline. */
+  /** Mulai ujian — token sudah terverifikasi server saat unduh soal. */
   const mulaiUjian = () => {
-    const t = token.trim().toUpperCase();
-    if (!tokenValid(t)) {
-      toast.error("Token tidak valid (4–12 huruf/angka, tanpa spasi).");
-      return;
-    }
     if (belumMulai(sesi?.tglMulai)) {
       toast.error(`Ujian baru bisa dimulai pada ${labelTgl(sesi?.tglMulai)}.`);
       return;
@@ -406,7 +407,6 @@ export default function ExamPage() {
         ? {
             ...prev,
             fase: "ujian",
-            token: t,
             mulaiPada: now,
             batasWaktu: now + (prev.durasi_menit ?? 60) * 60_000,
             strike: 0,
@@ -621,6 +621,8 @@ export default function ExamPage() {
             kelas={kelas}
             setNama={setNama}
             setKelas={setKelas}
+            token={token}
+            setToken={setToken}
             pesan={pesan}
             busy={busy}
             online={online}
@@ -633,8 +635,6 @@ export default function ExamPage() {
           <InstruksiFase
             sesi={sesi}
             online={online}
-            token={token}
-            setToken={setToken}
             onMulai={mulaiUjian}
             onUlang={() => {
               hapusSesi(sesi.ujianId);

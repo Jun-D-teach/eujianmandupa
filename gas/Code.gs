@@ -27,6 +27,15 @@
  *
  * Deploy: Deploy > New deployment > Web app — Execute as Me, access Anyone.
  * Semua action GET mendukung JSONP (&callback=fn) + payloadB64 (bebas CORS).
+ *
+ * KEAMANAN (per action):
+ *  - Sesi ber-token: setelah login/setupAdmin server mengeluarkan token sesi
+ *    "username|exp|hmac" (HMAC-SHA256, umur SESI_ADA_JAM jam). Klien mengirim
+ *    kembali token itu di setiap panggilan (field "sesi"); role DIVALIDASI
+ *    LANGSUNG dari sheet Pengguna, bukan dari klien.
+ *  - Tabel AKSES_ membatasi action per peran; action tanpa entri terbuka.
+ *  - getSoal_ (unduh soal) WAJIB menyertakan token ujian — dicocokkan dengan
+ *    kolom token di sheet Ujian sebelum soal dikirim.
  * ============================================================================
  */
 
@@ -123,6 +132,95 @@ function buatTokenAcak_() {
 }
 
 /* ------------------------------------------------------------------ */
+/* KEAMANAN — sesi ber-token (HMAC) + matriks akses per peran           */
+/* ------------------------------------------------------------------ */
+
+var SESI_ADA_JAM = 12; // umur token sesi (jam) — habis → login ulang.
+var KUNCI_SECRET = "server_secret"; // kunci sheet Pengaturan untuk HMAC.
+
+/** Peran minimum yang boleh menjalankan tiap action. Tanpa entri = terbuka
+ *  (ping/login/setupAdmin). Tingkatan: siswa < guru < admin. */
+var AKSES_ = {
+  // Siswa ke atas (dipakai setelah login akun apa pun).
+  getUjianSiswa: 0, getUjianInfo: 0, getSoal: 0, getHasilSaya: 0,
+  submitJawaban: 0, catatBukaKunci: 0,
+  // Guru/admin (petugas).
+  getUjian: 1, getSoalAdmin: 1, getHasil: 1, getSiswa: 1, getKelasList: 1,
+  tambahSiswa: 1, ubahSiswa: 1, hapusSiswa: 1, importSiswa: 1,
+  buatUjian: 1, aturUjian: 1, setAktifUjian: 1, hapusUjian: 1,
+  tambahSoal: 1, tambahSoalContoh: 1, hapusSoal: 1,
+  // Admin saja.
+  getPengaturan: 2, aturPin: 2, buatPengguna: 2, ubahPeran: 2, getPengguna: 2,
+};
+
+function tingkatPeran_(role) {
+  var r = String(role || "").trim().toLowerCase();
+  if (r === "admin") return 2;
+  if (r === "guru") return 1;
+  return 0;
+}
+
+/** Secret acak sekali — disimpan di sheet Pengaturan key "server_secret". */
+function serverSecret_() {
+  var s = bacaPengaturan_(KUNCI_SECRET, "");
+  if (s) return s;
+  s = Utilities.getUuid().replace(/-/g, "") + Utilities.getUuid().replace(/-/g, "");
+  simpanPengaturan_(KUNCI_SECRET, s);
+  return s;
+}
+
+function hmacHex_(kunci, pesan) {
+  var bytes = Utilities.computeHmacSignature(
+    Utilities.MacAlgorithm.HMAC_SHA_256, pesan, kunci
+  );
+  var hex = "";
+  for (var i = 0; i < bytes.length; i++) {
+    hex += (bytes[i] < 16 ? "0" : "") + (bytes[i] & 0xff).toString(16);
+  }
+  return hex;
+}
+
+/** Token sesi "username|expMs|hmac" untuk pengguna yang baru login. */
+function buatSesi_(username) {
+  var exp = Date.now() + SESI_ADA_JAM * 3600 * 1000;
+  var inti = String(username).toLowerCase() + "|" + exp;
+  var tanda = hmacHex_(serverSecret_(), inti);
+  return inti + "|" + tanda;
+}
+
+/**
+ * Validasi token sesi + peran. Role dibaca LANGSUNG dari sheet Pengguna —
+ * klien tidak dipercaya. Hasil: {ok, pesan?, perlu_login?}.
+ */
+function validasiSesi_(token, peranDiizinkan) {
+  var t = String(token || "").trim();
+  if (!t) return { ok: false, pesan: "Sesi habis — silakan login.", perlu_login: true };
+  var bagi = t.split("|");
+  if (bagi.length !== 3) return { ok: false, pesan: "Sesi tidak sah — silakan login.", perlu_login: true };
+  var username = bagi[0], exp = Number(bagi[1]), tanda = bagi[2];
+  if (!isFinite(exp) || exp < Date.now()) {
+    return { ok: false, pesan: "Sesi kedaluwarsa — silakan login ulang.", perlu_login: true };
+  }
+  if (hmacHex_(serverSecret_(), username + "|" + bagi[1]) !== tanda) {
+    return { ok: false, pesan: "Sesi tidak sah — silakan login ulang.", perlu_login: true };
+  }
+  // Role terkini dari sheet (admin bisa mengubah peran kapan saja).
+  var role = "";
+  var users = bacaBaris_(SHEET_PENGGUNA);
+  for (var i = 0; i < users.rows.length; i++) {
+    if (String(users.rows[i][users.idx.username]).trim().toLowerCase() === username) {
+      role = String(users.rows[i][users.idx.role] || "").trim().toLowerCase();
+      break;
+    }
+  }
+  if (!role) return { ok: false, pesan: "Akun tidak ditemukan — silakan login ulang.", perlu_login: true };
+  if (tingkatPeran_(role) < peranDiizinkan) {
+    return { ok: false, pesan: "Akses ditolak — peran " + role + " tidak diizinkan untuk aksi ini." };
+  }
+  return { ok: true, username: username, role: role };
+}
+
+/* ------------------------------------------------------------------ */
 /* RESPON (JSON & JSONP)                                               */
 /* ------------------------------------------------------------------ */
 
@@ -171,6 +269,11 @@ function doPost(e) {
 }
 
 function jalankan_(action, data) {
+  // Gerbang kredensial: sesi wajib kecuali action yang terbuka (tanpa entri).
+  if (AKSES_.hasOwnProperty(action)) {
+    var cek = validasiSesi_(data && data.sesi, AKSES_[action]);
+    if (!cek.ok) return { success: false, message: cek.pesan, perlu_login: !!cek.perlu_login };
+  }
   switch (action) {
     case "ping": return ping_();
     case "setupAdmin": return setupAdmin_(data);
@@ -240,6 +343,7 @@ function setupAdmin_(data) {
     success: true,
     message: 'Admin "' + username + '" dibuat beserta ujian contoh.',
     user: { id: username, username: username, nama: "Administrator", kelas: "", role: "admin" },
+    sesi: buatSesi_(username),
   };
 }
 
@@ -262,6 +366,7 @@ function login_(data) {
           kelas: String(row[users.idx.kelas] || ""),
           role: String(row[users.idx.role] || "siswa"),
         },
+        sesi: buatSesi_(u),
       };
     }
   }
@@ -696,14 +801,24 @@ function getSoal_(data) {
   var ujian = bacaBaris_(SHEET_UJIAN);
   var cari = String(data.id || "");
   var kelas = String(data.kelas || "").trim();
+  // TOKEN UJIAN WAJIB saat sinkron/unduh — dicocokkan dengan kolom token.
+  var token = String(data.token || "").trim().toUpperCase();
+  if (!token) {
+    return { success: false, message: "Token ujian wajib diisi untuk mengunduh soal." };
+  }
   var meta = null;
   for (var i = 0; i < ujian.rows.length; i++) {
     if (String(ujian.rows[i][ujian.idx.id]) === cari) {
       meta = barisUjian_(ujian.rows[i], ujian.idx, false, kelas || undefined);
+      // Kolom token diambil langsung dari baris (barisUjian_ tak menyertakannya).
+      meta._token_asli = String(ujian.rows[i][ujian.idx.token] || "").trim().toUpperCase();
       break;
     }
   }
   if (!meta) return { success: false, message: "Ujian tidak ditemukan." };
+  if (meta._token_asli !== token) {
+    return { success: false, message: "Token ujian salah. Minta token yang benar dari pengawas/admin." };
+  }
   if (!meta.aktif) return { success: false, message: "Ujian belum diaktifkan admin." };
   if (!meta.boleh) {
     return {

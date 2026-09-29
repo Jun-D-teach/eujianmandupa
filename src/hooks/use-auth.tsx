@@ -6,9 +6,12 @@ import {
   type ReactNode,
 } from "react";
 import {
+  EVENT_PERLU_LOGIN,
   gasCall,
+  hapusSesiToken,
   hapusUser,
   muatUser,
+  simpanSesiToken,
   simpanUser,
   type UserGas,
 } from "@/lib/api";
@@ -41,13 +44,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
+  // Server menolak karena sesi kedaluwarsa/tidak sah → logout paksa.
+  useEffect(() => {
+    const onPerluLogin = () => {
+      hapusUser();
+      setUser(null);
+    };
+    window.addEventListener(EVENT_PERLU_LOGIN, onPerluLogin);
+    return () => window.removeEventListener(EVENT_PERLU_LOGIN, onPerluLogin);
+  }, []);
+
   const signIn = async (username: string, password: string) => {
     setIsLoading(true);
     try {
-      const res = await gasCall<{ user: UserGas }>("login", {
+      const res = await gasCall<{ user: UserGas; sesi?: string }>("login", {
         username,
         password,
       });
+      simpanSesiToken(res.sesi ?? "");
       simpanUser(res.user);
       setUser(res.user);
       return res.user;
@@ -57,6 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = () => {
+    hapusSesiToken();
     hapusUser();
     setUser(null);
   };
