@@ -61,6 +61,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         username,
         password,
       });
+      if (!res.sesi) {
+        throw new Error(
+          "Server Apps Script belum memuat kode terbaru (fitur sesi). Salin ulang gas/Code.gs ke editor GAS, lalu Deploy → Manage deployments → Edit → New version.",
+        );
+      }
       simpanSesiToken(res.sesi ?? "");
       simpanUser(res.user);
       setUser(res.user);

@@ -987,10 +987,16 @@ var PIN_BAWAAN = "123456";
 
 function bacaPengaturan_(kunci, bawaan) {
   try {
-    var p = bacaBaris_(SHEET_PENGATURAN);
-    for (var i = 0; i < p.rows.length; i++) {
-      if (String(p.rows[i][p.idx.kunci]).trim() === kunci) {
-        var v = String(p.rows[i][p.idx.nilai] || "").trim();
+    // Dibaca LANGSUNG dari sheet — JANGAN lewat bacaBaris_() karena sheet
+    // Pengaturan tidak punya kolom "id" (bacaBaris_ melewatkan baris tanpa id,
+    // sehingga selalu kosong → secret/PIN terus dianggap belum diatur).
+    var sh = getSheet_(SHEET_PENGATURAN);
+    var values = sh.getDataRange().getValues();
+    var idx = indexHeader_(values[0]);
+    if (idx.kunci === undefined || idx.nilai === undefined) return bawaan;
+    for (var r = 1; r < values.length; r++) {
+      if (String(values[r][idx.kunci]).trim() === kunci) {
+        var v = String(values[r][idx.nilai] || "").trim();
         if (v) return v;
       }
     }
