@@ -146,7 +146,7 @@ var AKSES_ = {
   submitJawaban: 0, catatBukaKunci: 0,
   // Guru/admin (petugas).
   getUjian: 1, getSoalAdmin: 1, getHasil: 1, getSiswa: 1, getKelasList: 1,
-  tambahSiswa: 1, ubahSiswa: 1, hapusSiswa: 1, importSiswa: 1,
+  tambahSiswa: 1, ubahSiswa: 1, hapusSiswa: 1, importSiswa: 1, buatAkunSiswa: 1,
   buatUjian: 1, aturUjian: 1, setAktifUjian: 1, hapusUjian: 1,
   tambahSoal: 1, tambahSoalContoh: 1, hapusSoal: 1,
   // Admin saja.
@@ -292,6 +292,7 @@ function jalankan_(action, data) {
     case "ubahSiswa": return ubahSiswa_(data);
     case "hapusSiswa": return hapusSiswa_(data);
     case "importSiswa": return importSiswa_(data);
+    case "buatAkunSiswa": return buatAkunSiswa_(data);
     case "buatUjian": return buatUjian_(data);
     case "aturUjian": return aturUjian_(data);
     case "setAktifUjian": return setAktifUjian_(data);
@@ -409,12 +410,58 @@ function ubahPeran_(data) {
   return { success: false, message: "Pengguna tidak ditemukan." };
 }
 
+/**
+ * Buat akun login massal dari sheet Siswa (guru/admin).
+ * Username = NISN, password = tanggal lahir DDMMYYYY (cth. 12 Mei 2008 ->
+ * 12052008). Akun yang sudah ada dilewati — password tidak diubah. Siswa
+ * tanpa tanggal lahir memakai password bawaan "siswa123".
+ */
+function buatAkunSiswa_(data) {
+  var siswa = bacaBaris_(SHEET_SISWA);
+  if (!siswa.rows.length) return { success: false, message: "Sheet Siswa masih kosong — impor data dulu." };
+  var users = bacaBaris_(SHEET_PENGGUNA);
+  var sudahAda = {};
+  users.rows.forEach(function (row) {
+    sudahAda[String(row[users.idx.username]).trim().toLowerCase()] = true;
+  });
+  var sh = getSheet_(SHEET_PENGGUNA);
+  var dibuat = 0, lewati = 0, tanpaTgl = 0;
+  siswa.rows.forEach(function (row) {
+    var nisn = String(row[siswa.idx.nisn] || "").trim();
+    var nama = String(row[siswa.idx.nama] || "").trim();
+    var kelas = String(row[siswa.idx.kelas] || "").trim();
+    var tgl = teksTgl_(row[siswa.idx.tgllahir]);
+    if (!nisn || sudahAda[nisn.toLowerCase()]) { lewati++; return; }
+    var password = "";
+    var m = tgl.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) {
+      password = m[3] + m[2] + m[1]; // YYYY-MM-DD -> DDMMYYYY
+    } else if (/^\d{8}$/.test(tgl)) {
+      password = tgl; // sudah DDMMYYYY
+    } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(tgl)) {
+      var p = tgl.split("/");
+      password = p[2] + p[1] + p[0]; // DD/MM/YYYY -> DDMMYYYY
+    } else {
+      tanpaTgl++;
+      password = "siswa123";
+    }
+    sh.appendRow([idBaru_("p"), nisn, password, nama || nisn, kelas, "siswa", new Date()]);
+    sudahAda[nisn.toLowerCase()] = true;
+    dibuat++;
+  });
+  var pesan = dibuat + " akun siswa dibuat (username = NISN, password = tgl lahir DDMMYYYY).";
+  if (lewati) pesan += " " + lewati + " dilewati (sudah ada / NISN kosong).";
+  if (tanpaTgl) pesan += " " + tanpaTgl + " tanpa tgl lahir memakai password \"siswa123\".";
+  return { success: true, dibuat: dibuat, lewati: lewati, tanpa_tgl: tanpaTgl, message: pesan };
+}
+
 function getPengguna_() {
   var users = bacaBaris_(SHEET_PENGGUNA);
   var daftar = users.rows.map(function (row) {
     return {
       id: String(row[users.idx.id]),
       username: String(row[users.idx.username] || ""),
+      password: String(row[users.idx.password] || ""),
       nama: String(row[users.idx.nama] || ""),
       kelas: String(row[users.idx.kelas] || ""),
       role: String(row[users.idx.role] || "siswa"),
@@ -427,13 +474,24 @@ function getPengguna_() {
 /* DATA SISWA (NISN, nama, tgl lahir, kelas)                           */
 /* ------------------------------------------------------------------ */
 
+/** Normalisasi nilai sel tanggal lahir -> "YYYY-MM-DD".
+ *  Sheets sering mengubah teks tanggal menjadi objek Date otomatis; tanpa ini
+ *  tampilan & password turunan tanggal lahir jadi rusak. */
+function teksTgl_(v) {
+  if (v instanceof Date) {
+    var p = function (n) { return (n < 10 ? "0" : "") + n; };
+    return v.getFullYear() + "-" + p(v.getMonth() + 1) + "-" + p(v.getDate());
+  }
+  return String(v || "").trim();
+}
+
 function barisSiswa_(row, idx) {
   return {
     id: String(row[idx.id]),
-    nisn: String(row[idx.nisn] || ""),
-    nama: String(row[idx.nama] || ""),
-    tgllahir: idx.tgllahir !== undefined ? String(row[idx.tgllahir] || "") : "",
-    kelas: String(row[idx.kelas] || ""),
+    nisn: String(row[idx.nisn] || "").trim(),
+    nama: String(row[idx.nama] || "").trim(),
+    tgllahir: idx.tgllahir !== undefined ? teksTgl_(row[idx.tgllahir]) : "",
+    kelas: String(row[idx.kelas] || "").trim(),
   };
 }
 

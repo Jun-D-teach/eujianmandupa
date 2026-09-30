@@ -75,6 +75,8 @@ export type HasilGas = {
 export type PenggunaGas = {
   id: string;
   username: string;
+  /** Hanya untuk admin (menu Pengguna) — dipakai unduh CSV akun. */
+  password?: string;
   nama: string;
   kelas: string;
   role: Role;

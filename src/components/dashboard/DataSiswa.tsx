@@ -32,11 +32,17 @@ import {
   Plus,
   Search,
   Trash2,
+  UserPlus,
   UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
 
 const kosong = { nisn: "", nama: "", tgllahir: "", kelas: "" };
+
+const NAMA_BULAN = [
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+];
 
 /** Panel kelola data siswa — khusus admin. */
 export function DataSiswa() {
@@ -49,6 +55,7 @@ export function DataSiswa() {
   const [bukaImpor, setBukaImpor] = useState(false);
   const [teksImpor, setTeksImpor] = useState("");
   const [busy, setBusy] = useState(false);
+  const [bukaAkun, setBukaAkun] = useState(false);
 
   const muat = () => {
     setDaftar(null);
@@ -121,6 +128,37 @@ export function DataSiswa() {
     }
   };
 
+  /** Nilai mentah dari server (bisa "2008-05-12" dari Date Sheets, bisa teks) —
+   *  untuk tooltip saat format tidak dikenal. */
+  const tanggalMentah = (s: SiswaGas) => s.tgllahir;
+
+  /** Tampilkan tanggal lahir konsisten: 12 Mei 2008. */
+  const formatTgl = (nilai: string): string => {
+    const t = nilai.trim();
+    let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return `${Number(m[3])} ${NAMA_BULAN[Number(m[2]) - 1] ?? m[2]} ${m[1]}`;
+    m = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (m) return `${Number(m[1])} ${NAMA_BULAN[Number(m[2]) - 1] ?? m[2]} ${m[3]}`;
+    return t; // biarkan apa adanya + tooltip nilai mentah
+  };
+
+  const buatAkunMassal = async () => {
+    setBusy(true);
+    try {
+      const res = await gasCall<{
+        dibuat: number;
+        lewati: number;
+        tanpa_tgl?: number;
+      }>("buatAkunSiswa", {});
+      toast.success(res.message || "Akun siswa dibuat.");
+      setBukaAkun(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal membuat akun siswa.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const impor = async () => {
     const rows = teksImpor
       .trim()
@@ -171,6 +209,14 @@ export function DataSiswa() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => setBukaAkun(true)}
+            disabled={daftar.length === 0}
+          >
+            <UserPlus className="size-4" /> Buat akun siswa
+          </Button>
           <Button variant="outline" className="gap-2" onClick={() => setBukaImpor(true)}>
             <FileUp className="size-4" /> Impor massal
           </Button>
@@ -232,7 +278,12 @@ export function DataSiswa() {
                         {s.nama}
                       </span>
                     </td>
-                    <td className="px-5 py-3.5 text-muted-foreground">{s.tgllahir || "—"}</td>
+                    <td
+                      className="px-5 py-3.5 text-muted-foreground"
+                      title={formatTgl(s.tgllahir) !== s.tgllahir ? tanggalMentah(s) : undefined}
+                    >
+                      {s.tgllahir ? formatTgl(s.tgllahir) : <span className="italic">belum diisi</span>}
+                    </td>
                     <td className="px-5 py-3.5">
                       <Badge variant="secondary">{s.kelas}</Badge>
                     </td>
@@ -373,6 +424,31 @@ export function DataSiswa() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Konfirmasi buat akun massal */}
+      <AlertDialog open={bukaAkun} onOpenChange={setBukaAkun}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Buat akun untuk semua siswa?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Akun dibuat dari data siswa: <strong>username = NISN</strong>,
+              <strong> password = tanggal lahir (DDMMYYYY)</strong>, peran
+              siswa. Akun yang sudah ada dilewati (password tidak berubah).
+              Setelah ini unduh daftar akun di menu Pengguna untuk dibagikan.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={buatAkunMassal}
+              disabled={busy}
+              className="bg-ink text-white hover:bg-ink/90"
+            >
+              {busy ? "Membuat…" : "Ya, buat akun"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Konfirmasi hapus */}
       <AlertDialog
