@@ -85,12 +85,15 @@ const KUNCI_USER = "ujianaman:user";
 const KUNCI_SESI = "ujianaman:sesi";
 
 /**
- * URL Web App GAS yang dibake saat build (env VITE_GAS_URL).
- * Kalau diisi (di tab Keys/API keys), app langsung tahu server sekolah tanpa
- * perlu field URL di halaman login — siswa/guru cukup login.
+ * URL Web App GAS sekolah — dibake langsung di sini agar siswa/guru TIDAK
+ * perlu memasukkan URL server lagi. Ganti nilai di bawah bila deployment GAS
+ * dibuat ulang. Prioritas: env VITE_GAS_URL (bila ada) > nilai bake ini.
  */
+const GAS_URL_BAKE =
+  "https://script.google.com/macros/s/AKfycby29tQY2OndE-1YNDTdf5fkmdsplD8GFfjTrXsugOYBeYcbq9IvzHpXKf3XEWRTW0SC/exec";
+
 const GAS_URL_BAWAAN = (
-  (import.meta.env.VITE_GAS_URL as string | undefined) || ""
+  (import.meta.env.VITE_GAS_URL as string | undefined) || GAS_URL_BAKE
 ).trim();
 
 /** URL /exec GAS harus berformat script.google.com agar app tidak bisa
