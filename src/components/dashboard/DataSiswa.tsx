@@ -149,6 +149,7 @@ export function DataSiswa() {
         dibuat: number;
         lewati: number;
         tanpa_tgl?: number;
+        message?: string;
       }>("buatAkunSiswa", {});
       toast.success(res.message || "Akun siswa dibuat.");
       setBukaAkun(false);

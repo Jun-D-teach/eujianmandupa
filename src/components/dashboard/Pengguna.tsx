@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Empty, EmptyContent, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ShieldCheck, UserPlus } from "lucide-react";
+import { Download, ShieldCheck, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 const PERAN = [
@@ -75,6 +75,27 @@ export function Pengguna() {
     }
   };
 
+  /** Unduh daftar akun sebagai CSV (pakai Excel/LibreOffice). */
+  const unduhCsv = () => {
+    if (!daftar || daftar.length === 0) return;
+    const esc = (v: string) => '"' + (v ?? '').replace(/"/g, '""') + '"';
+    const baris = daftar.map((u) =>
+      [u.username, u.password ?? "", u.nama ?? "", u.kelas ?? "", u.role]
+        .map(esc)
+        .join(","),
+    );
+    const csv =
+      "\uFEFF" +
+      ["Username,Password,Nama,Kelas,Peran", ...baris].join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "akun-ujianaman.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`${daftar.length} akun diunduh ke akun-ujianaman.csv.`);
+  };
+
   if (daftar === null) {
     return (
       <div className="space-y-4">
@@ -86,11 +107,21 @@ export function Pengguna() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-extrabold tracking-tight">Pengguna</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Semua akun dibuat & diatur admin di sheet "Pengguna" — tanpa email/OTP.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight">Pengguna</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Semua akun dibuat & diatur admin di sheet "Pengguna" — tanpa email/OTP.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          className="gap-2"
+          onClick={unduhCsv}
+          disabled={daftar.length === 0}
+        >
+          <Download className="size-4" /> Unduh CSV akun
+        </Button>
       </div>
 
       {/* Buat akun baru */}
