@@ -51,21 +51,34 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [isi, setIsi] = useState<unknown>(undefined); // undefined = cek server
+  const [galatCek, setGalatCek] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [pesan, setPesan] = useState<string | null>(null);
 
   /** URL server sudah dikunci saat build (VITE_GAS_URL) → jangan tampilkan field. */
   const terkunci = adaKonfigurasiBawaan();
 
-  // Cek status server sekali saat halaman dibuka.
+  // Cek status server sekali saat halaman dibuka (timeout panjang + 1x retry,
+  // karena web app GAS sering cold-start lebih dari 20 detik di jaringan HP).
   useEffect(() => {
     let hidup = true;
     const cek = async () => {
-      try {
-        const res = await gasCall<{ siap: boolean }>("ping");
-        if (hidup) setIsi(res.siap);
-      } catch {
-        if (hidup) setIsi(null);
+      let galat: string | null = null;
+      for (let percobaan = 0; percobaan < 2; percobaan++) {
+        try {
+          const res = await gasCall<{ siap: boolean }>("ping", {}, 45000);
+          if (hidup) {
+            setIsi(res.siap);
+            setGalatCek(null);
+          }
+          return;
+        } catch (err) {
+          galat = err instanceof Error ? err.message : "Gagal menghubungi server.";
+        }
+      }
+      if (hidup) {
+        setIsi(null);
+        setGalatCek(galat);
       }
     };
     void cek();
@@ -73,6 +86,19 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       hidup = false;
     };
   }, []);
+
+  /** Cek ulang server (tombol "Coba lagi"). */
+  const ulangiCek = async () => {
+    setIsi(undefined);
+    setGalatCek(null);
+    try {
+      const res = await gasCall<{ siap: boolean }>("ping", {}, 45000);
+      setIsi(res.siap);
+    } catch (err) {
+      setIsi(null);
+      setGalatCek(err instanceof Error ? err.message : "Gagal menghubungi server.");
+    }
+  };
 
   useEffect(() => {
     if (!authBusy && isAuthenticated) navigate(redirect);
@@ -200,7 +226,21 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                       ? "✓ Terhubung — akun sudah tersedia di sheet Pengguna."
                       : "✓ Terhubung — sheet masih kosong: buat akun admin pertama di bawah."}
               </span>
+              {isi === null && (
+                <button
+                  type="button"
+                  onClick={() => void ulangiCek()}
+                  className="ml-auto shrink-0 rounded-lg border px-2 py-0.5 text-[11px] font-semibold text-foreground transition hover:bg-muted"
+                >
+                  Coba lagi
+                </button>
+              )}
             </div>
+            {isi === null && galatCek && (
+              <p className="rounded-xl bg-amber-500/10 px-3 py-2 text-[11px] leading-4 text-amber-700">
+                {galatCek}
+              </p>
+            )}
 
             {pesan && (
               <p className="rounded-xl bg-red-500/10 px-4 py-3 text-xs font-semibold text-red-600">
@@ -277,7 +317,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                 <Button
                   type="submit"
                   className="w-full"
-                  disabled={busy || isi === null || isi === undefined}
+                  disabled={busy}
                 >
                   {busy ? (
                     <Loader2 className="mr-2 size-4 animate-spin" />

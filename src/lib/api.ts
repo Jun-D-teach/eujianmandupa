@@ -118,7 +118,9 @@ export function adaKonfigurasiBawaan(): boolean {
 export function muatUrlServer(): string {
   try {
     const t = (window.localStorage.getItem(KUNCI_URL) ?? "").trim();
-    if (t) return t;
+    // URL tersimpan hanya dipakai bila masih sah — kalau pernah tersimpan
+    // URL rusak/salah di perangkat lama, abaikan dan pakai URL bake.
+    if (t && urlServerValid(t)) return t;
   } catch {
     /* noop */
   }
@@ -260,6 +262,7 @@ function panggilJsonp(url: string, timeoutMs = 20000): Promise<unknown> {
 export async function gasCall<T = Record<string, unknown>>(
   action: string,
   data: Record<string, unknown> = {},
+  timeoutMs = 20000,
 ): Promise<T> {
   const url = muatUrlServer();
   if (!url) throw new Error("URL server Google Sheets belum diatur.");
@@ -268,7 +271,7 @@ export async function gasCall<T = Record<string, unknown>>(
   const penuh = `${url}?action=${encodeURIComponent(action)}&payloadB64=${encodeURIComponent(
     encodePayloadB64({ sesi: muatSesiToken(), ...data }),
   )}`;
-  const res = (await panggilJsonp(penuh)) as {
+  const res = (await panggilJsonp(penuh, timeoutMs)) as {
     success?: boolean;
     message?: string;
     perlu_login?: boolean;

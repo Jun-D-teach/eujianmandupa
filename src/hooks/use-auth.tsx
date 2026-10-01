@@ -57,10 +57,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = async (username: string, password: string) => {
     setIsLoading(true);
     try {
-      const res = await gasCall<{ user: UserGas; sesi?: string }>("login", {
-        username,
-        password,
-      });
+      const res = await gasCall<{ user: UserGas; sesi?: string }>(
+        "login",
+        {
+          username,
+          password,
+        },
+        45000, // web app GAS cold-start bisa lebih dari 20 detik
+      );
       if (!res.sesi) {
         throw new Error(
           "Server Apps Script belum memuat kode terbaru (fitur sesi). Salin ulang gas/Code.gs ke editor GAS, lalu Deploy → Manage deployments → Edit → New version.",
