@@ -271,11 +271,18 @@ export async function gasCall<T = Record<string, unknown>>(
   const penuh = `${url}?action=${encodeURIComponent(action)}&payloadB64=${encodeURIComponent(
     encodePayloadB64({ sesi: muatSesiToken(), ...data }),
   )}`;
-  const res = (await panggilJsonp(penuh, timeoutMs)) as {
+  let res: {
     success?: boolean;
     message?: string;
     perlu_login?: boolean;
   };
+  try {
+    res = (await panggilJsonp(penuh, timeoutMs)) as typeof res;
+  } catch {
+    // JSONP gagal dimuat (jaringan/peramban/ekstensi pemblokir script) →
+    // fallback POST langsung. Kalau keduanya gagal, error-nya tetap naik.
+    return gasPost<T>(action, data, timeoutMs);
+  }
   if (res && res.perlu_login) {
     tanganiPerluLogin(res.message || "Sesi habis — silakan login ulang.");
   }
@@ -285,10 +292,11 @@ export async function gasCall<T = Record<string, unknown>>(
   return res as T;
 }
 
-/** POST langsung (fallback, dipakai bila JSONP tidak tersedia). */
+/** POST langsung (fallback, dipakai bila JSONP gagal dimuat). */
 export async function gasPost<T = Record<string, unknown>>(
   action: string,
   data: Record<string, unknown> = {},
+  timeoutMs = 20000,
 ): Promise<T> {
   const url = muatUrlServer();
   if (!url) throw new Error("URL server Google Sheets belum diatur.");
@@ -298,6 +306,7 @@ export async function gasPost<T = Record<string, unknown>>(
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify({ action, sesi: muatSesiToken(), ...data }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const json = (await res.json()) as {
     success?: boolean;
