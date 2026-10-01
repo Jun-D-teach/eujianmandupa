@@ -8,7 +8,7 @@
  * - Soal & jawaban ujian TIDAK disimpan di service worker, melainkan di
  *   LocalStorage (lihat src/lib/exam-storage.ts).
  */
-const CACHE_NAME = "ujianaman-v1";
+const CACHE_NAME = "ujianaman-v2";
 /* Path RELATIF — app tetap bekerja saat di-host di subfolder
  * (mis. man2plg.sch.id/eujian-mandupa/). */
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
@@ -51,6 +51,13 @@ self.addEventListener("fetch", (event) => {
         if (response && response.ok) {
           const cache = await caches.open(CACHE_NAME);
           cache.put(request, response.clone()).catch(() => {});
+          return response;
+        }
+        // Respons TIDAK OK (404/500). Untuk navigasi, jangan sajikan halaman
+        // error — pakai shell terakhir yang valid supaya tidak blank putih.
+        if (request.mode === "navigate") {
+          const shell = await caches.match("./index.html");
+          if (shell) return shell;
         }
         return response;
       } catch (_err) {
