@@ -45,7 +45,6 @@ export function SetupFase(props: {
   busy: boolean;
   online: boolean;
   onUnduh: () => void;
-  terkunciJadwal: boolean;
 }) {
   return (
     <div className="space-y-5">
@@ -158,18 +157,19 @@ export function SetupFase(props: {
             className="w-full gap-2"
             size="lg"
             onClick={props.onUnduh}
-            disabled={props.busy || !props.online || props.terkunciJadwal}
+            disabled={props.busy || !props.online}
           >
             <Download className="size-4" />
-            {props.terkunciJadwal
-              ? "Belum dibuka — lihat jadwal di atas"
+            {!props.online
+              ? "Nyalakan internet untuk mengunduh"
               : props.busy
                 ? "Mengunduh…"
                 : "Unduh Soal"}
           </Button>
           <p className="text-center text-[11px] leading-5 text-muted-foreground">
-            Soal disimpan ke penyimpanan HP dan dibaca lokal saat ujian. Kunci
-            jawaban tidak pernah dikirim ke perangkat siswa.
+            Unduh hanya bisa bila admin sudah membuka izin unduh mapel ini.
+            Soal disimpan ke HP dan dibaca lokal saat ujian — kunci jawaban
+            tidak pernah dikirim ke perangkat siswa.
           </p>
         </CardContent>
       </Card>
@@ -183,14 +183,15 @@ export function SetupFase(props: {
 export function InstruksiFase(props: {
   sesi: SesiUjian;
   online: boolean;
+  terkunciJadwal: boolean;
   onMulai: () => void;
   onUlang: () => void;
 }) {
   const aturan = [
-    "MATIKAN WiFi dan paket data seluler sekarang. Ujian hanya boleh dikerjakan dalam keadaan offline.",
+    "MATIKAN WiFi dan paket data seluler sekarang. Ujian hanya boleh dikerjakan dalam keadaan offline — selama masih online, tombol Mulai Ujian tidak bisa diklik.",
     "Token ujian sudah diverifikasi server saat unduh — ujian bisa langsung dimulai walau HP sudah offline.",
     `Waktu ujian ${props.sesi.durasi_menit ?? 60} menit dihitung sejak tombol Mulai Ujian. Saat habis, sistem otomatis berpindah ke pengiriman jawaban.`,
-    "Setiap pelanggaran membunyikan sirene dan menambah 1 strike.",
+    "Setiap pelanggaran membunyikan sirene dan menambah 1 strike. Matikan sirene lewat tombol khusus setelah kembali ke ujian — tombol hanya aktif saat HP offline.",
     "Pada strike ke-3 layar terkunci; pengawas membukanya dengan PIN (tanpa internet).",
     "Jawaban tersimpan otomatis di HP. Setelah selesai, nyalakan internet untuk mengirim.",
   ];
@@ -276,8 +277,17 @@ export function InstruksiFase(props: {
         </CardContent>
       </Card>
 
-      <Button size="lg" className="w-full" onClick={props.onMulai}>
-        Mulai Ujian
+      <Button
+        size="lg"
+        className="w-full"
+        onClick={props.onMulai}
+        disabled={props.online || props.terkunciJadwal}
+      >
+        {props.terkunciJadwal
+          ? "Belum sesuai jadwal — lihat jadwal di bawah"
+          : props.online
+            ? "Matikan internet dulu, lalu Mulai Ujian"
+            : "Mulai Ujian"}
       </Button>
       <Button
         variant="ghost"
@@ -501,7 +511,7 @@ export function KirimFase(props: {
         {props.online ? (
           <>
             <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
-            <span>Terhubung internet. Jawaban dikirim ke Google Sheets untuk dinilai.</span>
+            <span>Terhubung internet. Jawaban dikirim ke server untuk dinilai.</span>
           </>
         ) : (
           <>

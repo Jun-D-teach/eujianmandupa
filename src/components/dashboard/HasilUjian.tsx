@@ -67,7 +67,7 @@ export function HasilUjian() {
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight">Hasil ujian</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Nilai dihitung server-side (Google Apps Script); total pelanggaran
+            Nilai dihitung server-side (backend MySQL); total pelanggaran
             ikut tercatat.
           </p>
         </div>

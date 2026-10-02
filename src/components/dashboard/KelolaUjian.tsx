@@ -29,10 +29,12 @@ import {
 import {
   CalendarClock,
   ClipboardList,
+  Download,
   KeyRound,
   Plus,
   Power,
   RefreshCw,
+  Share2,
   Sparkles,
   Target,
   Trash2,
@@ -42,6 +44,14 @@ import { toast } from "sonner";
 
 const PILIHAN = ["A", "B", "C", "D", "E"] as const;
 const OPSI_WAJIB = ["A", "B", "C", "D"] as const;
+
+/** Label jadwal ramah baca: Jumat, 12 Oktober 2026 pukul 08.00. */
+function jadwalLabel(v?: string): string {
+  if (!v) return "";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return v;
+  return d.toLocaleString("id-ID", { dateStyle: "full", timeStyle: "short" });
+}
 
 type Kunci = "A" | "B" | "C" | "D" | "E";
 type SasarJenis = "" | "tingkat" | "kelas";
@@ -325,6 +335,20 @@ export function KelolaUjian() {
     }
   };
 
+  const ubahIzin = async (id: string, boleh: boolean, judulUjian: string) => {
+    try {
+      await gasCall("setIzinUnduh", { id, boleh });
+      segarkan();
+      toast.success(
+        boleh
+          ? `"${judulUjian}" — siswa boleh mengunduh soal (izin dibuka).`
+          : `"${judulUjian}" — izin unduh ke siswa ditutup.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal mengubah izin unduh.");
+    }
+  };
+
   const konfirmasiHapus = async () => {
     if (!hapusTarget) return;
     try {
@@ -354,7 +378,7 @@ export function KelolaUjian() {
         <h1 className="text-2xl font-extrabold tracking-tight">Kelola ujian</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {isAdmin
-            ? "Atur jadwal & sasaran, aktifkan; token dibagikan ke pengawas ruang."
+            ? "Atur jadwal, token per mapel, kelas peserta, aktif/nonaktif & izin unduh ke siswa; token dibagikan ke pengawas ruang."
             : "Susun soal, pilihan jawaban, dan kunci jawaban ujian yang sudah dibuat admin."}
         </p>
       </div>
@@ -422,8 +446,9 @@ export function KelolaUjian() {
               </div>
             </div>
             <p className="-mt-2 text-xs leading-5 text-muted-foreground">
-              Kosongkan "Mulai ujian" bila boleh langsung; jika diisi, siswa baru
-              bisa mengunduh & memulai pada tanggal/jam tersebut.
+              "Mulai ujian" = jadwal peserta: siswa baru bisa mengklik/mulai
+              mengerjakan pada tanggal & jam tersebut. Unduh soal ke siswa
+              dibuka lewat tombol <strong>izin unduh</strong> di daftar bawah.
             </p>
 
             <PemilihSasaran
@@ -476,12 +501,26 @@ export function KelolaUjian() {
                     </span>
                     <span className="mt-0.5 block text-xs text-muted-foreground">
                       {u.jumlah_soal} soal · {u.durasi_menit} menit
-                      {u.tgl_mulai ? ` · mulai ${u.tgl_mulai.replace("T", " ")}` : ""}
+                      {u.tgl_mulai
+                        ? ` · Jadwal ${jadwalLabel(u.tgl_mulai)}`
+                        : " · Tanpa jadwal (langsung dibuka)"}
+                      {isAdmin && u.token ? ` · Token ${u.token}` : ""}
                     </span>
                   </span>
                   <span className="ml-auto flex items-center gap-2">
                     <Badge variant="outline" className="gap-1 text-[11px]">
                       <Users className="size-3" /> {u.sasaran}
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className={`gap-1 text-[11px] ${
+                        u.boleh_unduh
+                          ? "border-emerald-600 text-emerald-700"
+                          : "border-amber-500 text-amber-700"
+                      }`}
+                    >
+                      <Download className="size-3" />
+                      {u.boleh_unduh ? "Izin unduh ON" : "Izin unduh OFF"}
                     </Badge>
                     <Badge
                       variant={u.aktif ? "default" : "secondary"}
@@ -507,6 +546,23 @@ export function KelolaUjian() {
                         {u.aktif ? "Nonaktifkan" : "Aktifkan ujian"}
                       </Button>
                       <Button
+                        variant={u.boleh_unduh ? "outline" : "default"}
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => ubahIzin(u.id, !u.boleh_unduh, u.judul)}
+                        disabled={!u.aktif}
+                        title={
+                          u.aktif
+                            ? undefined
+                            : "Aktifkan ujian dulu sebelum membuka izin unduh."
+                        }
+                      >
+                        <Share2 className="size-4" />
+                        {u.boleh_unduh
+                          ? "Tutup izin unduh"
+                          : "Izinkan unduh ke siswa"}
+                      </Button>
+                      <Button
                         variant="outline"
                         size="sm"
                         className="gap-2 text-red-600 hover:text-red-700"
@@ -521,6 +577,18 @@ export function KelolaUjian() {
                         {u.aktif ? "Aktif" : "Draft"}
                       </Badge>
                       <span>{u.jumlah_soal} soal tersusun</span>
+                      <Badge
+                        variant="outline"
+                        className={
+                          u.boleh_unduh
+                            ? "border-emerald-600 text-emerald-700"
+                            : "border-amber-500 text-amber-700"
+                        }
+                      >
+                        {u.boleh_unduh
+                          ? "Siswa boleh unduh"
+                          : "Unduh belum dibuka"}
+                      </Badge>
                     </div>
                   )}
 
@@ -554,7 +622,7 @@ export function KelolaUjian() {
             <AlertDialogTitle>Hapus ujian ini?</AlertDialogTitle>
             <AlertDialogDescription>
               "{hapusTarget?.judul}" beserta seluruh soal dan hasil siswanya akan
-              dihapus permanen dari Google Sheets.
+              dihapus permanen dari database.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -572,7 +640,7 @@ export function KelolaUjian() {
   );
 }
 
-/** Daftar soal + form tambah soal untuk satu ujian (GAS, dengan kunci). */
+/** Daftar soal + form tambah soal untuk satu ujian (dengan kunci jawaban). */
 function PanelSoal({ ujianId }: { ujianId: string }) {
   const [soal, setSoal] = useState<SoalGas[] | null>(null);
   const [form, setForm] = useState({

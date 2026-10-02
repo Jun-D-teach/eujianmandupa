@@ -596,8 +596,8 @@ export default function Landing() {
             <span className="text-sm font-bold tracking-tight">UjianAman</span>
           </span>
           <p className="text-xs text-muted-foreground">
-            PWA ujian online wajib offline · Struktur data siap dipindahkan ke
-            Google Sheets + Apps Script
+            PWA ujian online wajib offline · Backend PHP + MySQL di hosting
+            sekolah
           </p>
         </div>
       </footer>

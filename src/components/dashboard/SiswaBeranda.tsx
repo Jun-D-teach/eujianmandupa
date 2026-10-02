@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { gasCall, type HasilGas, type UjianGas } from "@/lib/api";import { muatSesi, hapusSesi, type SesiUjian } from "@/lib/exam-storage";
+import { useOnline } from "@/hooks/use-online";
+import { gasCall, type HasilGas, type UjianGas } from "@/lib/api";
+import { muatSesi, hapusSesi, type SesiUjian } from "@/lib/exam-storage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,7 +10,9 @@ import { Empty, EmptyContent, EmptyDescription, EmptyTitle } from "@/components/
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ArrowRight,
+  CalendarClock,
   ClipboardList,
+  Download,
   History,
   KeyRound,
   Pencil,
@@ -18,10 +22,26 @@ import {
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 
+/** Jadwal ramah baca: Jumat, 12 Oktober 2026 pukul 08.00. */
+function jadwalLabel(v?: string): string {
+  if (!v) return "";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return v;
+  return d.toLocaleString("id-ID", { dateStyle: "full", timeStyle: "short" });
+}
+
+/** Belum sampai waktu mulai? */
+function belumWaktunya(v?: string): boolean {
+  if (!v) return false;
+  const t = new Date(v).getTime();
+  return !Number.isNaN(t) && Date.now() < t;
+}
+
 /** Daftar ujian aktif (tanpa token) + pintasan melanjutkan sesi tersimpan. */
 export function SiswaUjian() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const online = useOnline();
   const [ujian, setUjian] = useState<UjianGas[] | null>(null); // null = memuat
   const [error, setError] = useState<string | null>(null);
   const [versi, setVersi] = useState(0); // memicu muat ulang daftar/sesi
@@ -80,8 +100,9 @@ export function SiswaUjian() {
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight">Ujian aktif</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Unduh soal tanpa token; token dimasukkan saat mulai ujian sesuai
-              yang dibagikan pengawas ruang.
+              Alurnya: <strong>online</strong> → unduh soal sesuai izin admin →
+              <strong> matikan internet</strong> → kerjakan → nyalakan internet
+              lagi untuk mengirim.
             </p>
             {user?.kelas && (
               <p className="mt-1 text-xs text-muted-foreground">
@@ -114,11 +135,17 @@ export function SiswaUjian() {
               const sesi: SesiUjian | null = muatSesi(u.id);
               const lanjut = sesi && sesi.fase !== "setup";
               const takBoleh = u.boleh === false; // server: kelas tidak termasuk sasaran
+              const izin = u.boleh_unduh !== false; // izin bagikan dari admin
+              // Soal benar-benar tersimpan di HP ini — syarat bisa mengerjakan.
+              const adaSoalLokal = Boolean(sesi && sesi.soal.length > 0);
+              // Status unduhan di server (bisa saja sudah diunduh di HP lain).
+              const pernahUnduh = adaSoalLokal || u.sudah_unduh === true;
+              const terkunciJadwal = belumWaktunya(u.tgl_mulai);
               return (
                 <Card
                   key={u.id}
                   className={`group relative overflow-hidden border-border/70 shadow-[0_1px_2px_rgba(16,20,24,0.04)] transition-shadow hover:shadow-[0_18px_40px_-26px_rgba(16,20,24,0.4)] ${
-                    takBoleh ? "opacity-60" : ""
+                    takBoleh || !izin ? "opacity-70" : ""
                   }`}
                 >
                   <CardContent className="p-6">
@@ -126,9 +153,27 @@ export function SiswaUjian() {
                       <span className="flex size-10 items-center justify-center rounded-2xl bg-accent text-accent-foreground">
                         <ClipboardList className="size-5" />
                       </span>
-                      <Badge variant="secondary">
-                        {u.jumlah_soal} soal · {u.durasi_menit} menit
-                      </Badge>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Badge
+                          variant="outline"
+                          className={`text-[11px] ${
+                            pernahUnduh
+                              ? "border-emerald-600 text-emerald-700"
+                              : "border-border/70 text-muted-foreground"
+                          }`}
+                        >
+                          {pernahUnduh ? (
+                            <>
+                              <Download className="size-3" /> Sudah diunduh
+                            </>
+                          ) : (
+                            "Belum diunduh"
+                          )}
+                        </Badge>
+                        <Badge variant="secondary">
+                          {u.jumlah_soal} soal · {u.durasi_menit} menit
+                        </Badge>
+                      </div>
                     </div>
 
                     <h3 className="mt-4 text-lg font-bold leading-6 tracking-tight">
@@ -141,13 +186,21 @@ export function SiswaUjian() {
                     )}
 
                     <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold text-muted-foreground">
+                      <CalendarClock className="size-3" />
+                      {u.tgl_mulai
+                        ? `Pelaksanaan: ${jadwalLabel(u.tgl_mulai)}`
+                        : "Tanpa jadwal tetap — langsung dikerjakan"}
+                    </p>
+
+                    <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold text-muted-foreground">
                       <KeyRound className="size-3" />
-                      Token dibagikan pengawas saat mulai ujian
+                      Token dibagikan pengawas saat unduh/mulai ujian
                     </p>
 
                     {u.sasaran && (
                       <p className="mt-2 text-xs text-muted-foreground">
-                        Sasaran: <span className="font-semibold text-foreground">{u.sasaran}</span>
+                        Sasaran:{" "}
+                        <span className="font-semibold text-foreground">{u.sasaran}</span>
                       </p>
                     )}
 
@@ -155,29 +208,49 @@ export function SiswaUjian() {
                       <p className="mt-2 rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-700">
                         Kelasmu tidak terdaftar untuk ujian ini.
                       </p>
-                    ) : lanjut ? (
+                    ) : !izin ? (
+                      <p className="mt-2 rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-700">
+                        Admin belum membuka izin unduh soal mapel ini.
+                      </p>
+                    ) : adaSoalLokal && lanjut ? (
                       <p className="mt-2 text-xs font-semibold text-emerald-700">
                         Sesi tersimpan · fase {sesi!.fase}
                       </p>
                     ) : null}
 
-                    <div className="mt-5 flex items-center gap-2">
-                      <Button
-                        className="gap-2"
-                        disabled={takBoleh}
-                        onClick={() => navigate(`/ujian/${u.id}`)}
-                      >
-                        {lanjut ? (
-                          <>
-                            <PlayCircle className="size-4" /> Lanjutkan
-                          </>
-                        ) : (
-                          <>
-                            <ArrowRight className="size-4" /> Kerjakan
-                          </>
-                        )}
-                      </Button>
-                      {sesi && sesi.fase === "setup" && (
+                    <div className="mt-5 flex flex-wrap items-center gap-2">
+                      {takBoleh ? (
+                        <Button disabled>Kerjakan</Button>
+                      ) : !izin ? (
+                        <Button disabled className="gap-2">
+                          <Download className="size-4" /> Menunggu izin admin
+                        </Button>
+                      ) : !adaSoalLokal ? (
+                        <Button
+                          className="gap-2"
+                          disabled={!online}
+                          onClick={() => navigate(`/ujian/${u.id}`)}
+                        >
+                          <Download className="size-4" /> Sinkron (Unduh Soal)
+                        </Button>
+                      ) : (
+                        <Button
+                          className="gap-2"
+                          disabled={terkunciJadwal || online}
+                          onClick={() => navigate(`/ujian/${u.id}`)}
+                        >
+                          {lanjut ? (
+                            <>
+                              <PlayCircle className="size-4" /> Lanjutkan
+                            </>
+                          ) : (
+                            <>
+                              <ArrowRight className="size-4" /> Kerjakan
+                            </>
+                          )}
+                        </Button>
+                      )}
+                      {adaSoalLokal && sesi && sesi.fase === "setup" && (
                         <Button
                           variant="ghost"
                           className="gap-2 text-muted-foreground"
@@ -191,6 +264,22 @@ export function SiswaUjian() {
                         </Button>
                       )}
                     </div>
+
+                    <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+                      {takBoleh
+                        ? "Hubungi admin bila menurutmu ini keliru."
+                        : !izin
+                          ? "Tunggu pengawas/admin membuka unduhan mapel ini."
+                          : !adaSoalLokal
+                            ? online
+                              ? "Unduh soal sekarang (butuh token dari pengawas), lalu matikan internet."
+                              : "Nyalakan internet sementara untuk mengunduh soal."
+                            : terkunciJadwal
+                              ? `Baru bisa diklik & dikerjakan pada ${jadwalLabel(u.tgl_mulai)}.`
+                              : online
+                                ? "Soal sudah di HP — matikan WiFi/data seluler untuk mulai mengerjakan."
+                                : "HP offline — siap mengerjakan ujian."}
+                    </p>
                   </CardContent>
                 </Card>
               );

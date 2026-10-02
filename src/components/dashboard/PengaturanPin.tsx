@@ -1,22 +1,19 @@
 import { useEffect, useState } from "react";
 import {
-  adaKonfigurasiBawaan,
   gasCall,
-  muatUrlServer,
   PIN_BAWAAN,
   pinPengawas,
   simpanPinTersimpan,
-  simpanUrlServer,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { KeyRound, Save, Server, ShieldCheck } from "lucide-react";
+import { KeyRound, Save, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
-/** Pengaturan PIN pengawas — khusus admin (sheet "Pengaturan" di Google Sheets). */
+/** Pengaturan PIN pengawas — khusus admin (tabel pengaturan di database MySQL). */
 export function PengaturanPin() {
   const [pinSekarang, setPinSekarang] = useState<string | null>(null);
   const [pin, setPin] = useState("");
@@ -79,7 +76,6 @@ export function PengaturanPin() {
 
   return (
     <div className="space-y-6">
-      <KartuUrlServer />
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Pengaturan</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -151,95 +147,12 @@ export function PengaturanPin() {
             {busy ? "Menyimpan…" : "Simpan PIN"}
           </Button>
           <p className="text-[11px] leading-5 text-muted-foreground">
-            PIN tersimpan di Google Sheets (sheet “Pengaturan”). PIN aktif di
+            PIN tersimpan di database MySQL (tabel pengaturan). PIN aktif di
             perangkat ini sekarang:{" "}
             <strong className="font-mono tracking-widest">{pinPengawas()}</strong>
           </p>
         </form>
       </Card>
     </div>
-  );
-}
-
-/** Kelola URL Web App GAS (…/exec) — hanya admin di dashboard, bukan di
- *  halaman login. Format ditolak bila bukan script.google.com/macros/s/…/exec. */
-function KartuUrlServer() {
-  const dibake = adaKonfigurasiBawaan();
-  const [url, setUrl] = useState(muatUrlServer());
-  const [busy, setBusy] = useState(false);
-
-  const terpasang = muatUrlServer();
-
-  const simpan = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const bersih = url.trim();
-    if (!simpanUrlServer(bersih)) {
-      toast.error("URL tidak valid — harus https://script.google.com/macros/s/…/exec");
-      return;
-    }
-    setBusy(true);
-    try {
-      await gasCall<{ siap: boolean }>("ping");
-      toast.success("Server Google Sheets terhubung.");
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "URL disimpan, tapi server belum menjawab.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Card className="border-border/70">
-      <div className="flex flex-wrap items-center justify-between gap-4 p-5">
-        <div className="flex items-center gap-3">
-          <span className="flex size-11 items-center justify-center rounded-2xl bg-ink text-white">
-            <Server className="size-5" />
-          </span>
-          <div>
-            <p className="text-sm font-bold">Server Google Sheets (GAS)</p>
-            <p className="text-xs text-muted-foreground">
-              {dibake
-                ? "Dikunci dari build (VITE_GAS_URL) — semua pengguna memakai server ini."
-                : terpasang
-                  ? "Terpasang di perangkat ini. HP lain akan meminta URL saat pertama kali dibuka."
-                  : "Belum dipasang di perangkat ini."}
-            </p>
-          </div>
-        </div>
-        <p
-          className={`max-w-full truncate rounded-xl bg-muted px-3 py-2 font-mono text-xs ${
-            terpasang ? "" : "text-muted-foreground/60"
-          }`}
-        >
-          {terpasang || "belum diatur"}
-        </p>
-      </div>
-
-      <form onSubmit={simpan} className="space-y-3 border-t border-border/60 p-5">
-        <div className="grid gap-2">
-          <Label htmlFor="gas-url-admin">URL Web App GAS (…/exec)</Label>
-          <div className="flex gap-2">
-            <Input
-              id="gas-url-admin"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://script.google.com/macros/s/…/exec"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <Button type="submit" variant="outline" disabled={busy}>
-              {busy ? "Memeriksa…" : "Simpan & uji"}
-            </Button>
-          </div>
-        </div>
-        <p className="text-[11px] leading-5 text-muted-foreground">
-          {dibake
-            ? "URL sudah dibake saat build — perubahan di sini hanya memengaruhi perangkat ini (mis. untuk pengujian)."
-            : "Tempel URL ini di perangkat admin sekali — siswa/guru cukup login tanpa melihat atau mengubah URL."}
-        </p>
-      </form>
-    </Card>
   );
 }

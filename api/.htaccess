@@ -1,0 +1,7 @@
+# Jangan layani file konfigurasi langsung dari browser (PHP tetap bisa
+# di-include oleh index.php).
+<IfModule mod_authz_core.c>
+  <FilesMatch "^(config\.php)$">
+    Require all denied
+  </FilesMatch>
+</IfModule>

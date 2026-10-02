@@ -25,11 +25,13 @@ function getAudioContext(): AudioContext | null {
 }
 
 /**
- * Bunyikan sirine selama `durasiMs` (default 30 detik — peringatan pelanggaran
- * ujian). Sirene lama (bila masih berbunyi) dihentikan dulu supaya tidak
- * menumpuk saat siswa melakukan beberapa pelanggaran berturut-turut.
+ * Bunyikan sirine peringatan pelanggaran ujian.
+ * Default 10 menit — sirene BERLANJUT sampai dimatikan lewat
+ * `hentikanSirene()` (tombol "Matikan Sirene" di halaman ujian, yang hanya
+ * aktif saat HP offline) atau halaman ujian ditinggalkan.
+ * Sirene lama (bila masih berbunyi) dihentikan dulu supaya tidak menumpuk.
  */
-export function bunyikanSirene(durasiMs = 30000): void {
+export function bunyikanSirene(durasiMs = 600000): void {
   const ctx = getAudioContext();
   if (!ctx) return;
 
@@ -89,5 +91,31 @@ export function bunyikanSirene(durasiMs = 30000): void {
     };
   } catch {
     /* browser menolak audio — abaikan */
+  }
+}
+
+/** Apakah sirene sedang berbunyi? */
+export function sireneBerbunyi(): boolean {
+  return sireneAktif !== null;
+}
+
+/**
+ * Matikan sirene yang sedang berbunyi (fade pendek supaya tidak mendadak).
+ * Dipanggil dari tombol "Matikan Sirene" — hanya bisa diklik saat HP offline.
+ */
+export function hentikanSirene(): void {
+  const ctx = audioCtx;
+  if (!sireneAktif) return;
+  const { osc, gain } = sireneAktif;
+  sireneAktif = null;
+  if (!ctx) return;
+  try {
+    const now = ctx.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(Math.max(gain.gain.value, 0.0001), now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+    osc.stop(now + 0.2);
+  } catch {
+    /* noop */
   }
 }

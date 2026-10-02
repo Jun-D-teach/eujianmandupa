@@ -28,7 +28,7 @@ const Ctx = createContext<AuthContext | null>(null);
 
 /**
  * Auth UjianAman — tanpa penyedia auth eksternal (Convex Auth dilepas).
- * Login dicocokkan ke sheet "Pengguna" di Google Sheets (dikelola admin),
+ * Login dicocokkan ke tabel "pengguna" di database MySQL (dikelola admin),
  * sesi disimpan di LocalStorage perangkat.
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -63,11 +63,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           username,
           password,
         },
-        45000, // web app GAS cold-start bisa lebih dari 20 detik
+        45000,
       );
       if (!res.sesi) {
         throw new Error(
-          "Server Apps Script belum memuat kode terbaru (fitur sesi). Salin ulang gas/Code.gs ke editor GAS, lalu Deploy → Manage deployments → Edit → New version.",
+          "Server tidak mengembalikan sesi login. Pastikan folder api ter-upload dan versi terbaru.",
         );
       }
       simpanSesiToken(res.sesi ?? "");

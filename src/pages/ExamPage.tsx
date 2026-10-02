@@ -18,7 +18,7 @@ import {
   type Pelanggaran,
   type SesiUjian,
 } from "@/lib/exam-storage";
-import { bunyikanSirene } from "@/lib/siren";
+import { bunyikanSirene, hentikanSirene } from "@/lib/siren";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
@@ -174,7 +174,7 @@ export default function ExamPage() {
   const [sesi, setSesi] = useState<SesiUjian | null>(() =>
     ujianId ? muatSesi(ujianId) : null,
   );
-  // Metadata ujian dari GAS (tanpa token). undefined = memuat.
+  // Metadata ujian dari server (tanpa token). undefined = memuat.
   const [meta, setMeta] = useState<UjianGas | null | undefined>(undefined);
 
   const [busy, setBusy] = useState(false);
@@ -192,6 +192,8 @@ export default function ExamPage() {
   const [kelas, setKelas] = useState(user?.kelas ?? "");
   const [token, setToken] = useState("");
   const [sekarang, setSekarang] = useState(() => Date.now());
+  /** Sirene sedang berbunyi — hanya bisa dimatikan via tombol saat offline. */
+  const [sireneNyala, setSireneNyala] = useState(false);
   const waktuHabisRef = useRef(false);
 
   const faseRef = useRef<Fase | undefined>(sesi?.fase);
@@ -236,6 +238,28 @@ export default function ExamPage() {
     );
     setModal({ jenis });
     bunyikanSirene();
+    setSireneNyala(true);
+  }, []);
+
+  /**
+   * Matikan sirene — HANYA bisa saat HP offline (tombol disabled saat online).
+   * Siswa harus kembali ke halaman ujian lalu menekan tombol ini.
+   */
+  const matikanSirene = () => {
+    if (online) {
+      toast.error("Matikan WiFi & data seluler dulu — sirene baru bisa dimatikan saat offline.");
+      return;
+    }
+    hentikanSirene();
+    setSireneNyala(false);
+    toast.success("Sirene dimatikan. Lanjutkan mengerjakan.");
+  };
+
+  // Keluar dari halaman ujian → sirene tidak berbunyi terus di background.
+  useEffect(() => {
+    return () => {
+      hentikanSirene();
+    };
   }, []);
 
   // --- Online watcher -------------------------------------------------
@@ -306,7 +330,8 @@ export default function ExamPage() {
         catatPelanggaran("pindah");
       } else if (hiddenFlagRef.current) {
         hiddenFlagRef.current = false;
-        bunyikanSirene(); // bunyikan lagi saat siswa kembali ke aplikasi
+        // Sirene tetap berbunyi sampai siswa menekan tombol "Matikan Sirene"
+        // (hanya aktif saat offline) — tidak dibunyikan ulang otomatis.
       }
     };
     document.addEventListener("visibilitychange", onVisibility);
@@ -432,7 +457,7 @@ export default function ExamPage() {
     };
   }, [fase, catatPelanggaran]);
 
-  // --- Muat metadata ujian dari GAS ------------------------------------
+  // --- Muat metadata ujian dari server ---------------------------------
   useEffect(() => {
     if (!ujianId) return;
     let hidup = true;
@@ -461,10 +486,6 @@ export default function ExamPage() {
     }
     if (!tokenValid(t)) {
       toast.error("Isi token ujian (4–12 huruf/angka, tanpa spasi).");
-      return;
-    }
-    if (belumMulai(sesi?.tglMulai ?? meta?.tgl_mulai)) {
-      toast.error(`Ujian baru boleh diunduh pada ${labelTgl(meta?.tgl_mulai)}.`);
       return;
     }
     setBusy(true);
@@ -521,8 +542,12 @@ export default function ExamPage() {
     }
   };
 
-  /** Mulai ujian — token sudah terverifikasi server saat unduh soal. */
+  /** Mulai ujian — wajib OFFLINE dan sesuai jadwal; token sudah terverifikasi saat unduh. */
   const mulaiUjian = () => {
+    if (online) {
+      toast.error("HP masih ONLINE — matikan WiFi & data seluler dulu, lalu mulai ujian.");
+      return;
+    }
     if (belumMulai(sesi?.tglMulai)) {
       toast.error(`Ujian baru bisa dimulai pada ${labelTgl(sesi?.tglMulai)}.`);
       return;
@@ -633,6 +658,8 @@ export default function ExamPage() {
             }
           : prev,
       );
+      hentikanSirene();
+      setSireneNyala(false);
       toast.success("Jawaban berhasil dikirim.");
     } catch (err) {
       toast.error(
@@ -732,6 +759,26 @@ export default function ExamPage() {
                 </span>
               )}
               <StrikeDots strike={sesi.strike} />
+              {sireneNyala && (
+                <button
+                  type="button"
+                  onClick={matikanSirene}
+                  disabled={online}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                    online
+                      ? "cursor-not-allowed bg-red-500/15 text-red-600"
+                      : "bg-red-600 text-white hover:bg-red-500"
+                  }`}
+                  title={
+                    online
+                      ? "Sirene baru bisa dimatikan saat HP offline"
+                      : "Matikan sirene"
+                  }
+                >
+                  <Siren className="size-3.5" />
+                  {online ? "Sirene — matikan data" : "Matikan Sirene"}
+                </button>
+              )}
             </span>
           </div>
         )}
@@ -756,7 +803,6 @@ export default function ExamPage() {
             busy={busy}
             online={online}
             onUnduh={unduhSoal}
-            terkunciJadwal={belumMulai(meta?.tgl_mulai)}
           />
         )}
 
@@ -764,6 +810,7 @@ export default function ExamPage() {
           <InstruksiFase
             sesi={sesi}
             online={online}
+            terkunciJadwal={belumMulai(sesi.tglMulai)}
             onMulai={mulaiUjian}
             onUlang={() => {
               hapusSesi(sesi.ujianId);
@@ -862,7 +909,23 @@ export default function ExamPage() {
                 yang dapat membukanya dengan PIN.
               </p>
             </div>
-            <div className="px-5 pb-5">
+            <div className="space-y-2 px-5 pb-5">
+              {sireneNyala && (
+                <button
+                  type="button"
+                  onClick={matikanSirene}
+                  disabled={online}
+                  className={`w-full rounded-2xl py-3 text-sm font-bold transition-colors ${
+                    online
+                      ? "cursor-not-allowed bg-white/10 text-white/50"
+                      : "bg-white text-red-700 hover:bg-white/90"
+                  }`}
+                >
+                  {online
+                    ? "Matikan Sirene — nonaktif (HP masih online)"
+                    : "Matikan Sirene"}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setModal(null)}

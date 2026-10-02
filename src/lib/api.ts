@@ -1,10 +1,14 @@
 /**
- * Klien Google Apps Script (GAS) + sesi pengguna UjianAman.
+ * ============================================================================
+ * UjianAman — klien API backend PHP + MySQL + sesi pengguna.
+ * ----------------------------------------------------------------------------
+ * Semua komunikasi backend lewat SATU endpoint same-origin:
+ *   POST  <folder-app>/api/index.php   body JSON { action, sesi, ...data }
+ *   GET   <folder-app>/api/index.php?action=ping   (tes cepat)
  *
- * Semua komunikasi backend lewat Web App GAS (Google Sheets):
- *  - GET + JSONP  : bebas CORS, dipakai untuk semua panggilan.
- *  - POST         : fallback (payload JSON, Content-Type text/plain).
- * Payload dikirim sebagai payloadB64 (base64 JSON) agar aman di query string.
+ * Tidak ada lagi Google Apps Script / JSONP — endpoint berada di hosting yang
+ * sama sehingga bebas CORS & tidak diblokir ad-blocker.
+ * ============================================================================
  */
 
 export type Role = "admin" | "guru" | "siswa";
@@ -26,7 +30,7 @@ export type UjianGas = {
   jumlah_soal: number;
   /** "YYYY-MM-DDTHH:mm" — wajib nol di sisi siswa sampai waktu ini. */
   tgl_mulai?: string;
-  /** "" | "tingkat" | "kelas" */
+  /** "": semua | "tingkat" | "kelas" */
   sasar_jenis?: string;
   /** tingkat: "X|XI|XII" · kelas: "X.1,X.2" */
   sasar_nilai?: string;
@@ -34,6 +38,10 @@ export type UjianGas = {
   sasaran?: string;
   /** Server: apakah kelas siswa lolos sasaran (undefined utk admin). */
   boleh?: boolean;
+  /** Izin bagikan dari admin — siswa baru boleh MENGUNDUH saat true. */
+  boleh_unduh?: boolean;
+  /** Server: apakah siswa ini sudah mengunduh soal mapel ini. */
+  sudah_unduh?: boolean;
   /** Hanya ada pada daftar admin/petugas — TIDAK PERNAH dikirim ke siswa. */
   token?: string;
 };
@@ -44,6 +52,13 @@ export type SiswaGas = {
   nama: string;
   tgllahir: string;
   kelas: string;
+};
+
+export type GuruGas = {
+  id: string;
+  nip: string;
+  nama: string;
+  mapel: string;
 };
 
 export type SoalGas = {
@@ -82,73 +97,31 @@ export type PenggunaGas = {
   role: Role;
 };
 
-const KUNCI_URL = "ujianaman:gasUrl";
 const KUNCI_USER = "ujianaman:user";
 const KUNCI_SESI = "ujianaman:sesi";
 
+/* ------------------------------------------------------------------ */
+/* URL endpoint (same-origin — ikut folder hosting aplikasi)           */
+/* ------------------------------------------------------------------ */
+
 /**
- * URL Web App GAS sekolah — dibake langsung di sini agar siswa/guru TIDAK
- * perlu memasukkan URL server lagi. Ganti nilai di bawah bila deployment GAS
- * dibuat ulang. Prioritas: env VITE_GAS_URL (bila ada) > nilai bake ini.
+ * Folder tempat aplikasi di-host, tanpa segment rute (auth/dashboard/ujian).
+ * Contoh: /eujian-mandupa/ujian/u_123 → /eujian-mandupa
  */
-const GAS_URL_BAKE =
-  "https://script.google.com/macros/s/AKfycby29tQY2OndE-1YNDTdf5fkmdsplD8GFfjTrXsugOYBeYcbq9IvzHpXKf3XEWRTW0SC/exec";
-
-const GAS_URL_BAWAAN = (
-  (import.meta.env.VITE_GAS_URL as string | undefined) || GAS_URL_BAKE
-).trim();
-
-/** URL /exec GAS harus berformat script.google.com agar app tidak bisa
- *  diarahkan ke server palsu dari perangkat yang sama. */
-export function urlServerValid(url: string): boolean {
-  return /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/(exec|dev)$/.test(
-    url.trim(),
-  );
+function pathFolderApp(): string {
+  let path = window.location.pathname.replace(/\/index\.html$/i, "");
+  path = path.replace(/\/(auth|dashboard|ujian)(\/[^/]*)?$/, "");
+  if (path.length > 1) path = path.replace(/\/+$/, "");
+  return path === "/" ? "" : path;
 }
 
-/** Apakah URL server sudah dibake saat build (VITE_GAS_URL). */
-export function adaKonfigurasiBawaan(): boolean {
-  return GAS_URL_BAWAAN !== "";
+/** URL endpoint backend PHP (api/index.php). */
+export function urlServer(): string {
+  return `${pathFolderApp()}/api/index.php`;
 }
 
 /* ------------------------------------------------------------------ */
-/* URL server GAS                                                      */
-/* ------------------------------------------------------------------ */
-
-export function muatUrlServer(): string {
-  try {
-    const t = (window.localStorage.getItem(KUNCI_URL) ?? "").trim();
-    // URL tersimpan hanya dipakai bila masih sah — kalau pernah tersimpan
-    // URL rusak/salah di perangkat lama, abaikan dan pakai URL bake.
-    if (t && urlServerValid(t)) return t;
-  } catch {
-    /* noop */
-  }
-  return GAS_URL_BAWAAN;
-}
-
-/** Simpan URL hanya bila formatnya URL /exec GAS yang sah. */
-export function simpanUrlServer(url: string): boolean {
-  const bersih = url.trim();
-  if (!urlServerValid(bersih)) return false;
-  try {
-    window.localStorage.setItem(KUNCI_URL, bersih);
-  } catch {
-    /* noop */
-  }
-  return true;
-}
-
-export function hapusUrlServer(): void {
-  try {
-    window.localStorage.removeItem(KUNCI_URL);
-  } catch {
-    /* noop */
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* Sesi pengguna (auth dikelola admin di sheet Pengguna)               */
+/* Sesi pengguna (auth dikelola admin di tabel pengguna)               */
 /* ------------------------------------------------------------------ */
 
 export function muatUser(): UserGas | null {
@@ -208,7 +181,7 @@ export function hapusSesiToken(): void {
 }
 
 /* ------------------------------------------------------------------ */
-/* Transport: JSONP (bebas CORS) + POST fallback                       */
+/* Transport: POST JSON same-origin                                    */
 /* ------------------------------------------------------------------ */
 
 /** Event: server menolak karena sesi habis/tidak sah → logout paksa. */
@@ -226,62 +199,49 @@ function tanganiPerluLogin(pesan: string): never {
   throw new Error(pesan || "Sesi habis — silakan login ulang.");
 }
 
-function encodePayloadB64(data: Record<string, unknown>): string {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(data))));
-}
-
-function panggilJsonp(url: string, timeoutMs = 20000): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const nama = `ujianaman_cb_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
-    const script = document.createElement("script");
-    const bersih = () => {
-      delete (window as unknown as Record<string, unknown>)[nama];
-      script.remove();
-      window.clearTimeout(timer);
-    };
-    const timer = window.setTimeout(() => {
-      bersih();
-      reject(new Error("Server tidak menjawab (timeout). Periksa URL Web App GAS."));
-    }, timeoutMs);
-
-    (window as unknown as Record<string, unknown>)[nama] = (data: unknown) => {
-      bersih();
-      resolve(data);
-    };
-    script.src = `${url}${url.includes("?") ? "&" : "?"}callback=${nama}`;
-    script.onerror = () => {
-      bersih();
-      reject(new Error("Gagal menghubungi server. Periksa URL /exec dan deployment GAS."));
-    };
-    document.head.appendChild(script);
-  });
-}
-
-/** Panggilan utama ke GAS: GET + JSONP dengan payloadB64. Token sesi
- *  server disisipkan otomatis (field "sesi") ke setiap payload. */
-export async function gasCall<T = Record<string, unknown>>(
+/**
+ * Panggilan utama ke backend PHP. Token sesi server disisipkan otomatis
+ * (field "sesi") ke setiap payload.
+ */
+export async function apiCall<T = Record<string, unknown>>(
   action: string,
   data: Record<string, unknown> = {},
   timeoutMs = 20000,
 ): Promise<T> {
-  const url = muatUrlServer();
-  if (!url) throw new Error("URL server Google Sheets belum diatur.");
-  if (!urlServerValid(url))
-    throw new Error("URL server tidak valid — harus https://script.google.com/macros/s/…/exec");
-  const penuh = `${url}?action=${encodeURIComponent(action)}&payloadB64=${encodeURIComponent(
-    encodePayloadB64({ sesi: muatSesiToken(), ...data }),
-  )}`;
+  const url = urlServer();
   let res: {
     success?: boolean;
     message?: string;
     perlu_login?: boolean;
   };
   try {
-    res = (await panggilJsonp(penuh, timeoutMs)) as typeof res;
-  } catch {
-    // JSONP gagal dimuat (jaringan/peramban/ekstensi pemblokir script) →
-    // fallback POST langsung. Kalau keduanya gagal, error-nya tetap naik.
-    return gasPost<T>(action, data, timeoutMs);
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, sesi: muatSesiToken(), ...data }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!r.ok) {
+      throw new Error(
+        `Server merespons HTTP ${r.status} — pastikan folder api ter-upload dan PHP aktif di hosting.`,
+      );
+    }
+    res = (await r.json()) as typeof res;
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error("Server tidak menjawab (timeout). Coba lagi beberapa saat.");
+    }
+    if (err instanceof SyntaxError) {
+      throw new Error(
+        "Respons server bukan JSON — pastikan folder api ter-upload di hosting dan MySQL sudah aktif.",
+      );
+    }
+    if (err instanceof TypeError) {
+      throw new Error(
+        "Gagal menghubungi server. Periksa koneksi internet dan pastikan folder api ada di hosting.",
+      );
+    }
+    throw err;
   }
   if (res && res.perlu_login) {
     tanganiPerluLogin(res.message || "Sesi habis — silakan login ulang.");
@@ -292,45 +252,18 @@ export async function gasCall<T = Record<string, unknown>>(
   return res as T;
 }
 
-/** POST langsung (fallback, dipakai bila JSONP gagal dimuat). */
-export async function gasPost<T = Record<string, unknown>>(
-  action: string,
-  data: Record<string, unknown> = {},
-  timeoutMs = 20000,
-): Promise<T> {
-  const url = muatUrlServer();
-  if (!url) throw new Error("URL server Google Sheets belum diatur.");
-  if (!urlServerValid(url))
-    throw new Error("URL server tidak valid — harus https://script.google.com/macros/s/…/exec");
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ action, sesi: muatSesiToken(), ...data }),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  const json = (await res.json()) as {
-    success?: boolean;
-    message?: string;
-    perlu_login?: boolean;
-  };
-  if (json && json.perlu_login) {
-    tanganiPerluLogin(json.message || "Sesi habis — silakan login ulang.");
-  }
-  if (json && json.success === false) {
-    throw new Error(json.message || "Permintaan gagal di server.");
-  }
-  return json as T;
-}
+/** Nama lama gasCall (Google Apps Script) — tetap disediakan agar kode lama jalan. */
+export const gasCall = apiCall;
 
 /* ------------------------------------------------------------------ */
 /* PIN pengawas (verifikasi lokal di perangkat)                        */
 /* ------------------------------------------------------------------ */
 
-/** PIN bila sheet Pengaturan belum diatur / tidak tersedia. */
+/** PIN bila pengaturan belum diatur / tidak tersedia. */
 export const PIN_BAWAAN = "123456";
 const KUNCI_PIN = "ujianaman:pinPengawas";
 
-/** PIN aktif: cache dari sheet Pengaturan (ikutan unduh soal), fallback 123456. */
+/** PIN aktif: cache dari server (ikut unduh soal), fallback 123456. */
 export function pinPengawas(): string {
   try {
     return window.localStorage.getItem(KUNCI_PIN) || PIN_BAWAAN;

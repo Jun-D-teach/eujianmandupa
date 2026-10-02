@@ -16,7 +16,7 @@ const PERAN = [
   { nilai: "siswa", label: "Siswa", ket: "Unduh soal & kerjakan ujian" },
 ] as const;
 
-/** Manajemen akun & peran — khusus admin (sheet "Pengguna"). */
+/** Manajemen akun & peran — khusus admin (tabel pengguna di database). */
 export function Pengguna() {
   const [daftar, setDaftar] = useState<PenggunaGas[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -111,7 +111,7 @@ export function Pengguna() {
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight">Pengguna</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Semua akun dibuat & diatur admin di sheet "Pengguna" — tanpa email/OTP.
+            Semua akun dibuat & diatur admin di database — tanpa email/OTP.
           </p>
         </div>
         <Button

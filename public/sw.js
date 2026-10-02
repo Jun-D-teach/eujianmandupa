@@ -8,7 +8,7 @@
  * - Soal & jawaban ujian TIDAK disimpan di service worker, melainkan di
  *   LocalStorage (lihat src/lib/exam-storage.ts).
  */
-const CACHE_NAME = "ujianaman-v2";
+const CACHE_NAME = "ujianaman-v3";
 /* Path RELATIF — app tetap bekerja saat di-host di subfolder
  * (mis. man2plg.sch.id/eujian-mandupa/). */
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
