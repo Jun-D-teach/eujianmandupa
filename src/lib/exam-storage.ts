@@ -22,7 +22,12 @@ export type SoalUjian = {
 };
 
 export type Pelanggaran = {
-  jenis: "online" | "pindah";
+  /**
+   * online  = internet menyala saat ujian.
+   * pindah  = pindah tab/aplikasi atau jendela kehilangan fokus (split-screen).
+   * salin   = mencoba memilih/menyalin teks soal.
+   */
+  jenis: "online" | "pindah" | "salin";
   waktu: number;
 };
 

@@ -15,6 +15,7 @@ import {
   muatSesi,
   simpanSesi,
   type Fase,
+  type Pelanggaran,
   type SesiUjian,
 } from "@/lib/exam-storage";
 import { bunyikanSirene } from "@/lib/siren";
@@ -178,7 +179,9 @@ export default function ExamPage() {
 
   const [busy, setBusy] = useState(false);
   const [pesan, setPesan] = useState<string | null>(null);
-  const [modal, setModal] = useState<{ jenis: "online" | "pindah" } | null>(null);
+  const [modal, setModal] = useState<{ jenis: Pelanggaran["jenis"] } | null>(
+    null,
+  );
   const [tanyaSelesai, setTanyaSelesai] = useState(false);
   const [pin, setPin] = useState("");
   const [pinSalah, setPinSalah] = useState(0);
@@ -197,6 +200,8 @@ export default function ExamPage() {
   const hiddenFlagRef = useRef(false);
   /** Jeda grace setelah kunci dibuka (waktu untuk mematikan internet). */
   const graceRef = useRef(0);
+  /** Waktu pelanggaran terakhir — dedupe agar satu kejadian cukup satu strike. */
+  const lastViolationRef = useRef(0);
 
   useEffect(() => {
     faseRef.current = sesi?.fase;
@@ -213,8 +218,11 @@ export default function ExamPage() {
   const modeKirim = fase === "kirim" || fase === "selesai";
 
   /** Mencatat pelanggaran + sirene + modal peringatan. Hanya saat fase ujian. */
-  const catatPelanggaran = useCallback((jenis: "online" | "pindah") => {
+  const catatPelanggaran = useCallback((jenis: Pelanggaran["jenis"]) => {
     if (faseRef.current !== "ujian" || strikeRef.current >= 3) return;
+    // Dedupe: blur+visibility (dst) dari SATU kejadian cukup 1 strike.
+    if (Date.now() - lastViolationRef.current < 2000) return;
+    lastViolationRef.current = Date.now();
     strikeRef.current += 1;
     const nilaiStrike = strikeRef.current;
     setSesi((prev) =>
@@ -304,6 +312,125 @@ export default function ExamPage() {
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [catatPelanggaran]);
+
+  // --- Anti-curang lintas platform (Android & iOS) --------------------
+  // Aktif hanya selama fase ujian: blok salin/tempel, zoom pinch, callout
+  // long-press iOS, pintasan keyboard berbahaya; deteksi split-screen/
+  // jendela kehilangan fokus; layar tetap menyala (wake lock).
+  useEffect(() => {
+    if (fase !== "ujian") return;
+
+    // 1) CSS: seleksi teks & callout long-press iOS dimatikan,
+    //    pinch/double-tap zoom diblokir, scroll tetap jalan.
+    const gaya = document.createElement("style");
+    gaya.textContent =
+      "html.ujian-aktif,html.ujian-aktif *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation;}";
+    document.head.appendChild(gaya);
+    document.documentElement.classList.add("ujian-aktif");
+
+    // 2) Salin/potong teks → pelanggaran. Tempel & menu konteks diblokir.
+    const onSalin = (e: ClipboardEvent) => {
+      e.preventDefault();
+      if (e.type === "copy" || e.type === "cut") catatPelanggaran("salin");
+    };
+    const onBlok = (e: Event) => e.preventDefault();
+    document.addEventListener("copy", onSalin);
+    document.addEventListener("cut", onSalin);
+    document.addEventListener("paste", onBlok);
+    document.addEventListener("contextmenu", onBlok);
+    document.addEventListener("selectstart", onBlok);
+
+    // 3) Zoom pinch: iOS memakai event gesture*, Android 2 jari di touch*.
+    const onSentuh = (e: TouchEvent) => {
+      if (e.touches.length > 1) e.preventDefault();
+    };
+    const onGesture = (e: Event) => e.preventDefault();
+    document.addEventListener("touchstart", onSentuh, { passive: false });
+    document.addEventListener("touchmove", onSentuh, { passive: false });
+    document.addEventListener("gesturestart", onGesture);
+    document.addEventListener("gesturechange", onGesture);
+
+    // 4) Pintasan keyboard berbahaya (DevTools, print, save, view-source…).
+    //    Ctrl/Cmd+C/V/X sengaja dibiarkan agar event copy terpicu → strike.
+    const onTombol = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      const superKey = e.ctrlKey || e.metaKey;
+      if (
+        e.key === "F12" ||
+        (superKey &&
+          (e.shiftKey || ["i", "j", "k", "p", "s", "u", "f"].includes(k)))
+      ) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", onTombol);
+
+    // 5) Split-screen / jendela kehilangan fokus (dokumen tetap terlihat
+    //    sehingga visibilitychange tidak memantul) → strike "pindah".
+    let timerBlur = 0;
+    const onBlur = () => {
+      if (strikeRef.current >= 3) return;
+      timerBlur = window.setTimeout(() => {
+        if (
+          faseRef.current === "ujian" &&
+          !document.hidden &&
+          !document.hasFocus()
+        ) {
+          catatPelanggaran("pindah");
+        }
+      }, 700);
+    };
+    const onFocus = () => window.clearTimeout(timerBlur);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+
+    // 6) Wake Lock — layar tetap menyala selama ujian (Chrome Android &
+    //    iOS 16.4+); diambil ulang saat tab kembali terlihat.
+    let rilisWake: (() => Promise<void>) | null = null;
+    const mintaWake = () => {
+      const wl = (
+        navigator as Navigator & {
+          wakeLock?: {
+            request(t: "screen"): Promise<{ release(): Promise<void> }>;
+          };
+        }
+      ).wakeLock;
+      if (!wl) return;
+      void wl
+        .request("screen")
+        .then((k) => {
+          rilisWake = () => k.release();
+        })
+        .catch(() => {
+          /* browser menolak — abaikan */
+        });
+    };
+    const onVisWake = () => {
+      if (!document.hidden) mintaWake();
+    };
+    mintaWake();
+    document.addEventListener("visibilitychange", onVisWake);
+
+    return () => {
+      document.documentElement.classList.remove("ujian-aktif");
+      gaya.remove();
+      document.removeEventListener("copy", onSalin);
+      document.removeEventListener("cut", onSalin);
+      document.removeEventListener("paste", onBlok);
+      document.removeEventListener("contextmenu", onBlok);
+      document.removeEventListener("selectstart", onBlok);
+      document.removeEventListener("touchstart", onSentuh);
+      document.removeEventListener("touchmove", onSentuh);
+      document.removeEventListener("gesturestart", onGesture);
+      document.removeEventListener("gesturechange", onGesture);
+      window.removeEventListener("keydown", onTombol);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisWake);
+      window.clearTimeout(timerBlur);
+      if (rilisWake) void rilisWake().catch(() => {});
+    };
+  }, [fase, catatPelanggaran]);
 
   // --- Muat metadata ujian dari GAS ------------------------------------
   useEffect(() => {
@@ -417,6 +544,7 @@ export default function ExamPage() {
     strikeRef.current = 0;
     onlineFlagRef.current = false;
     hiddenFlagRef.current = false;
+    lastViolationRef.current = 0;
   };
 
   const jawab = (pilihan: SesiUjian["jawaban"][string]) => {
@@ -454,6 +582,7 @@ export default function ExamPage() {
       strikeRef.current = 0;
       onlineFlagRef.current = false;
       hiddenFlagRef.current = false;
+      lastViolationRef.current = 0;
       setPin("");
       setPesanKunci(null);
       toast.success("Kunci dibuka. Matikan internet lagi, lalu lanjutkan ujian.");
@@ -696,7 +825,9 @@ export default function ExamPage() {
                 <p className="text-xs text-red-300/80">
                   {modal.jenis === "online"
                     ? "HP terdeteksi ONLINE saat ujian."
-                    : "Berpindah aplikasi/tab saat ujian."}
+                    : modal.jenis === "salin"
+                      ? "Mencoba memilih/menyalin teks soal."
+                      : "Berpindah aplikasi/tab saat ujian."}
                 </p>
               </div>
             </div>
@@ -706,6 +837,11 @@ export default function ExamPage() {
                   Matikan <strong className="text-white">WiFi</strong> dan{" "}
                   <strong className="text-white">data seluler</strong> sekarang
                   juga. Penggunaan internet selama ujian tidak diizinkan.
+                </p>
+              ) : modal.jenis === "salin" ? (
+                <p>
+                  Memilih dan menyalin teks <strong>soal</strong> termasuk
+                  pelanggaran. Baca dan jawab langsung di layar ujian.
                 </p>
               ) : (
                 <p>
@@ -767,7 +903,11 @@ export default function ExamPage() {
                   className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-bold"
                 >
                   <AlertTriangle className="size-3.5 text-amber-300" />
-                  {p.jenis === "online" ? "Online" : "Pindah tab"}
+                  {p.jenis === "online"
+                    ? "Online"
+                    : p.jenis === "salin"
+                      ? "Coba salin"
+                      : "Pindah tab"}
                 </span>
               ))}
             </div>
