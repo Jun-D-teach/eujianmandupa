@@ -4,6 +4,8 @@
  * lalu dimatikan dengan envelope gain.
  */
 let audioCtx: AudioContext | null = null;
+/** Sirene yang sedang berbunyi — dihentikan sebelum yang baru mulai. */
+let sireneAktif: { osc: OscillatorNode; gain: GainNode } | null = null;
 
 function getAudioContext(): AudioContext | null {
   try {
@@ -22,10 +24,27 @@ function getAudioContext(): AudioContext | null {
   }
 }
 
-/** Bunyikan sirine selama `durasiMs` (default 1,6 detik). */
-export function bunyikanSirene(durasiMs = 1600): void {
+/**
+ * Bunyikan sirine selama `durasiMs` (default 30 detik — peringatan pelanggaran
+ * ujian). Sirene lama (bila masih berbunyi) dihentikan dulu supaya tidak
+ * menumpuk saat siswa melakukan beberapa pelanggaran berturut-turut.
+ */
+export function bunyikanSirene(durasiMs = 30000): void {
   const ctx = getAudioContext();
   if (!ctx) return;
+
+  // Hentikan sirene sebelumnya.
+  if (sireneAktif) {
+    try {
+      const now = ctx.currentTime;
+      sireneAktif.gain.gain.cancelScheduledValues(now);
+      sireneAktif.gain.gain.setValueAtTime(0.0001, now);
+      sireneAktif.osc.stop(now + 0.02);
+    } catch {
+      /* noop */
+    }
+    sireneAktif = null;
+  }
 
   try {
     const start = ctx.currentTime;
@@ -58,6 +77,7 @@ export function bunyikanSirene(durasiMs = 1600): void {
 
     osc.start(start);
     osc.stop(start + durasi + 0.05);
+    sireneAktif = { osc, gain };
     osc.onended = () => {
       try {
         osc.disconnect();
@@ -65,6 +85,7 @@ export function bunyikanSirene(durasiMs = 1600): void {
       } catch {
         /* noop */
       }
+      if (sireneAktif?.osc === osc) sireneAktif = null;
     };
   } catch {
     /* browser menolak audio — abaikan */
