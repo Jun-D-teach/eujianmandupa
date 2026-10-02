@@ -50,6 +50,9 @@ export type SesiUjian = {
   token?: string;
   /** Durasi ujian (menit) yang diset admin. */
   durasi_menit?: number;
+  /** Revisi soal saat unduhan dibuat — dicocokkan dengan server; bila beda
+   *  berarti guru memperbaiki soal → wajib sinkron ulang (sebelum mulai). */
+  revisi?: number;
   /** Jadwal mulai "YYYY-MM-DDTHH:mm" — gerbang waktu diperiksa lokal. */
   tglMulai?: string;
   /** Batas waktu pengerjaan (epoch ms), dihitung saat ujian dimulai. */

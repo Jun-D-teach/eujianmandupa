@@ -31,6 +31,7 @@ import {
   ClipboardList,
   Download,
   KeyRound,
+  Pencil,
   Plus,
   Power,
   RefreshCw,
@@ -44,6 +45,14 @@ import { toast } from "sonner";
 
 const PILIHAN = ["A", "B", "C", "D", "E"] as const;
 const OPSI_WAJIB = ["A", "B", "C", "D"] as const;
+const FORM_KOSONG = {
+  pertanyaan: "",
+  opsi_a: "",
+  opsi_b: "",
+  opsi_c: "",
+  opsi_d: "",
+  opsi_e: "",
+};
 
 /** Label jadwal ramah baca: Jumat, 12 Oktober 2026 pukul 08.00. */
 function jadwalLabel(v?: string): string {
@@ -643,15 +652,10 @@ export function KelolaUjian() {
 /** Daftar soal + form tambah soal untuk satu ujian (dengan kunci jawaban). */
 function PanelSoal({ ujianId }: { ujianId: string }) {
   const [soal, setSoal] = useState<SoalGas[] | null>(null);
-  const [form, setForm] = useState({
-    pertanyaan: "",
-    opsi_a: "",
-    opsi_b: "",
-    opsi_c: "",
-    opsi_d: "",
-    opsi_e: "",
-  });
+  const [form, setForm] = useState(FORM_KOSONG);
   const [kunci, setKunci] = useState<Kunci>("A");
+  /** id soal yang sedang diperbaiki (null = mode tambah). */
+  const [editId, setEditId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const muat = () => {
@@ -668,6 +672,26 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
     (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((f) => ({ ...f, [field]: e.target.value }));
 
+  /** Isi form dari soal terpilih → mode ubah. */
+  const mulaiEdit = (s: SoalGas) => {
+    setEditId(s.id);
+    setForm({
+      pertanyaan: s.pertanyaan,
+      opsi_a: s.opsi_a,
+      opsi_b: s.opsi_b,
+      opsi_c: s.opsi_c,
+      opsi_d: s.opsi_d,
+      opsi_e: s.opsi_e || "",
+    });
+    setKunci(((s.kunci_jawaban || "A").toUpperCase() as Kunci) || "A");
+  };
+
+  const batalEdit = () => {
+    setEditId(null);
+    setForm(FORM_KOSONG);
+    setKunci("A");
+  };
+
   const simpan = async () => {
     if (!form.pertanyaan.trim()) {
       toast.error("Pertanyaan wajib diisi.");
@@ -683,7 +707,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
     }
     setBusy(true);
     try {
-      await gasCall("tambahSoal", {
+      const muatan = {
         ujian_id: ujianId,
         pertanyaan: form.pertanyaan.trim(),
         opsi_a: form.opsi_a.trim(),
@@ -692,20 +716,20 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
         opsi_d: form.opsi_d.trim(),
         opsi_e: form.opsi_e.trim(),
         kunci_jawaban: kunci,
-      });
-      setForm({
-        pertanyaan: "",
-        opsi_a: "",
-        opsi_b: "",
-        opsi_c: "",
-        opsi_d: "",
-        opsi_e: "",
-      });
+      };
+      if (editId) {
+        await gasCall("ubahSoal", { id: editId, ...muatan });
+        toast.success("Soal diperbarui — siswa yang sudah unduh diminta sinkron ulang.");
+      } else {
+        await gasCall("tambahSoal", muatan);
+        toast.success("Soal ditambahkan.");
+      }
+      setForm(FORM_KOSONG);
       setKunci("A");
+      setEditId(null);
       muat();
-      toast.success("Soal ditambahkan.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Gagal menambah soal.");
+      toast.error(err instanceof Error ? err.message : "Gagal menyimpan soal.");
     } finally {
       setBusy(false);
     }
@@ -780,15 +804,27 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                     <KeyRound className="size-3.5" /> Kunci: {s.kunci_jawaban}
                   </span>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="shrink-0 text-muted-foreground hover:text-red-600"
-                  onClick={() => buang(s.id)}
-                  aria-label="Hapus soal"
-                >
-                  <Trash2 className="size-4" />
-                </Button>
+                <div className="flex shrink-0 gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-8 text-muted-foreground hover:text-foreground"
+                    onClick={() => mulaiEdit(s)}
+                    aria-label="Ubah soal"
+                    title="Perbaiki soal"
+                  >
+                    <Pencil className="size-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-8 text-muted-foreground hover:text-red-600"
+                    onClick={() => buang(s.id)}
+                    aria-label="Hapus soal"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
               </div>
             </li>
           ))}
@@ -797,7 +833,13 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
 
       {/* Tambah soal */}
       <div className="rounded-2xl border border-border/70 bg-background/60 p-4">
-        <p className="text-sm font-bold">Tambah soal</p>
+        <p className="text-sm font-bold">{editId ? "Ubah / perbaiki soal" : "Tambah soal"}</p>
+        {editId && (
+          <p className="mt-1 text-xs leading-5 text-amber-700">
+            Perbaikan menaikkan revisi soal — siswa yang sudah mengunduh akan
+            diminta sinkron ulang (wajib online sesaat sebelum mengerjakan).
+          </p>
+        )}
         <div className="mt-3 space-y-3">
           <Input
             value={form.pertanyaan}
@@ -834,13 +876,26 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                 {p}
               </button>
             ))}
+            {editId && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                onClick={batalEdit}
+                disabled={busy}
+              >
+                Batal
+              </Button>
+            )}
             <Button
               className="ml-auto gap-2"
               size="sm"
               onClick={simpan}
               disabled={busy}
             >
-              <Plus className="size-4" /> Simpan soal
+              <Plus className="size-4" />
+              {editId ? "Simpan perubahan" : "Simpan soal"}
             </Button>
           </div>
         </div>

@@ -131,6 +131,7 @@ function pastikanStruktur(): void
             durasi_menit INT NOT NULL DEFAULT 60,
             aktif TINYINT(1) NOT NULL DEFAULT 0,
             boleh_unduh TINYINT(1) NOT NULL DEFAULT 0,
+            revisi INT NOT NULL DEFAULT 1,
             dibuat DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             tgl_mulai VARCHAR(16) NOT NULL DEFAULT '',
             sasar_jenis VARCHAR(16) NOT NULL DEFAULT '',
@@ -190,6 +191,10 @@ function pastikanStruktur(): void
     if ($st->fetch() === false) {
         db()->exec("ALTER TABLE ujian ADD COLUMN boleh_unduh TINYINT(1) NOT NULL DEFAULT 0 AFTER aktif");
     }
+    $st = db()->query("SHOW COLUMNS FROM ujian LIKE 'revisi'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE ujian ADD COLUMN revisi INT NOT NULL DEFAULT 1 AFTER boleh_unduh");
+    }
 
     $siap = true;
 }
@@ -242,7 +247,7 @@ const AKSES = [
     'getKelasList' => 1, 'tambahSiswa' => 1, 'ubahSiswa' => 1, 'hapusSiswa' => 1,
     'importSiswa' => 1, 'buatAkunSiswa' => 1, 'buatUjian' => 1, 'aturUjian' => 1,
     'setAktifUjian' => 1, 'setIzinUnduh' => 1, 'hapusUjian' => 1,
-    'tambahSoal' => 1, 'tambahSoalContoh' => 1, 'hapusSoal' => 1,
+    'tambahSoal' => 1, 'ubahSoal' => 1, 'tambahSoalContoh' => 1, 'hapusSoal' => 1,
     'getGuru' => 1, 'tambahGuru' => 1, 'ubahGuru' => 1, 'hapusGuru' => 1,
     'importGuru' => 1, 'buatAkunGuru' => 1,
 
@@ -420,6 +425,7 @@ function jalankan(string $action, array $d): array
         case 'setIzinUnduh': return a_setIzinUnduh($d);
         case 'hapusUjian': return a_hapusUjian($d);
         case 'tambahSoal': return a_tambahSoal($d);
+        case 'ubahSoal': return a_ubahSoal($d);
         case 'tambahSoalContoh': return a_tambahSoalContoh($d);
         case 'hapusSoal': return a_hapusSoal($d);
         case 'submitJawaban': return a_submitJawaban($d);
@@ -903,6 +909,17 @@ function jumlahSoal(string $ujianId): int
     return (int) ($r['n'] ?? 0);
 }
 
+/**
+ * Tandai revisi soal — disetiap perubahan isi soal (tambah/ubah/hapus).
+ * Klien siswa membandingkan `revisi` ini dengan salinan di HP; bila beda,
+ * siswa diminta sinkron ulang (wajib sebelum Mulai Ujian).
+ */
+function naikkanRevisi(string $ujianId): void
+{
+    if ($ujianId === '') return;
+    jalan('UPDATE ujian SET revisi = revisi + 1 WHERE id = ?', [$ujianId]);
+}
+
 /** "X.2" -> "X" */
 function tingkatDari($kelas): string
 {
@@ -948,6 +965,7 @@ function barisUjian(array $r, ?string $kelasSiswa, bool $sertakanToken = false):
         'durasi_menit' => (int) $r['durasi_menit'],
         'aktif' => $aktif,
         'boleh_unduh' => (int) ($r['boleh_unduh'] ?? 0) === 1,
+        'revisi' => (int) ($r['revisi'] ?? 1),
         'jumlah_soal' => jumlahSoal((string) $r['id']),
         'tgl_mulai' => (string) $r['tgl_mulai'],
         'sasar_jenis' => (string) $r['sasar_jenis'],
@@ -1164,9 +1182,20 @@ function a_getSoal(array $d): array
         return galat('Token ujian salah. Minta token yang benar dari pengawas/admin.');
     }
     if ((int) $r['aktif'] !== 1) return galat('Ujian belum diaktifkan admin.');
-    if ((int) ($r['boleh_unduh'] ?? 0) !== 1) {
+
+    // Izin bagikan mengatur unduh PERTAMA; siswa yang PERNAH mengunduh tetap
+    // boleh sinkron ulang (mis. setelah guru memperbaiki soal) walau izin
+    // sudah ditutup admin.
+    $username = bersih($d['sesi_user'] ?? '');
+    $pernahUnduh = false;
+    if ($username !== '') {
+        $p = satu('SELECT username FROM unduhan WHERE ujian_id = ? AND username = ?', [$id, $username]);
+        $pernahUnduh = $p !== null;
+    }
+    if ((int) ($r['boleh_unduh'] ?? 0) !== 1 && !$pernahUnduh) {
         return galat('Admin belum membuka izin unduh soal untuk mapel ini. Tunggu info pengawas.');
     }
+
     $meta = barisUjian($r, $kelas !== '' ? $kelas : null);
     if (!$meta['boleh']) {
         return galat(
@@ -1175,7 +1204,6 @@ function a_getSoal(array $d): array
         );
     }
 
-    $username = bersih($d['sesi_user'] ?? '');
     jalan(
         'INSERT INTO unduhan (ujian_id, username, waktu) VALUES (?,?,NOW())
          ON DUPLICATE KEY UPDATE waktu = NOW()',
@@ -1229,19 +1257,62 @@ function a_tambahSoal(array $d): array
         'opsi_e' => bersih($d['opsi_e'] ?? ''),
         'kunci_jawaban' => $kunci,
     ]);
+    naikkanRevisi($ujianId);
     return ['success' => true, 'id' => $id, 'message' => 'Soal ditambahkan.'];
+}
+
+/** Perbaiki soal yang sudah ada (pertanyaan/opsi/kunci) — menaikkan revisi. */
+function a_ubahSoal(array $d): array
+{
+    $id = bersih($d['id'] ?? '');
+    $pertanyaan = bersih($d['pertanyaan'] ?? '');
+    foreach (['opsi_a', 'opsi_b', 'opsi_c', 'opsi_d'] as $w) {
+        if (bersih($d[$w] ?? '') === '') return galat('Opsi A–D wajib diisi (opsi E opsional).');
+    }
+    $kunci = strtoupper(bersih($d['kunci_jawaban'] ?? ''));
+    if (!in_array($kunci, ['A', 'B', 'C', 'D', 'E'], true)) return galat('Kunci jawaban harus huruf A–E.');
+    if ($kunci === 'E' && bersih($d['opsi_e'] ?? '') === '') {
+        return galat('Opsi E kosong — kunci tidak boleh E.');
+    }
+    if ($pertanyaan === '') return galat('Pertanyaan wajib diisi.');
+
+    $lama = satu('SELECT ujian_id FROM soal WHERE id = ?', [$id]);
+    if (!$lama) return galat('Soal tidak ditemukan.');
+
+    jalan(
+        'UPDATE soal SET pertanyaan = ?, opsi_a = ?, opsi_b = ?, opsi_c = ?, opsi_d = ?, opsi_e = ?, kunci_jawaban = ? WHERE id = ?',
+        [
+            $pertanyaan,
+            bersih($d['opsi_a'] ?? ''),
+            bersih($d['opsi_b'] ?? ''),
+            bersih($d['opsi_c'] ?? ''),
+            bersih($d['opsi_d'] ?? ''),
+            bersih($d['opsi_e'] ?? ''),
+            $kunci,
+            $id,
+        ]
+    );
+    naikkanRevisi((string) $lama['ujian_id']);
+    return [
+        'success' => true,
+        'message' => 'Soal diperbarui — siswa yang sudah mengunduh perlu sinkron ulang.',
+    ];
 }
 
 function a_tambahSoalContoh(array $d): array
 {
     $ujianId = bersih($d['ujian_id'] ?? '');
     foreach (SOAL_CONTOH as $s) sisipSoal($ujianId, $s);
+    naikkanRevisi($ujianId);
     return ['success' => true, 'message' => count(SOAL_CONTOH) . ' soal contoh ditambahkan.'];
 }
 
 function a_hapusSoal(array $d): array
 {
-    jalan('DELETE FROM soal WHERE id = ?', [bersih($d['id'] ?? '')]);
+    $id = bersih($d['id'] ?? '');
+    $lama = satu('SELECT ujian_id FROM soal WHERE id = ?', [$id]);
+    jalan('DELETE FROM soal WHERE id = ?', [$id]);
+    if ($lama) naikkanRevisi((string) $lama['ujian_id']);
     return ['success' => true, 'message' => 'Soal dihapus.'];
 }
 

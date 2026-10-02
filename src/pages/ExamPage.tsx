@@ -473,6 +473,61 @@ export default function ExamPage() {
     };
   }, [ujianId]);
 
+  // --- Sinkron ulang otomatis: guru memperbaiki soal ----------------------
+  // Saat HP online & siswa BELUM mulai ujian, bila revisi server beda dengan
+  // salinan di HP maka soal diunduh ulang (jawaban yang ada dipertahankan untuk
+  // id soal yang masih ada). Saat offline, guard "Mulai Ujian" yang
+  // mengingatkan agar nyalakan internet dulu untuk sinkron.
+  useEffect(() => {
+    if (fase !== "instruksi" || !sesi || !online) return;
+    const revisiServer = meta?.revisi;
+    if (typeof revisiServer !== "number") return;
+    if ((sesi.revisi ?? 1) === revisiServer) return;
+    let hidup = true;
+    const sinkron = async () => {
+      try {
+        const data = await gasCall<
+          { ujian: UjianGas; soal: import("@/lib/api").SoalGas[]; pin_pengawas?: string }
+        >("getSoal", { id: ujianId, kelas: sesi.kelas, token: sesi.token ?? "" });
+        if (!hidup) return;
+        if (typeof data.pin_pengawas === "string" && /^\d{6}$/.test(data.pin_pengawas)) {
+          simpanPinTersimpan(data.pin_pengawas);
+        }
+        const idBaru = new Set(data.soal.map((s) => s.id));
+        const jawaban: SesiUjian["jawaban"] = {};
+        for (const [k, v] of Object.entries(sesi.jawaban)) {
+          if (idBaru.has(k)) jawaban[k] = v;
+        }
+        const baru: SesiUjian = {
+          ...sesi,
+          revisi: data.ujian.revisi,
+          soal: data.soal.map((s) => ({
+            id: s.id,
+            pertanyaan: s.pertanyaan,
+            opsi_a: s.opsi_a,
+            opsi_b: s.opsi_b,
+            opsi_c: s.opsi_c,
+            opsi_d: s.opsi_d,
+            opsi_e: s.opsi_e || undefined,
+          })),
+          jawaban,
+          indeks: Math.max(0, Math.min(sesi.indeks, data.soal.length - 1)),
+        };
+        setSesi(baru);
+        simpanSesi(baru);
+        toast.success(
+          `Guru memperbarui soal — ${baru.soal.length} soal terbaru tersimpan di HP.`,
+        );
+      } catch {
+        /* offline / izin ditutup — biarkan; guard Mulai Ujian yang mengingatkan */
+      }
+    };
+    void sinkron();
+    return () => {
+      hidup = false;
+    };
+  }, [fase, sesi, meta?.revisi, online, ujianId]);
+
   // --- Aksi fase -------------------------------------------------------
   /** Unduh soal (online) — token ujian divalidasi server sebelum soal dikirim. */
   const unduhSoal = async () => {
@@ -512,6 +567,7 @@ export default function ExamPage() {
         kelas: k,
         token: t,
         durasi_menit: data.ujian.durasi_menit,
+        revisi: data.ujian.revisi,
         tglMulai: data.ujian.tgl_mulai || undefined,
         unduhPada: Date.now(),
         soal: data.soal.map((s) => ({
@@ -546,6 +602,16 @@ export default function ExamPage() {
   const mulaiUjian = () => {
     if (online) {
       toast.error("HP masih ONLINE — matikan WiFi & data seluler dulu, lalu mulai ujian.");
+      return;
+    }
+    if (
+      typeof meta?.revisi === "number" &&
+      typeof sesi?.revisi === "number" &&
+      sesi.revisi !== meta.revisi
+    ) {
+      toast.error(
+        "Guru memperbaiki soal — nyalakan internet dulu untuk sinkron ulang, lalu matikan internet kembali.",
+      );
       return;
     }
     if (belumMulai(sesi?.tglMulai)) {

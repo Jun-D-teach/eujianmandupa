@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useOnline } from "@/hooks/use-online";
-import { gasCall, type HasilGas, type UjianGas } from "@/lib/api";
-import { muatSesi, hapusSesi, type SesiUjian } from "@/lib/exam-storage";
+import { gasCall, simpanPinTersimpan, type HasilGas, type SoalGas, type UjianGas } from "@/lib/api";
+import {
+  muatSesi,
+  simpanSesi,
+  hapusSesi,
+  type SesiUjian,
+} from "@/lib/exam-storage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -17,6 +22,7 @@ import {
   KeyRound,
   Pencil,
   PlayCircle,
+  RefreshCw,
   Trophy,
 } from "lucide-react";
 import { useNavigate } from "react-router";
@@ -45,6 +51,7 @@ export function SiswaUjian() {
   const [ujian, setUjian] = useState<UjianGas[] | null>(null); // null = memuat
   const [error, setError] = useState<string | null>(null);
   const [versi, setVersi] = useState(0); // memicu muat ulang daftar/sesi
+  const [sinkronBusy, setSinkronBusy] = useState<string | null>(null);
 
   useEffect(() => {
     let hidup = true;
@@ -62,6 +69,63 @@ export function SiswaUjian() {
       hidup = false;
     };
   }, [versi, user?.kelas]);
+
+  /**
+   * Sinkron ulang soal — dipakai saat guru memperbaiki soal setelah siswa
+   * mengunduh. Hanya untuk sesi yang BELUM dimulai; jawaban yang sudah ada
+   * tetap dipertahankan untuk id soal yang tidak berubah.
+   */
+  const sinkronUlang = async (u: UjianGas) => {
+    const sesiLama = muatSesi(u.id);
+    if (!sesiLama) return;
+    if (!online) {
+      toast.error("Nyalakan internet sementara untuk sinkron ulang soal.");
+      return;
+    }
+    setSinkronBusy(u.id);
+    try {
+      const data = await gasCall<{
+        ujian: UjianGas;
+        soal: SoalGas[];
+        pin_pengawas?: string;
+      }>("getSoal", { id: u.id, kelas: sesiLama.kelas, token: sesiLama.token ?? "" });
+      if (
+        typeof data.pin_pengawas === "string" &&
+        /^\d{6}$/.test(data.pin_pengawas)
+      ) {
+        simpanPinTersimpan(data.pin_pengawas);
+      }
+      const idBaru = new Set(data.soal.map((s) => s.id));
+      const jawaban: SesiUjian["jawaban"] = {};
+      for (const [k, v] of Object.entries(sesiLama.jawaban)) {
+        if (idBaru.has(k)) jawaban[k] = v;
+      }
+      const baru: SesiUjian = {
+        ...sesiLama,
+        revisi: data.ujian.revisi,
+        soal: data.soal.map((s) => ({
+          id: s.id,
+          pertanyaan: s.pertanyaan,
+          opsi_a: s.opsi_a,
+          opsi_b: s.opsi_b,
+          opsi_c: s.opsi_c,
+          opsi_d: s.opsi_d,
+          opsi_e: s.opsi_e || undefined,
+        })),
+        jawaban,
+        indeks: Math.max(0, Math.min(sesiLama.indeks, data.soal.length - 1)),
+      };
+      simpanSesi(baru);
+      toast.success(
+        `Soal diperbarui — ${baru.soal.length} soal terbaru tersimpan di HP.`,
+      );
+      setVersi((v) => v + 1);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal sinkron ulang soal.");
+    } finally {
+      setSinkronBusy(null);
+    }
+  };
 
   if (error) {
     return (
@@ -141,6 +205,16 @@ export function SiswaUjian() {
               // Status unduhan di server (bisa saja sudah diunduh di HP lain).
               const pernahUnduh = adaSoalLokal || u.sudah_unduh === true;
               const terkunciJadwal = belumWaktunya(u.tgl_mulai);
+              // Guru memperbaiki soal setelah unduhan dibuat → wajib sinkron ulang.
+              const revisiBeda = Boolean(
+                sesi &&
+                  typeof u.revisi === "number" &&
+                  (sesi.revisi ?? 1) !== u.revisi,
+              );
+              const bisaSinkron =
+                revisiBeda &&
+                sesi !== null &&
+                (sesi.fase === "setup" || sesi.fase === "instruksi");
               return (
                 <Card
                   key={u.id}
@@ -218,6 +292,14 @@ export function SiswaUjian() {
                       </p>
                     ) : null}
 
+                    {revisiBeda && (
+                      <p className="mt-2 rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-700">
+                        {bisaSinkron
+                          ? "Guru memperbaiki soal — sinkron ulang dulu saat online sebelum mengerjakan."
+                          : "Guru memperbaiki soal — versi terbaru berlaku untuk pengerjaan berikutnya."}
+                      </p>
+                    )}
+
                     <div className="mt-5 flex flex-wrap items-center gap-2">
                       {takBoleh ? (
                         <Button disabled>Kerjakan</Button>
@@ -248,6 +330,23 @@ export function SiswaUjian() {
                               <ArrowRight className="size-4" /> Kerjakan
                             </>
                           )}
+                        </Button>
+                      )}
+                      {bisaSinkron && (
+                        <Button
+                          variant="outline"
+                          className="gap-2"
+                          disabled={!online || sinkronBusy === u.id}
+                          onClick={() => void sinkronUlang(u)}
+                        >
+                          <RefreshCw
+                            className={`size-4 ${
+                              sinkronBusy === u.id ? "animate-spin" : ""
+                            }`}
+                          />
+                          {sinkronBusy === u.id
+                            ? "Sinkron…"
+                            : "Sinkron ulang soal"}
                         </Button>
                       )}
                       {adaSoalLokal && sesi && sesi.fase === "setup" && (
