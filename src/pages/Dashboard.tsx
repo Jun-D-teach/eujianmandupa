@@ -24,6 +24,7 @@ import { Pengguna } from "@/components/dashboard/Pengguna";
 import { DataSiswa } from "@/components/dashboard/DataSiswa";
 import { DataGuru } from "@/components/dashboard/DataGuru";
 import { PengaturanPin } from "@/components/dashboard/PengaturanPin";
+import { PengaturanKartu } from "@/components/dashboard/PengaturanKartu";
 
 type TabId =
   | "ujian"
@@ -164,7 +165,12 @@ export default function Dashboard() {
         {tabAktif === "siswa" && <DataSiswa />}
         {tabAktif === "guru" && <DataGuru />}
         {tabAktif === "pengguna" && <Pengguna />}
-        {tabAktif === "atur" && <PengaturanPin />}
+        {tabAktif === "atur" && (
+          <div className="space-y-10">
+            <PengaturanPin />
+            <PengaturanKartu />
+          </div>
+        )}
       </div>
     </main>
   );

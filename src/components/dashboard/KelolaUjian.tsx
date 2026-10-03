@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { gasCall, tokenValid, type SoalGas, type SiswaGas, type UjianGas } from "@/lib/api";
+import {
+  cetakKartu,
+  cocokSasaran,
+  gayaKartu,
+  kartuHTML,
+  type CetakMode,
+  type IsiKartu,
+  type SetKartu,
+} from "@/lib/kartu";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -16,6 +25,14 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,11 +51,13 @@ import {
   Pencil,
   Plus,
   Power,
+  Printer,
   RefreshCw,
   Share2,
   Sparkles,
   Target,
   Trash2,
+  TriangleAlert,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -269,6 +288,11 @@ export function KelolaUjian() {
   const [sasarNilai, setSasarNilai] = useState("");
   const [busy, setBusy] = useState(false);
   const [hapusTarget, setHapusTarget] = useState<{ id: string; judul: string } | null>(null);
+  const [cetakTarget, setCetakTarget] = useState<UjianGas | null>(null);
+  const [cetakSet, setCetakSet] = useState<SetKartu | null>(null);
+  const [cetakSiswa, setCetakSiswa] = useState<SiswaGas[] | null>(null);
+  const [cetakMode, setCetakMode] = useState<CetakMode>("A4");
+  const [cetakMuat, setCetakMuat] = useState(false);
 
   useEffect(() => {
     let hidup = true;
@@ -374,6 +398,59 @@ export function KelolaUjian() {
       );
     }
   };
+
+  /** Buka dialog cetak kartu — muat setelan kop/TTD + siswa sesuai sasaran. */
+  const bukaCetak = async (u: UjianGas) => {
+    setCetakTarget(u);
+    setCetakSet(null);
+    setCetakSiswa(null);
+    setCetakMuat(true);
+    try {
+      const [set, siswa] = await Promise.all([
+        gasCall<SetKartu>("getKartuSet"),
+        gasCall<{ siswa: SiswaGas[] }>("getSiswa"),
+      ]);
+      setCetakSet(set);
+      setCetakSiswa(siswa.siswa.filter((s) => cocokSasaran(u, s.kelas)));
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Gagal memuat data kartu ujian.",
+      );
+      setCetakTarget(null);
+    } finally {
+      setCetakMuat(false);
+    }
+  };
+
+  const jalankanCetak = () => {
+    if (!cetakTarget || !cetakSet || !cetakSiswa || cetakSiswa.length === 0) return;
+    const kartu: IsiKartu[] = cetakSiswa.map((s) => ({
+      nisn: s.nisn,
+      nama: s.nama,
+      kelas: s.kelas,
+      judul: cetakTarget.judul,
+      jadwal: cetakTarget.tgl_mulai
+        ? jadwalLabel(cetakTarget.tgl_mulai)
+        : "Tanpa jadwal (langsung dibuka)",
+      durasi: cetakTarget.durasi_menit,
+    }));
+    cetakKartu(cetakSet, kartu, cetakMode, (pesan) => toast.error(pesan));
+  };
+
+  /** Kartu contoh untuk pratinjau (siswa pertama yang cocok sasaran). */
+  const contohKartu: IsiKartu | null =
+    cetakTarget && cetakSiswa && cetakSiswa.length > 0
+      ? {
+          nisn: cetakSiswa[0].nisn,
+          nama: cetakSiswa[0].nama,
+          kelas: cetakSiswa[0].kelas,
+          judul: cetakTarget.judul,
+          jadwal: cetakTarget.tgl_mulai
+            ? jadwalLabel(cetakTarget.tgl_mulai)
+            : "Tanpa jadwal (langsung dibuka)",
+          durasi: cetakTarget.durasi_menit,
+        }
+      : null;
 
   const konfirmasiHapus = async () => {
     if (!hapusTarget) return;
@@ -621,6 +698,14 @@ export function KelolaUjian() {
                       >
                         <Trash2 className="size-4" /> Hapus ujian
                       </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => void bukaCetak(u)}
+                      >
+                        <Printer className="size-4" /> Cetak kartu
+                      </Button>
                     </div>
                   ) : (
                     <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-muted-foreground">
@@ -713,6 +798,112 @@ export function KelolaUjian() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Dialog cetak kartu ujian (ukuran KTP) */}
+      <Dialog
+        open={cetakTarget !== null}
+        onOpenChange={(open) => !open && setCetakTarget(null)}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Cetak kartu ujian</DialogTitle>
+            <DialogDescription>
+              "{cetakTarget?.judul}" — kartu ukuran KTP (85,6 × 54 mm) untuk {" "}
+              {cetakSiswa?.length ?? 0} siswa sesuai sasaran ujian, lengkap
+              dengan kop, logo & tanda tangan kepala madrasah.
+            </DialogDescription>
+          </DialogHeader>
+
+          {cetakMuat || !cetakSet || !cetakSiswa ? (
+            <Skeleton className="h-64 w-full" />
+          ) : (
+            <div className="space-y-4">
+              {/* Pilihan kertas */}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={cetakMode === "A4" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setCetakMode("A4")}
+                >
+                  A4 — 10 kartu (siap potong)
+                </Button>
+                <Button
+                  variant={cetakMode === "KTP" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setCetakMode("KTP")}
+                >
+                  KTP — 1 kartu / halaman
+                </Button>
+              </div>
+
+              {(!cetakSet.logo || !cetakSet.ttd || !cetakSet.kepala) && (
+                <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-5 text-amber-800">
+                  <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+                  <span>
+                    Setelan kartu belum lengkap (
+                    {[
+                      !cetakSet.logo ? "logo" : null,
+                      !cetakSet.ttd ? "tanda tangan" : null,
+                      !cetakSet.kepala ? "nama kepala madrasah" : null,
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}
+                    ). Lengkapi di menu <strong>Pengaturan</strong> agar kartu
+                    tampil sempurna.
+                  </span>
+                </div>
+              )}
+
+              {/* Pratinjau */}
+              <div className="rounded-2xl border border-border/70 bg-muted/40 p-4">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Pratinjau
+                  {contohKartu ? ` — ${contohKartu.nama}` : ""}
+                </p>
+                {contohKartu ? (
+                  <div className="mt-3 h-[300px] w-full overflow-hidden">
+                    <div
+                      style={{
+                        width: "85.6mm",
+                        transform: "scale(1.4)",
+                        transformOrigin: "top left",
+                      }}
+                      dangerouslySetInnerHTML={{
+                        __html: kartuHTML(cetakSet, contohKartu),
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Tidak ada siswa yang cocok dengan sasaran ujian ini —
+                    periksa Data Siswa atau sasaran ujian.
+                  </p>
+                )}
+              </div>
+              <style>{gayaKartu()}</style>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCetakTarget(null)}>
+              Tutup
+            </Button>
+            <Button
+              className="gap-2"
+              onClick={jalankanCetak}
+              disabled={
+                cetakMuat ||
+                !cetakSet ||
+                !cetakSiswa ||
+                cetakSiswa.length === 0
+              }
+            >
+              <Printer className="size-4" /> Cetak {cetakSiswa?.length ?? 0}{" "}
+              kartu
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

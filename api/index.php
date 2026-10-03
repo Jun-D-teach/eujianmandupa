@@ -204,6 +204,16 @@ function pastikanStruktur(): void
     if ($st->fetch() === false) {
         db()->exec("ALTER TABLE ujian ADD COLUMN konfirmasi_pada DATETIME NULL AFTER konfirmasi_guru");
     }
+    // Kolom nilai pengaturan dinaikkan ke MEDIUMTEXT agar muat gambar logo &
+    // tanda tangan (base64) untuk kartu ujian.
+    $st = db()->query(
+        "SELECT DATA_TYPE AS t FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pengaturan' AND COLUMN_NAME = 'nilai'"
+    );
+    $kolom = $st->fetch();
+    if ($kolom && strtolower((string) ($kolom['t'] ?? '')) === 'text') {
+        db()->exec('ALTER TABLE pengaturan MODIFY nilai MEDIUMTEXT NULL');
+    }
 
     $siap = true;
 }
@@ -264,6 +274,7 @@ const AKSES = [
 
     'getPengaturan' => 2, 'aturPin' => 2, 'buatPengguna' => 2,
     'ubahPeran' => 2, 'getPengguna' => 2,
+    'getKartuSet' => 2, 'aturKartuSet' => 2,
 ];
 
 function tingkatPeran($role): int
@@ -445,6 +456,8 @@ function jalankan(string $action, array $d): array
         case 'catatBukaKunci': return a_catatBukaKunci($d);
         case 'getPengaturan': return a_getPengaturan();
         case 'aturPin': return a_aturPin($d);
+        case 'getKartuSet': return a_getKartuSet();
+        case 'aturKartuSet': return a_aturKartuSet($d);
         case 'buatPengguna': return a_buatPengguna($d);
         case 'ubahPeran': return a_ubahPeran($d);
         case 'getGuru': return a_getGuru();
@@ -1522,6 +1535,69 @@ function a_aturPin(array $d): array
     if ($pin !== $ulang) return galat('PIN dan konfirmasi PIN tidak sama.');
     simpanPengaturan('pin_pengawas', $pin);
     return ['success' => true, 'message' => 'PIN buka blokir diperbarui.'];
+}
+
+/* ------------------------------------------------------------------ */
+/* KARTU UJIAN (kop, logo, tanda tangan kepala madrasah — admin)       */
+/* ------------------------------------------------------------------ */
+
+/** Baca setelan kartu: kop madrasah, kota, kepala madrasah, logo & TTD. */
+function a_getKartuSet(): array
+{
+    $set = [
+        'sekolah' => 'MAN 2 PALEMBANG',
+        'alamat' => '',
+        'kota' => 'Palembang',
+        'kepala' => '',
+        'nip' => '',
+    ];
+    $teks = bacaPengaturan('kartu_teks', '');
+    if ($teks !== '') {
+        $j = json_decode($teks, true);
+        if (is_array($j)) {
+            foreach ($set as $k => $bawaan) {
+                if (isset($j[$k]) && is_string($j[$k])) $set[$k] = $j[$k];
+            }
+        }
+    }
+    return [
+        'success' => true,
+        'sekolah' => $set['sekolah'],
+        'alamat' => $set['alamat'],
+        'kota' => $set['kota'],
+        'kepala' => $set['kepala'],
+        'nip' => $set['nip'],
+        'logo' => bacaPengaturan('kartu_logo', ''),
+        'ttd' => bacaPengaturan('kartu_ttd', ''),
+    ];
+}
+
+/** Simpan setelan kartu (teks + gambar base64 "data:image/...;"). */
+function a_aturKartuSet(array $d): array
+{
+    $teks = [
+        'sekolah' => bersih($d['sekolah'] ?? ''),
+        'alamat' => bersih($d['alamat'] ?? ''),
+        'kota' => bersih($d['kota'] ?? ''),
+        'kepala' => bersih($d['kepala'] ?? ''),
+        'nip' => bersih($d['nip'] ?? ''),
+    ];
+    if ($teks['sekolah'] === '') return galat('Nama madrasah (kop) wajib diisi.');
+
+    foreach (['logo', 'ttd'] as $k) {
+        $g = (string) ($d[$k] ?? '');
+        if ($g !== '' && strpos($g, 'data:image/') !== 0) {
+            return galat('Format gambar logo/tanda tangan tidak valid.');
+        }
+        if (strlen($g) > 600000) {
+            return galat('Gambar terlalu besar — gunakan gambar berukuran lebih kecil.');
+        }
+    }
+
+    simpanPengaturan('kartu_teks', (string) json_encode($teks, JSON_UNESCAPED_UNICODE));
+    simpanPengaturan('kartu_logo', (string) ($d['logo'] ?? ''));
+    simpanPengaturan('kartu_ttd', (string) ($d['ttd'] ?? ''));
+    return ['success' => true, 'message' => 'Pengaturan kartu ujian disimpan.'];
 }
 
 /* ------------------------------------------------------------------ */
