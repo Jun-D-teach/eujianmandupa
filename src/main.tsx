@@ -5,7 +5,7 @@ import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { AuthProvider } from "@/hooks/use-auth";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Route, Routes, useLocation } from "react-router";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router";
 import "./index.css";
 import { registerServiceWorker } from "./lib/pwa";
 
@@ -87,10 +87,16 @@ registerServiceWorker();
 /** Auto-detect subfolder hosting (mis. /eujian-mandupa/) agar React Router
  *  mencocokkan rute dengan benar saat app dideploy di subdirektori.
  *  Vite `base: "./"` membuat BASE_URL tidak valid sebagai basename,
- *  jadi dihitung runtime dari window.location.pathname. */
+ *  jadi dihitung runtime dari window.location.pathname.
+ *
+ *  PENTING: segmen rute aplikasi (/auth, /dashboard, /ujian/:id) harus
+ *  DIBUANG dari pathname — basename hanya berisi folder hosting. Tanpa ini,
+ *  refresh di URL dalam (mis. /eujian-mandupa/ujian/ID atau .../auth) membuat
+ *  basename = seluruh path sehingga Routes tidak pernah cocok. */
 function hitungRouterBasename(): string {
   let path = window.location.pathname;
   path = path.replace(/\/index\.html$/i, "");
+  path = path.replace(/\/(auth|dashboard|ujian)(\/[^/]*)*$/i, "");
   if (path.length > 1) path = path.replace(/\/+$/, "");
   return path === "/" ? "" : path;
 }
@@ -130,6 +136,12 @@ createRoot(document.getElementById("root")!).render(
           <Suspense fallback={<RouteLoading />}>
             <Routes>
               <Route path="/" element={<Landing />} />
+              {/* URL lama .../dashboard/auth -> halaman login (jaga-jaga bila
+                  skrip normalisasi di index.html belum sempat jalan). */}
+              <Route
+                path="/dashboard/auth"
+                element={<Navigate to="/auth" replace />}
+              />
               <Route
                 path="/auth"
                 element={<AuthPage redirectAfterAuth="/dashboard" />}

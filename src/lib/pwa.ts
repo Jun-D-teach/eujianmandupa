@@ -4,10 +4,16 @@ export function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
 
   const register = () => {
-    // Registrasi RELATIF — scope otomatis mengikuti subfolder hosting
-    // (mis. /eujian-mandupa/), tanpa perlu mengubah apa pun saat deploy.
+    // Path ABSOLUT ke folder app, dihitung dari pathname (folder hosting saja,
+    // segmen rute /auth|/dashboard|/ujian dibuang). Relatif biasa akan salah
+    // saat halaman dibuka pada URL dalam (mis. /eujian-mandupa/ujian/ID).
+    // Scope otomatis mengikuti subfolder hosting, tanpa ubah apa pun saat deploy.
+    const folder = window.location.pathname
+      .replace(/\/index\.html$/i, "")
+      .replace(/\/(auth|dashboard|ujian)(\/[^/]*)*$/i, "")
+      .replace(/\/+$/, "");
     navigator.serviceWorker
-      .register("sw.js")
+      .register(`${folder}/sw.js`)
       .catch((err: unknown) => {
         console.warn("[PWA] Pendaftaran service worker gagal:", err);
       });
