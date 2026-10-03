@@ -358,6 +358,23 @@ export function KelolaUjian() {
     }
   };
 
+  /** Guru/admin menandai: soal selesai & siap dibagikan → lampu admin hijau. */
+  const konfirmasiSoal = async (id: string, aktif: boolean, judul: string) => {
+    try {
+      await gasCall("konfirmasiUjian", { id, konfirmasi: aktif });
+      segarkan();
+      toast.success(
+        aktif
+          ? `Konfirmasi "${judul}" terkirim — admin melihat lampu hijau.`
+          : `Konfirmasi "${judul}" dibatalkan.`,
+      );
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Gagal mengirim konfirmasi.",
+      );
+    }
+  };
+
   const konfirmasiHapus = async () => {
     if (!hapusTarget) return;
     try {
@@ -531,6 +548,31 @@ export function KelolaUjian() {
                       <Download className="size-3" />
                       {u.boleh_unduh ? "Izin unduh ON" : "Izin unduh OFF"}
                     </Badge>
+                    {isAdmin && (
+                      <span
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold ${
+                          u.konfirmasi_guru
+                            ? "border-emerald-600 bg-emerald-500/10 text-emerald-700"
+                            : "border-red-500 bg-red-500/10 text-red-600"
+                        }`}
+                        title={
+                          u.konfirmasi_guru
+                            ? `Soal dikonfirmasi siap dibagikan${
+                                u.konfirmasi_pada ? ` (${u.konfirmasi_pada})` : ""
+                              }`
+                            : "Guru belum mengirim konfirmasi soal selesai — lampu merah."
+                        }
+                      >
+                        <span
+                          className={`size-2 rounded-full ${
+                            u.konfirmasi_guru
+                              ? "animate-pulse bg-emerald-500"
+                              : "bg-red-500"
+                          }`}
+                        />
+                        {u.konfirmasi_guru ? "Soal siap" : "Belum konfirmasi"}
+                      </span>
+                    )}
                     <Badge
                       variant={u.aktif ? "default" : "secondary"}
                       className={u.aktif ? "bg-emerald-600 text-white" : ""}
@@ -600,6 +642,32 @@ export function KelolaUjian() {
                       </Badge>
                     </div>
                   )}
+
+                  {/* Konfirmasi guru: soal selesai & siap dibagikan */}
+                  <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-border/70 bg-background/60 p-4 transition-colors hover:border-foreground/30">
+                    <Checkbox
+                      checked={u.konfirmasi_guru ?? false}
+                      onCheckedChange={(v) =>
+                        void konfirmasiSoal(u.id, v === true, u.judul)
+                      }
+                      className="mt-0.5"
+                      disabled={u.jumlah_soal === 0}
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold">
+                        Kirim konfirmasi — soal sudah selesai & siap dibagikan
+                      </span>
+                      <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                        {u.jumlah_soal === 0
+                          ? "Belum ada soal — susun soal dulu sebelum mengonfirmasi."
+                          : u.konfirmasi_guru
+                            ? `Terkirim${
+                                u.konfirmasi_pada ? ` ${u.konfirmasi_pada}` : ""
+                              } — admin melihat lampu hijau.`
+                            : "Centang setelah seluruh soal final. Perubahan isi soal otomatis membatalkan konfirmasi ini."}
+                      </span>
+                    </span>
+                  </label>
 
                   {isAdmin && (
                     <PanelPengaturan

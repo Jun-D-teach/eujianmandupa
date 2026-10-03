@@ -195,6 +195,15 @@ function pastikanStruktur(): void
     if ($st->fetch() === false) {
         db()->exec("ALTER TABLE ujian ADD COLUMN revisi INT NOT NULL DEFAULT 1 AFTER boleh_unduh");
     }
+    // Konfirmasi guru: soal selesai & siap dibagikan (lampu status admin).
+    $st = db()->query("SHOW COLUMNS FROM ujian LIKE 'konfirmasi_guru'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE ujian ADD COLUMN konfirmasi_guru TINYINT(1) NOT NULL DEFAULT 0 AFTER revisi");
+    }
+    $st = db()->query("SHOW COLUMNS FROM ujian LIKE 'konfirmasi_pada'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE ujian ADD COLUMN konfirmasi_pada DATETIME NULL AFTER konfirmasi_guru");
+    }
 
     $siap = true;
 }
@@ -245,10 +254,12 @@ const AKSES = [
 
     'getUjian' => 1, 'getSoalAdmin' => 1, 'getHasil' => 1, 'getSiswa' => 1,
     'getKelasList' => 1, 'tambahSiswa' => 1, 'ubahSiswa' => 1, 'hapusSiswa' => 1,
-    'importSiswa' => 1, 'buatAkunSiswa' => 1, 'buatUjian' => 1, 'aturUjian' => 1,
-    'setAktifUjian' => 1, 'setIzinUnduh' => 1, 'hapusUjian' => 1,
+    'hapusSiswaMassal' => 1, 'importSiswa' => 1, 'buatAkunSiswa' => 1,
+    'buatUjian' => 1, 'aturUjian' => 1,
+    'setAktifUjian' => 1, 'setIzinUnduh' => 1, 'hapusUjian' => 1, 'konfirmasiUjian' => 1,
     'tambahSoal' => 1, 'ubahSoal' => 1, 'tambahSoalContoh' => 1, 'hapusSoal' => 1,
     'getGuru' => 1, 'tambahGuru' => 1, 'ubahGuru' => 1, 'hapusGuru' => 1,
+    'hapusGuruMassal' => 1, 'ubahPasswordGuru' => 1,
     'importGuru' => 1, 'buatAkunGuru' => 1,
 
     'getPengaturan' => 2, 'aturPin' => 2, 'buatPengguna' => 2,
@@ -417,12 +428,14 @@ function jalankan(string $action, array $d): array
         case 'tambahSiswa': return a_tambahSiswa($d);
         case 'ubahSiswa': return a_ubahSiswa($d);
         case 'hapusSiswa': return a_hapusSiswa($d);
+        case 'hapusSiswaMassal': return a_hapusSiswaMassal($d);
         case 'importSiswa': return a_importSiswa($d);
         case 'buatAkunSiswa': return a_buatAkunSiswa($d);
         case 'buatUjian': return a_buatUjian($d);
         case 'aturUjian': return a_aturUjian($d);
         case 'setAktifUjian': return a_setAktifUjian($d);
         case 'setIzinUnduh': return a_setIzinUnduh($d);
+        case 'konfirmasiUjian': return a_konfirmasiUjian($d);
         case 'hapusUjian': return a_hapusUjian($d);
         case 'tambahSoal': return a_tambahSoal($d);
         case 'ubahSoal': return a_ubahSoal($d);
@@ -438,6 +451,8 @@ function jalankan(string $action, array $d): array
         case 'tambahGuru': return a_tambahGuru($d);
         case 'ubahGuru': return a_ubahGuru($d);
         case 'hapusGuru': return a_hapusGuru($d);
+        case 'hapusGuruMassal': return a_hapusGuruMassal($d);
+        case 'ubahPasswordGuru': return a_ubahPasswordGuru($d);
         case 'importGuru': return a_importGuru($d);
         case 'buatAkunGuru': return a_buatAkunGuru($d);
         default: return galat('Action tidak dikenal: ' . $action);
@@ -691,6 +706,21 @@ function a_hapusSiswa(array $d): array
     return ['success' => true, 'message' => 'Siswa dihapus.'];
 }
 
+/** Hapus massal lewat kotak centang: ids = [id, id, ...] */
+function a_hapusSiswaMassal(array $d): array
+{
+    $ids = is_array($d['ids'] ?? null) ? $d['ids'] : [];
+    if (!$ids) return galat('Tidak ada siswa yang dipilih.');
+    $n = 0;
+    foreach ($ids as $id) {
+        $id = bersih($id);
+        if ($id !== '') $n += jalan('DELETE FROM siswa WHERE id = ?', [$id]);
+    }
+    return $n > 0
+        ? ['success' => true, 'hapus' => $n, 'message' => $n . ' siswa dihapus.']
+        : galat('Siswa tidak ditemukan.');
+}
+
 /** Impor massal: rows = [[nisn, nama, tgllahir, kelas], ...] */
 function a_importSiswa(array $d): array
 {
@@ -831,6 +861,38 @@ function a_hapusGuru(array $d): array
     return ['success' => true, 'message' => 'Guru dihapus.'];
 }
 
+/** Hapus massal lewat kotak centang: ids = [id, id, ...] */
+function a_hapusGuruMassal(array $d): array
+{
+    $ids = is_array($d['ids'] ?? null) ? $d['ids'] : [];
+    if (!$ids) return galat('Tidak ada guru yang dipilih.');
+    $n = 0;
+    foreach ($ids as $id) {
+        $id = bersih($id);
+        if ($id !== '') $n += jalan('DELETE FROM guru WHERE id = ?', [$id]);
+    }
+    return $n > 0
+        ? ['success' => true, 'hapus' => $n, 'message' => $n . ' guru dihapus.']
+        : galat('Guru tidak ditemukan.');
+}
+
+/** Ubah password guru — sinkron ke akun login (username = NIP) bila sudah dibuat. */
+function a_ubahPasswordGuru(array $d): array
+{
+    $id = bersih($d['id'] ?? '');
+    $pass = bersih($d['password'] ?? '');
+    if (strlen($pass) < 4) return galat('Password minimal 4 karakter.');
+    $g = satu('SELECT nip FROM guru WHERE id = ?', [$id]);
+    if (!$g) return galat('Guru tidak ditemukan.');
+    jalan('UPDATE guru SET password = ? WHERE id = ?', [$pass, $id]);
+    // Sinkronkan akun login guru bila sudah ada (username = NIP, peran guru).
+    jalan(
+        'UPDATE pengguna SET password = ? WHERE username = ? AND role = ?',
+        [$pass, strtolower(bersih($g['nip'])), 'guru']
+    );
+    return ['success' => true, 'message' => 'Password guru diperbarui.'];
+}
+
 /** Impor massal guru: rows = [[nip, nama, mapel, password?], ...] */
 function a_importGuru(array $d): array
 {
@@ -917,7 +979,12 @@ function jumlahSoal(string $ujianId): int
 function naikkanRevisi(string $ujianId): void
 {
     if ($ujianId === '') return;
-    jalan('UPDATE ujian SET revisi = revisi + 1 WHERE id = ?', [$ujianId]);
+    // Isi soal berubah → konfirmasi "siap dibagikan" otomatis dicabut,
+    // guru harus mencentang ulang setelah perbaikan selesai.
+    jalan(
+        'UPDATE ujian SET revisi = revisi + 1, konfirmasi_guru = 0, konfirmasi_pada = NULL WHERE id = ?',
+        [$ujianId]
+    );
 }
 
 /** "X.2" -> "X" */
@@ -966,6 +1033,8 @@ function barisUjian(array $r, ?string $kelasSiswa, bool $sertakanToken = false):
         'aktif' => $aktif,
         'boleh_unduh' => (int) ($r['boleh_unduh'] ?? 0) === 1,
         'revisi' => (int) ($r['revisi'] ?? 1),
+        'konfirmasi_guru' => (int) ($r['konfirmasi_guru'] ?? 0) === 1,
+        'konfirmasi_pada' => (string) ($r['konfirmasi_pada'] ?? ''),
         'jumlah_soal' => jumlahSoal((string) $r['id']),
         'tgl_mulai' => (string) $r['tgl_mulai'],
         'sasar_jenis' => (string) $r['sasar_jenis'],
@@ -1112,6 +1181,25 @@ function a_setIzinUnduh(array $d): array
     return $n > 0
         ? ['success' => true, 'message' => $boleh ? 'Siswa boleh mengunduh soal.' : 'Izin unduh ditutup.']
         : galat('Ujian tidak ditemukan.');
+}
+
+/** Konfirmasi guru: soal sudah selesai & siap dibagikan (lampu status admin). */
+function a_konfirmasiUjian(array $d): array
+{
+    $id = bersih($d['id'] ?? '');
+    $on = !empty($d['konfirmasi']) ? 1 : 0;
+    if (!satu('SELECT id FROM ujian WHERE id = ?', [$id])) return galat('Ujian tidak ditemukan.');
+    if ($on) {
+        jalan('UPDATE ujian SET konfirmasi_guru = 1, konfirmasi_pada = NOW() WHERE id = ?', [$id]);
+    } else {
+        jalan('UPDATE ujian SET konfirmasi_guru = 0, konfirmasi_pada = NULL WHERE id = ?', [$id]);
+    }
+    return [
+        'success' => true,
+        'message' => $on
+            ? 'Konfirmasi terkirim — admin melihat lampu hijau.'
+            : 'Konfirmasi dibatalkan — lampu admin jadi merah.',
+    ];
 }
 
 function a_hapusUjian(array $d): array

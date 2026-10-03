@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyTitle } from "@/components/
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   FileUp,
+  KeyRound,
   Pencil,
   Plus,
   Search,
@@ -47,6 +49,11 @@ export function DataGuru() {
   const [editId, setEditId] = useState<string | null>(null);
   const [bukaForm, setBukaForm] = useState(false);
   const [hapusTarget, setHapusTarget] = useState<GuruGas | null>(null);
+  const [terpilih, setTerpilih] = useState<Set<string>>(new Set());
+  const [bukaHapusMassal, setBukaHapusMassal] = useState(false);
+  const [passTarget, setPassTarget] = useState<GuruGas | null>(null);
+  const [passBaru, setPassBaru] = useState("");
+  const [passUlang, setPassUlang] = useState("");
   const [bukaImpor, setBukaImpor] = useState(false);
   const [teksImpor, setTeksImpor] = useState("");
   const [busy, setBusy] = useState(false);
@@ -74,6 +81,82 @@ export function DataGuru() {
         g.mapel.toLowerCase().includes(q),
     );
   }, [daftar, cari]);
+
+  /* -------------------------------------------------------------- */
+  /* Kotak centang: pilih banyak → hapus massal                      */
+  /* -------------------------------------------------------------- */
+  const semuaTerpilih =
+    tersaring.length > 0 && tersaring.every((g) => terpilih.has(g.id));
+  const sebagianTerpilih =
+    !semuaTerpilih && tersaring.some((g) => terpilih.has(g.id));
+
+  const toggleSemua = () =>
+    setTerpilih((lama) => {
+      const baru = new Set(lama);
+      for (const g of tersaring) {
+        if (semuaTerpilih) baru.delete(g.id);
+        else baru.add(g.id);
+      }
+      return baru;
+    });
+
+  const togglePilih = (id: string) =>
+    setTerpilih((lama) => {
+      const baru = new Set(lama);
+      if (baru.has(id)) baru.delete(id);
+      else baru.add(id);
+      return baru;
+    });
+
+  const hapusTerpilih = async () => {
+    if (terpilih.size === 0) return;
+    try {
+      const res = await gasCall<{ hapus?: number; message?: string }>(
+        "hapusGuruMassal",
+        { ids: Array.from(terpilih) },
+      );
+      toast.success(res.message || "Guru terpilih dihapus.");
+      setTerpilih(new Set());
+      muat();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal menghapus.");
+    } finally {
+      setBukaHapusMassal(false);
+    }
+  };
+
+  const tutupDialogPass = () => {
+    setPassTarget(null);
+    setPassBaru("");
+    setPassUlang("");
+  };
+
+  const simpanPassword = async () => {
+    if (!passTarget) return;
+    if (passBaru.length < 4) {
+      toast.error("Password minimal 4 karakter.");
+      return;
+    }
+    if (passBaru !== passUlang) {
+      toast.error("Password dan ulangan tidak sama.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await gasCall("ubahPasswordGuru", {
+        id: passTarget.id,
+        password: passBaru,
+      });
+      toast.success(`Password ${passTarget.nama} diperbarui.`);
+      tutupDialogPass();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Gagal mengubah password.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const simpan = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -238,6 +321,30 @@ export function DataGuru() {
         />
       </div>
 
+      {/* Bar aksi massal — muncul saat ada kotak centang terpilih */}
+      {terpilih.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-500/30 bg-red-500/5 px-4 py-3">
+          <p className="text-sm font-semibold">
+            {terpilih.size} guru dipilih
+            {tersaring.length !== daftar.length
+              ? ` (dari ${tersaring.length} pada tampilan ini)`
+              : ""}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setTerpilih(new Set())}>
+              Batalkan pilihan
+            </Button>
+            <Button
+              size="sm"
+              className="gap-2 bg-red-600 text-white hover:bg-red-700"
+              onClick={() => setBukaHapusMassal(true)}
+            >
+              <Trash2 className="size-4" /> Hapus {terpilih.size} guru
+            </Button>
+          </div>
+        </div>
+      )}
+
       {daftar.length === 0 ? (
         <Empty className="rounded-3xl border border-dashed border-border/70 py-14">
           <EmptyContent>
@@ -250,9 +357,18 @@ export function DataGuru() {
       ) : (
         <Card className="overflow-hidden border-border/70">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm">
+            <table className="w-full min-w-[700px] text-sm">
               <thead className="bg-muted/60 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 <tr>
+                  <th className="w-10 px-5 py-3">
+                    <Checkbox
+                      checked={
+                        semuaTerpilih ? true : sebagianTerpilih ? "indeterminate" : false
+                      }
+                      onCheckedChange={toggleSemua}
+                      aria-label="Pilih semua guru pada daftar ini"
+                    />
+                  </th>
                   <th className="px-5 py-3">NIP/NUPTK</th>
                   <th className="px-5 py-3">Nama</th>
                   <th className="px-5 py-3">Mata Pelajaran</th>
@@ -262,6 +378,13 @@ export function DataGuru() {
               <tbody className="divide-y divide-border/60">
                 {tersaring.map((g) => (
                   <tr key={g.id} className="transition-colors hover:bg-muted/40">
+                    <td className="px-5 py-3.5">
+                      <Checkbox
+                        checked={terpilih.has(g.id)}
+                        onCheckedChange={() => togglePilih(g.id)}
+                        aria-label={`Pilih ${g.nama}`}
+                      />
+                    </td>
                     <td className="px-5 py-3.5 font-mono text-xs font-semibold">{g.nip}</td>
                     <td className="px-5 py-3.5">
                       <span className="flex items-center gap-2 font-semibold">
@@ -292,6 +415,20 @@ export function DataGuru() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          className="size-8 text-muted-foreground hover:text-foreground"
+                          onClick={() => {
+                            setPassTarget(g);
+                            setPassBaru("");
+                            setPassUlang("");
+                          }}
+                          aria-label={`Ubah password ${g.nama}`}
+                          title="Ubah password guru"
+                        >
+                          <KeyRound className="size-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           className="size-8 text-muted-foreground hover:text-red-600"
                           onClick={() => setHapusTarget(g)}
                           aria-label={`Hapus ${g.nama}`}
@@ -302,6 +439,16 @@ export function DataGuru() {
                     </td>
                   </tr>
                 ))}
+                {tersaring.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      className="px-5 py-8 text-center text-sm text-muted-foreground"
+                    >
+                      Tidak ada guru yang cocok dengan pencarian ini.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -454,6 +601,87 @@ export function DataGuru() {
               className="bg-red-600 text-white hover:bg-red-700"
             >
               Ya, hapus
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Dialog ubah password guru */}
+      <Dialog
+        open={passTarget !== null}
+        onOpenChange={(open) => !open && tutupDialogPass()}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Ubah password guru</DialogTitle>
+            <DialogDescription>
+              {passTarget?.nama} — username login{" "}
+              <code className="rounded bg-muted px-1">{passTarget?.nip}</code>.
+              Bila akun login sudah dibuat, password ikut diperbarui.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void simpanPassword();
+            }}
+            className="grid gap-4"
+          >
+            <div className="grid gap-2">
+              <Label htmlFor="gr-pass-baru">Password baru *</Label>
+              <Input
+                id="gr-pass-baru"
+                type="password"
+                value={passBaru}
+                onChange={(e) => setPassBaru(e.target.value)}
+                placeholder="minimal 4 karakter"
+                autoComplete="new-password"
+                required
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="gr-pass-ulang">Ulangi password *</Label>
+              <Input
+                id="gr-pass-ulang"
+                type="password"
+                value={passUlang}
+                onChange={(e) => setPassUlang(e.target.value)}
+                placeholder="ketik ulang password baru"
+                autoComplete="new-password"
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={tutupDialogPass}>
+                Batal
+              </Button>
+              <Button type="submit" disabled={busy}>
+                Simpan password
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Konfirmasi hapus massal (kotak centang) */}
+      <AlertDialog open={bukaHapusMassal} onOpenChange={setBukaHapusMassal}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Hapus {terpilih.size} guru terpilih?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Seluruh guru yang dicentang akan dihapus permanen dari data
+              guru. Akun login (bila sudah dibuat) tidak ikut terhapus.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={hapusTerpilih}
+              className="bg-red-600 text-white hover:bg-red-700"
+            >
+              Ya, hapus semuanya
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

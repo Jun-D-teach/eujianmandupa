@@ -45,6 +45,10 @@ export type UjianGas = {
   /** Nomor revisi isi soal — naik tiap guru menambah/mengubah/menghapus soal.
    *  Bila berbeda dengan salinan di HP, siswa wajib sinkron ulang. */
   revisi?: number;
+  /** Konfirmasi guru: soal sudah selesai & siap dibagikan (lampu admin). */
+  konfirmasi_guru?: boolean;
+  /** Waktu konfirmasi dari server ("YYYY-MM-DD HH:MM:SS") atau "". */
+  konfirmasi_pada?: string;
   /** Hanya ada pada daftar admin/petugas — TIDAK PERNAH dikirim ke siswa. */
   token?: string;
 };

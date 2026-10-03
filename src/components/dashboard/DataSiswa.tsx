@@ -6,6 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -53,6 +61,9 @@ export function DataSiswa() {
   const [editId, setEditId] = useState<string | null>(null);
   const [bukaForm, setBukaForm] = useState(false);
   const [hapusTarget, setHapusTarget] = useState<SiswaGas | null>(null);
+  const [kelasDipilih, setKelasDipilih] = useState("");
+  const [terpilih, setTerpilih] = useState<Set<string>>(new Set());
+  const [bukaHapusMassal, setBukaHapusMassal] = useState(false);
   const [bukaImpor, setBukaImpor] = useState(false);
   const [teksImpor, setTeksImpor] = useState("");
   const [busy, setBusy] = useState(false);
@@ -85,14 +96,58 @@ export function DataSiswa() {
 
   const tersaring = useMemo(() => {
     const q = cari.trim().toLowerCase();
-    if (!q || !daftar) return daftar ?? [];
-    return daftar.filter(
+    const dasar = (daftar ?? []).filter((s) => !kelasDipilih || s.kelas === kelasDipilih);
+    if (!q) return dasar;
+    return dasar.filter(
       (s) =>
         s.nama.toLowerCase().includes(q) ||
         s.nisn.toLowerCase().includes(q) ||
         s.kelas.toLowerCase().includes(q),
     );
-  }, [daftar, cari]);
+  }, [daftar, cari, kelasDipilih]);
+
+  /* -------------------------------------------------------------- */
+  /* Kotak centang: pilih banyak → hapus massal                      */
+  /* -------------------------------------------------------------- */
+  const semuaTerpilih =
+    tersaring.length > 0 && tersaring.every((s) => terpilih.has(s.id));
+  const sebagianTerpilih =
+    !semuaTerpilih && tersaring.some((s) => terpilih.has(s.id));
+
+  const toggleSemua = () =>
+    setTerpilih((lama) => {
+      const baru = new Set(lama);
+      for (const s of tersaring) {
+        if (semuaTerpilih) baru.delete(s.id);
+        else baru.add(s.id);
+      }
+      return baru;
+    });
+
+  const togglePilih = (id: string) =>
+    setTerpilih((lama) => {
+      const baru = new Set(lama);
+      if (baru.has(id)) baru.delete(id);
+      else baru.add(id);
+      return baru;
+    });
+
+  const hapusTerpilih = async () => {
+    if (terpilih.size === 0) return;
+    try {
+      const res = await gasCall<{ hapus?: number; message?: string }>(
+        "hapusSiswaMassal",
+        { ids: Array.from(terpilih) },
+      );
+      toast.success(res.message || "Siswa terpilih dihapus.");
+      setTerpilih(new Set());
+      muat();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal menghapus.");
+    } finally {
+      setBukaHapusMassal(false);
+    }
+  };
 
   const simpan = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -261,16 +316,58 @@ export function DataSiswa() {
         </div>
       </div>
 
-      {/* Pencarian */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={cari}
-          onChange={(e) => setCari(e.target.value)}
-          placeholder="Cari nama / NISN / kelas…"
-          className="pl-9"
-        />
+      {/* Pencarian + filter kelas */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative w-full max-w-sm">
+          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={cari}
+            onChange={(e) => setCari(e.target.value)}
+            placeholder="Cari nama / NISN / kelas…"
+            className="pl-9"
+          />
+        </div>
+        <Select
+          value={kelasDipilih || "semua"}
+          onValueChange={(v) => setKelasDipilih(v === "semua" ? "" : v)}
+        >
+          <SelectTrigger className="w-auto min-w-[10.5rem]" aria-label="Filter kelas">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="semua">Semua kelas ({daftar.length})</SelectItem>
+            {kelasList.map((k) => (
+              <SelectItem key={k} value={k}>
+                {k} ({daftar.filter((s) => s.kelas === k).length})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
+
+      {/* Bar aksi massal — muncul saat ada kotak centang terpilih */}
+      {terpilih.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-500/30 bg-red-500/5 px-4 py-3">
+          <p className="text-sm font-semibold">
+            {terpilih.size} siswa dipilih
+            {tersaring.length !== daftar.length
+              ? ` (dari ${tersaring.length} pada tampilan ini)`
+              : ""}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setTerpilih(new Set())}>
+              Batalkan pilihan
+            </Button>
+            <Button
+              size="sm"
+              className="gap-2 bg-red-600 text-white hover:bg-red-700"
+              onClick={() => setBukaHapusMassal(true)}
+            >
+              <Trash2 className="size-4" /> Hapus {terpilih.size} siswa
+            </Button>
+          </div>
+        </div>
+      )}
 
       {daftar.length === 0 ? (
         <Empty className="rounded-3xl border border-dashed border-border/70 py-14">
@@ -284,9 +381,18 @@ export function DataSiswa() {
       ) : (
         <Card className="overflow-hidden border-border/70">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[780px] text-sm">
               <thead className="bg-muted/60 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 <tr>
+                  <th className="w-10 px-5 py-3">
+                    <Checkbox
+                      checked={
+                        semuaTerpilih ? true : sebagianTerpilih ? "indeterminate" : false
+                      }
+                      onCheckedChange={toggleSemua}
+                      aria-label="Pilih semua siswa pada daftar ini"
+                    />
+                  </th>
                   <th className="px-5 py-3">NISN</th>
                   <th className="px-5 py-3">Nama</th>
                   <th className="px-5 py-3">Tgl lahir</th>
@@ -297,6 +403,13 @@ export function DataSiswa() {
               <tbody className="divide-y divide-border/60">
                 {tersaring.map((s) => (
                   <tr key={s.id} className="transition-colors hover:bg-muted/40">
+                    <td className="px-5 py-3.5">
+                      <Checkbox
+                        checked={terpilih.has(s.id)}
+                        onCheckedChange={() => togglePilih(s.id)}
+                        aria-label={`Pilih ${s.nama}`}
+                      />
+                    </td>
                     <td className="px-5 py-3.5 font-mono text-xs font-semibold">{s.nisn}</td>
                     <td className="px-5 py-3.5">
                       <span className="flex items-center gap-2 font-semibold">
@@ -348,6 +461,16 @@ export function DataSiswa() {
                     </td>
                   </tr>
                 ))}
+                {tersaring.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="px-5 py-8 text-center text-sm text-muted-foreground"
+                    >
+                      Tidak ada siswa yang cocok dengan pencarian / filter kelas ini.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -517,6 +640,30 @@ export function DataSiswa() {
               className="bg-red-600 text-white hover:bg-red-700"
             >
               Ya, hapus
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Konfirmasi hapus massal (kotak centang) */}
+      <AlertDialog open={bukaHapusMassal} onOpenChange={setBukaHapusMassal}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Hapus {terpilih.size} siswa terpilih?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Seluruh data siswa yang dicentang akan dihapus permanen dari
+              database. Akun login (bila sudah dibuat) tidak ikut terhapus.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={hapusTerpilih}
+              className="bg-red-600 text-white hover:bg-red-700"
+            >
+              Ya, hapus semuanya
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
