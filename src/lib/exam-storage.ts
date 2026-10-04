@@ -71,6 +71,12 @@ export type SesiUjian = {
   strike: number;
   /** Seluruh pelanggaran sepanjang ujian (dilaporkan ke sheet Hasil). */
   pelanggaran: Pelanggaran[];
+  /**
+   * Sirene peringatan sedang menyala → ujian TERKUNCI sampai sirene dimatikan
+   * lewat tombol (hanya bisa saat HP offline). Disimpan di sesi supaya reload /
+   * buka lagi tidak menyiasati blokir.
+   */
+  sirene?: boolean;
   hasil?: HasilAkhir;
 };
 

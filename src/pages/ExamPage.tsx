@@ -192,8 +192,10 @@ export default function ExamPage() {
   const [kelas, setKelas] = useState(user?.kelas ?? "");
   const [token, setToken] = useState("");
   const [sekarang, setSekarang] = useState(() => Date.now());
-  /** Sirene sedang berbunyi — hanya bisa dimatikan via tombol saat offline. */
-  const [sireneNyala, setSireneNyala] = useState(false);
+  /** Sirene sedang berbunyi — hanya bisa dimatikan via tombol saat offline.
+   *  Diambil dari sesi tersimpan agar reload tidak melepas blokir ujian. */
+  const [sireneNyala, setSireneNyala] = useState<boolean>(sesi?.sirene ?? false);
+  const sireneAwalRef = useRef(sireneNyala);
   const waktuHabisRef = useRef(false);
 
   const faseRef = useRef<Fase | undefined>(sesi?.fase);
@@ -232,6 +234,7 @@ export default function ExamPage() {
         ? {
             ...prev,
             strike: nilaiStrike,
+            sirene: true,
             pelanggaran: [...prev.pelanggaran, { jenis, waktu: Date.now() }],
           }
         : prev,
@@ -252,6 +255,7 @@ export default function ExamPage() {
     }
     hentikanSirene();
     setSireneNyala(false);
+    setSesi((prev) => (prev ? { ...prev, sirene: false } : prev));
     toast.success("Sirene dimatikan. Lanjutkan mengerjakan.");
   };
 
@@ -260,6 +264,12 @@ export default function ExamPage() {
     return () => {
       hentikanSirene();
     };
+  }, []);
+
+  // Sesi dimuat dalam keadaan sirene menyala (mis. reload halaman) →
+  // bunyikan ulang sirene + getar supaya blokir ujian tetap konsisten.
+  useEffect(() => {
+    if (sireneAwalRef.current) bunyikanSirene();
   }, []);
 
   // --- Online watcher -------------------------------------------------
@@ -718,8 +728,9 @@ export default function ExamPage() {
           ? {
               ...prev,
               fase: "selesai",
-              kirimPada: Date.now(),
-              hasil: {
+            kirimPada: Date.now(),
+            sirene: false,
+            hasil: {
                 nilai: res.nilai,
                 benar: res.benar,
                 total_soal: res.total_soal,
@@ -922,12 +933,51 @@ export default function ExamPage() {
         )}
       </main>
 
+      {/* BLOKIR UJIAN selama sirene menyala — siswa TIDAK bisa mengerjakan
+          apa pun sebelum sirene dimatikan lewat tombol (saat HP offline). */}
+      {sireneNyala && (
+        <div className="fixed inset-0 z-[45] flex flex-col items-center justify-center bg-background/95 px-6 text-center backdrop-blur-sm">
+          <span className="flex size-16 items-center justify-center rounded-3xl bg-red-500/15 text-red-600">
+            <Siren className="size-8 animate-pulse" />
+          </span>
+          <h2 className="mt-6 text-2xl font-extrabold tracking-tight">
+            SIRENE MENYALA — UJIAN TERKUNCI
+          </h2>
+          <p className="mt-3 max-w-sm text-sm leading-6 text-muted-foreground">
+            Sistem peringatan sedang aktif. Kamu{" "}
+            <strong className="text-foreground">
+              tidak bisa mengerjakan ujian
+            </strong>{" "}
+            sampai sirene dimatikan. Matikan <strong>WiFi & data seluler</strong>
+            {" "}lalu tekan tombol di bawah.
+          </p>
+          <button
+            type="button"
+            onClick={matikanSirene}
+            disabled={online}
+            className={`mt-6 w-full max-w-sm rounded-2xl py-3.5 text-sm font-bold transition-colors ${
+              online
+                ? "cursor-not-allowed bg-muted text-muted-foreground"
+                : "bg-red-600 text-white hover:bg-red-500"
+            }`}
+          >
+            {online
+              ? "Matikan Sirene — nonaktif (HP masih online)"
+              : "Matikan Sirene"}
+          </button>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Tombol hanya bisa dipakai saat HP offline — setelah sirene berhenti,
+            ujian bisa dilanjutkan.
+          </p>
+        </div>
+      )}
+
       {/* Peringatan visual sirene —kedip merah layar penuh, tidak bisa
           dibungkam tombol volume (saluran visual pendamping suara & getar). */}
       {sireneNyala && (
         <div
           aria-hidden
-          className="pointer-events-none fixed inset-0 z-40 border-[6px] border-transparent animate-[sirene-strobe_0.8s_steps(1,end)_infinite]"
+          className="pointer-events-none fixed inset-0 z-[46] border-[6px] border-transparent animate-[sirene-strobe_0.8s_steps(1,end)_infinite]"
         />
       )}
 

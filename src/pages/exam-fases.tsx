@@ -191,7 +191,7 @@ export function InstruksiFase(props: {
     "MATIKAN WiFi dan paket data seluler sekarang. Ujian hanya boleh dikerjakan dalam keadaan offline — selama masih online, tombol Mulai Ujian tidak bisa diklik.",
     "Token ujian sudah diverifikasi server saat unduh — ujian bisa langsung dimulai walau HP sudah offline.",
     `Waktu ujian ${props.sesi.durasi_menit ?? 60} menit dihitung sejak tombol Mulai Ujian. Saat habis, sistem otomatis berpindah ke pengiriman jawaban.`,
-    "Setiap pelanggaran membunyikan sirene dan menambah 1 strike. Matikan sirene lewat tombol khusus setelah kembali ke ujian — tombol hanya aktif saat HP offline.",
+    "Setiap pelanggaran membunyikan sirene dan menambah 1 strike. Selama sirene menyala, ujian terkunci — tidak bisa dijawab sampai sirene dimatikan lewat tombol khusus, yang hanya aktif saat HP offline.",
     "Pada strike ke-3 layar terkunci; pengawas membukanya dengan PIN (tanpa internet).",
     "Jawaban tersimpan otomatis di HP. Setelah selesai, nyalakan internet untuk mengirim.",
   ];
