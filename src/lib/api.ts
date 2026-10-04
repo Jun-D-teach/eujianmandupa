@@ -304,3 +304,30 @@ export function cekPin(nilai: string): boolean {
 export function tokenValid(nilai: string): boolean {
   return /^[A-Z0-9]{4,12}$/.test(nilai.trim().toUpperCase());
 }
+
+/**
+ * Cocokkan token yang dimasukkan siswa dengan hash SHA-256 dari server
+ * (field `token_hash` pada respons getSoal) — verifikasi LOkal agar ujian
+ * bisa dimulai saat HP offline.
+ */
+export async function cocokToken(
+  nilai: string,
+  hashServer: string,
+): Promise<boolean> {
+  const teks = nilai.trim().toUpperCase();
+  const subtle =
+    typeof crypto !== "undefined" ? crypto.subtle : undefined;
+  if (!subtle) {
+    throw new Error(
+      "Perangkat tidak mendukung verifikasi token — buka aplikasi lewat https://.",
+    );
+  }
+  const buf = await subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(teks),
+  );
+  const hex = Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return hex === hashServer.trim().toLowerCase();
+}

@@ -50,8 +50,12 @@ export type SesiUjian = {
   fase: Fase;
   nama: string;
   kelas: string;
-  /** Token ujian yang dimasukkan siswa saat mulai (dibagikan pengawas). */
+  /** Token ujian yang dimasukkan siswa saat MULAI ujian (dibagikan
+   *  pengawas). Kosong saat baru diunduh. */
   token?: string;
+  /** SHA-256 token (dari server saat unduh) — dicocokkan lokal saat Mulai
+   *  Ujian supaya token bisa diverifikasi walau HP offline. */
+  tokenHash?: string;
   /** Durasi ujian (menit) yang diset admin. */
   durasi_menit?: number;
   /** Revisi soal saat unduhan dibuat — dicocokkan dengan server; bila beda

@@ -26,7 +26,7 @@ function labelTgl(tglMulai?: string): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* FASE: SETUP — nama/kelas + TOKEN ujian, lalu unduh soal (online)     */
+/* FASE: SETUP — nama/kelas, lalu unduh soal (online, TANPA token)     */
 /* ------------------------------------------------------------------ */
 export function SetupFase(props: {
   judul: string;
@@ -39,8 +39,6 @@ export function SetupFase(props: {
   kelas: string;
   setNama: (v: string) => void;
   setKelas: (v: string) => void;
-  token: string;
-  setToken: (v: string) => void;
   pesan: string | null;
   busy: boolean;
   online: boolean;
@@ -102,26 +100,6 @@ export function SetupFase(props: {
             </div>
           </div>
 
-          <div className="grid gap-2">
-            <Label htmlFor="token-ujian" className="gap-1.5">
-              <KeyRound className="size-3.5" /> Token ujian
-            </Label>
-            <Input
-              id="token-ujian"
-              value={props.token}
-              onChange={(e) => props.setToken(e.target.value.toUpperCase())}
-              placeholder="cth. K7XM3P"
-              maxLength={12}
-              autoComplete="off"
-              autoCapitalize="characters"
-              className="h-12 text-center font-mono text-xl font-bold uppercase tracking-[0.35em]"
-            />
-            <p className="text-xs leading-5 text-muted-foreground">
-              Token diperiksa server saat unduh — soal hanya terkirim kalau
-              token cocok. Token dibagikan pengawas/admin.
-            </p>
-          </div>
-
           <div
             className={`flex items-start gap-2.5 rounded-2xl border px-4 py-3 text-xs leading-5 ${
               props.online
@@ -178,18 +156,21 @@ export function SetupFase(props: {
 }
 
 /* ------------------------------------------------------------------ */
-/* FASE: INSTRUKSI — persiapan offline (token sudah lolos server)       */
+/* FASE: INSTRUKSI — token pengawas + persiapan offline                */
 /* ------------------------------------------------------------------ */
 export function InstruksiFase(props: {
   sesi: SesiUjian;
   online: boolean;
   terkunciJadwal: boolean;
+  token: string;
+  setToken: (v: string) => void;
+  pesanToken: string | null;
   onMulai: () => void;
   onUlang: () => void;
 }) {
   const aturan = [
     "MATIKAN WiFi dan paket data seluler sekarang. Ujian hanya boleh dikerjakan dalam keadaan offline — selama masih online, tombol Mulai Ujian tidak bisa diklik.",
-    "Token ujian sudah diverifikasi server saat unduh — ujian bisa langsung dimulai walau HP sudah offline.",
+    "Masukkan token pengawas pada kolom di bawah — token diperiksa langsung di HP (bisa offline), ujian baru terbuka kalau token cocok.",
     `Waktu ujian ${props.sesi.durasi_menit ?? 60} menit dihitung sejak tombol Mulai Ujian. Saat habis, sistem otomatis berpindah ke pengiriman jawaban.`,
     "Setiap pelanggaran membunyikan sirene dan menambah 1 strike. Selama sirene menyala, ujian terkunci — tidak bisa dijawab sampai sirene dimatikan lewat tombol khusus, yang hanya aktif saat HP offline.",
     "Pada strike ke-3 layar terkunci; pengawas membukanya dengan PIN (tanpa internet).",
@@ -274,6 +255,33 @@ export function InstruksiFase(props: {
               </li>
             ))}
           </ol>
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/70">
+        <CardContent className="space-y-3 p-5">
+          <Label htmlFor="token-mulai" className="gap-1.5">
+            <KeyRound className="size-3.5" /> Token pengawas
+          </Label>
+          <Input
+            id="token-mulai"
+            value={props.token}
+            onChange={(e) => props.setToken(e.target.value.toUpperCase())}
+            placeholder="cth. K7XM3P"
+            maxLength={12}
+            autoComplete="off"
+            autoCapitalize="characters"
+            className="h-12 text-center font-mono text-xl font-bold uppercase tracking-[0.35em]"
+          />
+          <p className="text-xs leading-5 text-muted-foreground">
+            Ambil token dari pengawas ruang pada saat waktu ujian tiba. Token
+            diproses lokal di HP — tetap bisa diverifikasi walau internet mati.
+          </p>
+          {props.pesanToken && (
+            <p className="rounded-xl bg-red-500/10 px-4 py-3 text-xs font-semibold text-red-600">
+              {props.pesanToken}
+            </p>
+          )}
         </CardContent>
       </Card>
 

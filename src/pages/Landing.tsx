@@ -56,13 +56,13 @@ function Logo({ className = "" }: { className?: string }) {
 
 const LANGKAH = [
   {
-    judul: "Unduh soal (online)",
-    teks: "Siswa mengisi nama, kelas, dan token ujian lalu menekan “Unduh Soal”. Soal disimpan ke penyimpanan HP.",
+    judul: "Unduh semua mapel (online)",
+    teks: "Setelah admin menekan Bagikan, mapel ujian muncul di beranda siswa dengan lampu kuning (siap diunduh). Sekali klik, soal tersimpan di HP dan lampu berubah hijau.",
     ikon: Download,
   },
   {
-    judul: "Matikan internet",
-    teks: "Instruksi tegas muncul: nonaktifkan WiFi & data seluler sebelum menekan Mulai Ujian.",
+    judul: "Matikan internet + token",
+    teks: "Instruksi tegas muncul: nonaktifkan WiFi & data seluler, lalu masukkan token pengawas ruang sebelum menekan Mulai Ujian.",
     ikon: WifiOff,
   },
   {

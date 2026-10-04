@@ -12,7 +12,8 @@
  *  - Token sesi "username|exp|hmac" (HMAC-SHA256, umur 12 jam) diterbitkan
  *    saat login; peran DIVALIDASI langsung dari tabel pengguna.
  *  - Tabel $AKSES membatasi aksi per peran (0 siswa, 1 guru, 2 admin).
- *  - getSoal (unduh soal) WAJIB token ujian + izin bagikan dari admin.
+ *  - getSoal (unduh soal) izin bagikan dari admin — TANPA token; token
+ *    diverifikasi siswa saat Mulai Ujian (bandingkan hash SHA-256).
  * ============================================================================
  */
 
@@ -1284,21 +1285,19 @@ function barisSoal(array $r, bool $denganKunci): array
 }
 
 /**
- * Unduh soal untuk siswa — TOKEN WAJIB + ujian aktif + izin bagikan +
- * kelas sesuai sasaran. Berhasil → catat unduhan (status sinkron).
+ * Unduh soal untuk siswa — izin bagikan (tombol "Bagikan" admin) + ujian
+ * aktif + kelas sesuai sasaran. TANPA token: siswa boleh mengunduh semua
+ * mapel yang sudah dibagikan kapan pun (online); token justru dimasukkan
+ * saat MULAI UJIAN dan diverifikasi lokal terhadap `token_hash` di bawah.
+ * Berhasil → catat unduhan (status sinkron).
  */
 function a_getSoal(array $d): array
 {
     $id = bersih($d['id'] ?? '');
     $kelas = bersih($d['kelas'] ?? '');
-    $token = strtoupper(bersih($d['token'] ?? ''));
-    if ($token === '') return galat('Token ujian wajib diisi untuk mengunduh soal.');
 
     $r = cariUjian($id);
     if (!$r) return galat('Ujian tidak ditemukan.');
-    if (strtoupper(bersih($r['token'])) !== $token) {
-        return galat('Token ujian salah. Minta token yang benar dari pengawas/admin.');
-    }
     if ((int) $r['aktif'] !== 1) return galat('Ujian belum diaktifkan admin.');
 
     // Izin bagikan mengatur unduh PERTAMA; siswa yang PERNAH mengunduh tetap
@@ -1338,6 +1337,9 @@ function a_getSoal(array $d): array
         'success' => true,
         'ujian' => $meta,
         'soal' => $daftar,
+        // Komitmen token — siswa memasukkan token pengawas saat Mulai Ujian,
+        // lalu SHA-256 input dicocokkan secara LOKAL (bisa offline).
+        'token_hash' => hash('sha256', strtoupper(bersih($r['token']))),
         'pin_pengawas' => pinPengawas(),
     ];
 }

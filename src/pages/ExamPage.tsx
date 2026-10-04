@@ -6,6 +6,7 @@ import {
   gasCall,
   cekPin,
   tokenValid,
+  cocokToken,
   pinPengawas,
   simpanPinTersimpan,
   type UjianGas,
@@ -182,6 +183,8 @@ export default function ExamPage() {
   const [modal, setModal] = useState<{ jenis: Pelanggaran["jenis"] } | null>(
     null,
   );
+  /** Pesan kesalahan token pengawas saat Mulai Ujian. */
+  const [tokenSalah, setTokenSalah] = useState<string | null>(null);
   const [tanyaSelesai, setTanyaSelesai] = useState(false);
   const [pin, setPin] = useState("");
   const [pinSalah, setPinSalah] = useState(0);
@@ -497,8 +500,8 @@ export default function ExamPage() {
     const sinkron = async () => {
       try {
         const data = await gasCall<
-          { ujian: UjianGas; soal: import("@/lib/api").SoalGas[]; pin_pengawas?: string }
-        >("getSoal", { id: ujianId, kelas: sesi.kelas, token: sesi.token ?? "" });
+          { ujian: UjianGas; soal: import("@/lib/api").SoalGas[]; token_hash?: string; pin_pengawas?: string }
+        >("getSoal", { id: ujianId, kelas: sesi.kelas });
         if (!hidup) return;
         if (typeof data.pin_pengawas === "string" && /^\d{6}$/.test(data.pin_pengawas)) {
           simpanPinTersimpan(data.pin_pengawas);
@@ -511,6 +514,7 @@ export default function ExamPage() {
         const baru: SesiUjian = {
           ...sesi,
           revisi: data.ujian.revisi,
+          tokenHash: data.token_hash ?? sesi.tokenHash,
           soal: data.soal.map((s) => ({
             id: s.id,
             pertanyaan: s.pertanyaan,
@@ -541,26 +545,22 @@ export default function ExamPage() {
   }, [fase, sesi, meta?.revisi, online, ujianId]);
 
   // --- Aksi fase -------------------------------------------------------
-  /** Unduh soal (online) — token ujian divalidasi server sebelum soal dikirim. */
+  /** Unduh soal (online) — TANPA token; izin bagikan admin + kelas sasaran
+   *  divalidasi server. Token justru dimasukkan saat Mulai Ujian. */
   const unduhSoal = async () => {
     if (!ujianId) return;
     const n = nama.trim();
     const k = kelas.trim();
-    const t = token.trim().toUpperCase();
     if (!n || !k) {
       toast.error("Nama dan kelas wajib diisi sebelum mengunduh soal.");
-      return;
-    }
-    if (!tokenValid(t)) {
-      toast.error("Isi token ujian (4–12 huruf/angka, tanpa spasi).");
       return;
     }
     setBusy(true);
     setPesan(null);
     try {
       const data = await gasCall<
-        { ujian: UjianGas; soal: import("@/lib/api").SoalGas[]; pin_pengawas?: string }
-      >("getSoal", { id: ujianId, kelas: k, token: t });
+        { ujian: UjianGas; soal: import("@/lib/api").SoalGas[]; token_hash?: string; pin_pengawas?: string }
+      >("getSoal", { id: ujianId, kelas: k });
       // Cache PIN pengawas terbaru (dari sheet Pengaturan) agar layar kunci
       // tetap bisa dibuka offline dengan PIN terkini.
       if (typeof data.pin_pengawas === "string" && /^\d{6}$/.test(data.pin_pengawas)) {
@@ -577,7 +577,7 @@ export default function ExamPage() {
         fase: "instruksi",
         nama: n,
         kelas: k,
-        token: t,
+        tokenHash: data.token_hash,
         durasi_menit: data.ujian.durasi_menit,
         revisi: data.ujian.revisi,
         tglMulai: data.ujian.tgl_mulai || undefined,
@@ -612,8 +612,41 @@ export default function ExamPage() {
     }
   };
 
-  /** Mulai ujian — wajib OFFLINE dan sesuai jadwal; token sudah terverifikasi saat unduh. */
-  const mulaiUjian = () => {
+  /**
+   * Mulai ujian — token dari pengawas diverifikasi LOKAL terhadap hash
+   * unduhan (bisa offline), lalu wajib OFFLINE + sesuai jadwal.
+   */
+  const mulaiUjian = async () => {
+    if (!sesi) return;
+    const t = token.trim().toUpperCase();
+    setTokenSalah(null);
+    if (!tokenValid(t)) {
+      setTokenSalah("Isi token dari pengawas (4–12 huruf/angka, tanpa spasi).");
+      return;
+    }
+    try {
+      let cocok = false;
+      if (sesi.tokenHash) {
+        cocok = await cocokToken(t, sesi.tokenHash);
+      } else if (sesi.token) {
+        // Sesi lama (alur sebelumnya) — token tersimpan plaintext.
+        cocok = t === sesi.token.toUpperCase();
+      } else {
+        setTokenSalah(
+          "Sesi tidak menyimpan token unduhan — hapus sesi lalu unduh ulang soal.",
+        );
+        return;
+      }
+      if (!cocok) {
+        setTokenSalah("Token salah — minta token yang benar dari pengawas.");
+        return;
+      }
+    } catch (err) {
+      setTokenSalah(
+        err instanceof Error ? err.message : "Gagal memverifikasi token.",
+      );
+      return;
+    }
     if (online) {
       toast.error("HP masih ONLINE — matikan WiFi & data seluler dulu, lalu mulai ujian.");
       return;
@@ -639,6 +672,7 @@ export default function ExamPage() {
         ? {
             ...prev,
             fase: "ujian",
+            token: t,
             mulaiPada: now,
             batasWaktu: now + (prev.durasi_menit ?? 60) * 60_000,
             strike: 0,
@@ -878,8 +912,6 @@ export default function ExamPage() {
             kelas={kelas}
             setNama={setNama}
             setKelas={setKelas}
-            token={token}
-            setToken={setToken}
             pesan={pesan}
             busy={busy}
             online={online}
@@ -892,6 +924,12 @@ export default function ExamPage() {
             sesi={sesi}
             online={online}
             terkunciJadwal={belumMulai(sesi.tglMulai)}
+            token={token}
+            setToken={(v) => {
+              setToken(v);
+              setTokenSalah(null);
+            }}
+            pesanToken={tokenSalah}
             onMulai={mulaiUjian}
             onUlang={() => {
               hapusSesi(sesi.ujianId);

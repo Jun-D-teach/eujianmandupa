@@ -43,6 +43,74 @@ function belumWaktunya(v?: string): boolean {
   return !Number.isNaN(t) && Date.now() < t;
 }
 
+/**
+ * Lampu status unduhan per mapel:
+ * kuning = admin sudah klik "Bagikan" (siap diunduh),
+ * hijau  = soal sudah selesai diunduh & tersimpan di HP ini,
+ * mati   = belum dibagikan admin / di luar sasaran kelas.
+ */
+function LampuStatus({
+  warna,
+  teks,
+}: {
+  warna: "kuning" | "hijau" | "mati";
+  teks: string;
+}) {
+  const titik =
+    warna === "hijau"
+      ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.85)]"
+      : warna === "kuning"
+        ? "animate-pulse bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.85)]"
+        : "bg-border";
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+      <span className={`size-2.5 rounded-full ${titik}`} aria-hidden />
+      {teks}
+    </span>
+  );
+}
+
+/**
+ * Bangun sesi ujian baru hasil unduhan langsung dari beranda — fase
+ * "instruksi" (siap terima token pengawas saat waktunya ujian).
+ */
+function baruSesiUnduh(
+  ujianId: string,
+  data: { ujian: UjianGas; soal: SoalGas[]; token_hash?: string },
+  nama: string,
+  kelas: string,
+): SesiUjian {
+  return {
+    versi: 1,
+    ujianId,
+    judul: data.ujian.judul,
+    deskripsi: data.ujian.deskripsi,
+    fase: "instruksi",
+    nama,
+    kelas,
+    tokenHash: data.token_hash,
+    durasi_menit: data.ujian.durasi_menit,
+    revisi: data.ujian.revisi,
+    tglMulai: data.ujian.tgl_mulai || undefined,
+    unduhPada: Date.now(),
+    soal: data.soal.map((s) => ({
+      id: s.id,
+      pertanyaan: s.pertanyaan,
+      opsi_a: s.opsi_a,
+      opsi_b: s.opsi_b,
+      opsi_c: s.opsi_c,
+      opsi_d: s.opsi_d,
+      opsi_e: s.opsi_e || undefined,
+      gambar: s.gambar || undefined,
+      opsi_huruf: s.opsi_huruf || undefined,
+    })),
+    jawaban: {},
+    indeks: 0,
+    strike: 0,
+    pelanggaran: [],
+  };
+}
+
 /** Daftar ujian aktif (tanpa token) + pintasan melanjutkan sesi tersimpan. */
 export function SiswaUjian() {
   const { user } = useAuth();
@@ -52,6 +120,7 @@ export function SiswaUjian() {
   const [error, setError] = useState<string | null>(null);
   const [versi, setVersi] = useState(0); // memicu muat ulang daftar/sesi
   const [sinkronBusy, setSinkronBusy] = useState<string | null>(null);
+  const [unduhBusy, setUnduhBusy] = useState<string | null>(null);
 
   useEffect(() => {
     let hidup = true;
@@ -87,8 +156,9 @@ export function SiswaUjian() {
       const data = await gasCall<{
         ujian: UjianGas;
         soal: SoalGas[];
+        token_hash?: string;
         pin_pengawas?: string;
-      }>("getSoal", { id: u.id, kelas: sesiLama.kelas, token: sesiLama.token ?? "" });
+      }>("getSoal", { id: u.id, kelas: sesiLama.kelas });
       if (
         typeof data.pin_pengawas === "string" &&
         /^\d{6}$/.test(data.pin_pengawas)
@@ -103,6 +173,7 @@ export function SiswaUjian() {
       const baru: SesiUjian = {
         ...sesiLama,
         revisi: data.ujian.revisi,
+        tokenHash: data.token_hash ?? sesiLama.tokenHash,
         soal: data.soal.map((s) => ({
           id: s.id,
           pertanyaan: s.pertanyaan,
@@ -126,6 +197,49 @@ export function SiswaUjian() {
       toast.error(err instanceof Error ? err.message : "Gagal sinkron ulang soal.");
     } finally {
       setSinkronBusy(null);
+    }
+  };
+
+  /**
+   * Unduh soal LANGSUNG dari beranda (tanpa token) — hanya untuk mapel yang
+   * sudah dibagikan admin (lampu kuning). Sesi dibuat fase "instruksi",
+   * jadi lampu langsung hijau dan siswa tinggal masuk saat waktunya ujian.
+   */
+  const unduhMapel = async (u: UjianGas) => {
+    if (!online) {
+      toast.error("Nyalakan internet sementara untuk mengunduh soal.");
+      return;
+    }
+    const nama = user?.nama ?? "";
+    const kelas = user?.kelas ?? "";
+    if (!nama || !kelas) {
+      toast.error("Nama/kelas akun belum lengkap — minta admin perbarui data siswa.");
+      return;
+    }
+    setUnduhBusy(u.id);
+    try {
+      const data = await gasCall<{
+        ujian: UjianGas;
+        soal: SoalGas[];
+        token_hash?: string;
+        pin_pengawas?: string;
+      }>("getSoal", { id: u.id, kelas });
+      if (
+        typeof data.pin_pengawas === "string" &&
+        /^\d{6}$/.test(data.pin_pengawas)
+      ) {
+        simpanPinTersimpan(data.pin_pengawas);
+      }
+      if (data.soal.length === 0) {
+        throw new Error("Ujian ini belum memiliki soal.");
+      }
+      simpanSesi(baruSesiUnduh(u.id, data, nama, kelas));
+      toast.success(`${data.soal.length} soal tersimpan di HP — lampu hijau.`);
+      setVersi((v) => v + 1);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal mengunduh soal.");
+    } finally {
+      setUnduhBusy(null);
     }
   };
 
@@ -166,9 +280,10 @@ export function SiswaUjian() {
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight">Ujian aktif</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Alurnya: <strong>online</strong> → unduh soal sesuai izin admin →
-              <strong> matikan internet</strong> → kerjakan → nyalakan internet
-              lagi untuk mengirim.
+              Alurnya: <strong>admin membagikan</strong> (lampu kuning) →
+              unduh semua mapel → <strong> matikan internet</strong> → masukkan
+              token pengawas → kerjakan → nyalakan internet lagi untuk
+              mengirim.
             </p>
             {user?.kelas && (
               <p className="mt-1 text-xs text-muted-foreground">
@@ -199,13 +314,12 @@ export function SiswaUjian() {
           <div className="mt-6 grid gap-5 sm:grid-cols-2">
             {ujian.map((u) => {
               const sesi: SesiUjian | null = muatSesi(u.id);
-              const lanjut = sesi && sesi.fase !== "setup";
+              const lanjut =
+                sesi && (sesi.fase === "ujian" || sesi.fase === "kirim");
               const takBoleh = u.boleh === false; // server: kelas tidak termasuk sasaran
               const izin = u.boleh_unduh !== false; // izin bagikan dari admin
               // Soal benar-benar tersimpan di HP ini — syarat bisa mengerjakan.
               const adaSoalLokal = Boolean(sesi && sesi.soal.length > 0);
-              // Status unduhan di server (bisa saja sudah diunduh di HP lain).
-              const pernahUnduh = adaSoalLokal || u.sudah_unduh === true;
               const terkunciJadwal = belumWaktunya(u.tgl_mulai);
               // Guru memperbaiki soal setelah unduhan dibuat → wajib sinkron ulang.
               const revisiBeda = Boolean(
@@ -230,22 +344,24 @@ export function SiswaUjian() {
                         <ClipboardList className="size-5" />
                       </span>
                       <div className="flex flex-wrap justify-end gap-2">
-                        <Badge
-                          variant="outline"
-                          className={`text-[11px] ${
-                            pernahUnduh
-                              ? "border-emerald-600 text-emerald-700"
-                              : "border-border/70 text-muted-foreground"
-                          }`}
-                        >
-                          {pernahUnduh ? (
-                            <>
-                              <Download className="size-3" /> Sudah diunduh
-                            </>
-                          ) : (
-                            "Belum diunduh"
-                          )}
-                        </Badge>
+                        <LampuStatus
+                          warna={
+                            takBoleh || !izin
+                              ? "mati"
+                              : adaSoalLokal
+                                ? "hijau"
+                                : "kuning"
+                          }
+                          teks={
+                            takBoleh
+                              ? "Di luar sasaran"
+                              : !izin
+                                ? "Belum dibagikan"
+                                : adaSoalLokal
+                                  ? "Sudah diunduh"
+                                  : "Siap diunduh"
+                          }
+                        />
                         <Badge variant="secondary">
                           {u.jumlah_soal} soal · {u.durasi_menit} menit
                         </Badge>
@@ -270,7 +386,7 @@ export function SiswaUjian() {
 
                     <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold text-muted-foreground">
                       <KeyRound className="size-3" />
-                      Token dibagikan pengawas saat unduh/mulai ujian
+                      Token pengawas dimasukkan saat Mulai Ujian (bisa offline)
                     </p>
 
                     {u.sasaran && (
@@ -286,7 +402,8 @@ export function SiswaUjian() {
                       </p>
                     ) : !izin ? (
                       <p className="mt-2 rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-700">
-                        Admin belum membuka izin unduh soal mapel ini.
+                        Admin belum membagikan mapel ini — lampu akan menyala
+                        kuning saat siap diunduh.
                       </p>
                     ) : adaSoalLokal && lanjut ? (
                       <p className="mt-2 text-xs font-semibold text-emerald-700">
@@ -307,15 +424,20 @@ export function SiswaUjian() {
                         <Button disabled>Kerjakan</Button>
                       ) : !izin ? (
                         <Button disabled className="gap-2">
-                          <Download className="size-4" /> Menunggu izin admin
+                          <Download className="size-4" /> Menunggu dibagikan
                         </Button>
                       ) : !adaSoalLokal ? (
                         <Button
                           className="gap-2"
-                          disabled={!online}
-                          onClick={() => navigate(`/ujian/${u.id}`)}
+                          disabled={!online || unduhBusy === u.id}
+                          onClick={() => void unduhMapel(u)}
                         >
-                          <Download className="size-4" /> Sinkron (Unduh Soal)
+                          <Download
+                            className={`size-4 ${
+                              unduhBusy === u.id ? "animate-spin" : ""
+                            }`}
+                          />
+                          {unduhBusy === u.id ? "Mengunduh…" : "Unduh Soal"}
                         </Button>
                       ) : (
                         <Button
@@ -370,10 +492,10 @@ export function SiswaUjian() {
                       {takBoleh
                         ? "Hubungi admin bila menurutmu ini keliru."
                         : !izin
-                          ? "Tunggu pengawas/admin membuka unduhan mapel ini."
+                          ? "Tunggu admin membagikan mapel ini (lampu kuning = siap diunduh)."
                           : !adaSoalLokal
                             ? online
-                              ? "Unduh soal sekarang (butuh token dari pengawas), lalu matikan internet."
+                              ? "Klik Unduh Soal — soal disimpan ke HP. Saat waktunya ujian, matikan internet & masukkan token pengawas."
                               : "Nyalakan internet sementara untuk mengunduh soal."
                             : terkunciJadwal
                               ? `Baru bisa diklik & dikerjakan pada ${jadwalLabel(u.tgl_mulai)}.`
