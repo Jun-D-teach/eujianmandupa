@@ -146,7 +146,9 @@ function pastikanStruktur(): void
             opsi_c VARCHAR(600) NOT NULL DEFAULT '',
             opsi_d VARCHAR(600) NOT NULL DEFAULT '',
             opsi_e VARCHAR(600) NOT NULL DEFAULT '',
+            opsi_huruf TINYINT(1) NOT NULL DEFAULT 0,
             kunci_jawaban VARCHAR(1) NOT NULL DEFAULT '',
+            gambar MEDIUMTEXT NULL,
             dibuat DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             KEY idx_soal_ujian (ujian_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
@@ -203,6 +205,15 @@ function pastikanStruktur(): void
     $st = db()->query("SHOW COLUMNS FROM ujian LIKE 'konfirmasi_pada'");
     if ($st->fetch() === false) {
         db()->exec("ALTER TABLE ujian ADD COLUMN konfirmasi_pada DATETIME NULL AFTER konfirmasi_guru");
+    }
+    // Soal bergambar + flag "pilihan sudah menyertakan huruf A–E".
+    $st = db()->query("SHOW COLUMNS FROM soal LIKE 'gambar'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE soal ADD COLUMN gambar MEDIUMTEXT NULL AFTER kunci_jawaban");
+    }
+    $st = db()->query("SHOW COLUMNS FROM soal LIKE 'opsi_huruf'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE soal ADD COLUMN opsi_huruf TINYINT(1) NOT NULL DEFAULT 0 AFTER opsi_e");
     }
     // Kolom nilai pengaturan dinaikkan ke MEDIUMTEXT agar muat gambar logo &
     // tanda tangan (base64) untuk kartu ujian.
@@ -268,6 +279,7 @@ const AKSES = [
     'buatUjian' => 1, 'aturUjian' => 1,
     'setAktifUjian' => 1, 'setIzinUnduh' => 1, 'hapusUjian' => 1, 'konfirmasiUjian' => 1,
     'tambahSoal' => 1, 'ubahSoal' => 1, 'tambahSoalContoh' => 1, 'hapusSoal' => 1,
+    'imporSoal' => 1,
     'getGuru' => 1, 'tambahGuru' => 1, 'ubahGuru' => 1, 'hapusGuru' => 1,
     'hapusGuruMassal' => 1, 'ubahPasswordGuru' => 1,
     'importGuru' => 1, 'buatAkunGuru' => 1,
@@ -451,6 +463,7 @@ function jalankan(string $action, array $d): array
         case 'tambahSoal': return a_tambahSoal($d);
         case 'ubahSoal': return a_ubahSoal($d);
         case 'tambahSoalContoh': return a_tambahSoalContoh($d);
+        case 'imporSoal': return a_imporSoal($d);
         case 'hapusSoal': return a_hapusSoal($d);
         case 'submitJawaban': return a_submitJawaban($d);
         case 'catatBukaKunci': return a_catatBukaKunci($d);
@@ -1233,8 +1246,8 @@ function sisipSoal(string $ujianId, array $s): string
 {
     $id = idBaru('s');
     jalan(
-        'INSERT INTO soal (id, ujian_id, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, opsi_e, kunci_jawaban)
-         VALUES (?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO soal (id, ujian_id, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, opsi_e, opsi_huruf, kunci_jawaban, gambar)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)',
         [
             $id,
             $ujianId,
@@ -1244,7 +1257,9 @@ function sisipSoal(string $ujianId, array $s): string
             $s['opsi_c'],
             $s['opsi_d'],
             $s['opsi_e'] ?? '',
+            (int) ($s['opsi_huruf'] ?? 0),
             $s['kunci_jawaban'],
+            (string) ($s['gambar'] ?? ''),
         ]
     );
     return $id;
@@ -1261,6 +1276,8 @@ function barisSoal(array $r, bool $denganKunci): array
         'opsi_c' => (string) $r['opsi_c'],
         'opsi_d' => (string) $r['opsi_d'],
         'opsi_e' => (string) $r['opsi_e'],
+        'opsi_huruf' => (int) ($r['opsi_huruf'] ?? 0),
+        'gambar' => (string) ($r['gambar'] ?? ''),
     ];
     if ($denganKunci) $out['kunci_jawaban'] = strtoupper(bersih($r['kunci_jawaban']));
     return $out;
@@ -1335,61 +1352,102 @@ function a_getSoalAdmin(array $d): array
     return ['success' => true, 'soal' => $daftar];
 }
 
+/**
+ * Validasi isi soal bersama (tambah / ubah / impor massal).
+ * @return array{error:string}|array{pertanyaan:string,opsi_a:string,opsi_b:string,opsi_c:string,opsi_d:string,opsi_e:string,kunci_jawaban:string,gambar:string,opsi_huruf:int}
+ */
+function validasiIsiSoal(array $d): array
+{
+    $pertanyaan = bersih($d['pertanyaan'] ?? '');
+    if ($pertanyaan === '') return ['error' => 'Pertanyaan wajib diisi.'];
+
+    // Mode "sudah menyertakan huruf" — teks pilihan diketik beserta A., B., …
+    $opsiHuruf = !empty($d['opsi_huruf']) ? 1 : 0;
+
+    $opsi = [];
+    foreach (['opsi_a', 'opsi_b', 'opsi_c', 'opsi_d'] as $w) {
+        $v = bersih($d[$w] ?? '');
+        if (!$opsiHuruf && $v !== '') $v = buangHurufOpsi($v);
+        if ($v === '') return ['error' => 'Opsi A–D wajib diisi (opsi E opsional).'];
+        if (panjangTeks($v) > 600) return ['error' => 'Setiap pilihan maksimal 600 karakter.'];
+        $opsi[$w] = $v;
+    }
+    $opsiE = bersih($d['opsi_e'] ?? '');
+    if (!$opsiHuruf && $opsiE !== '') $opsiE = buangHurufOpsi($opsiE);
+    if ($opsiE !== '' && panjangTeks($opsiE) > 600) return ['error' => 'Setiap pilihan maksimal 600 karakter.'];
+
+    $kunci = strtoupper(bersih($d['kunci_jawaban'] ?? ''));
+    if (!in_array($kunci, ['A', 'B', 'C', 'D', 'E'], true)) return ['error' => 'Kunci jawaban harus huruf A–E.'];
+    if ($kunci === 'E' && $opsiE === '') return ['error' => 'Opsi E kosong — kunci tidak boleh E.'];
+
+    $gambar = (string) ($d['gambar'] ?? '');
+    if ($gambar !== '') {
+        if (strpos($gambar, 'data:image/') !== 0) return ['error' => 'Format gambar soal tidak valid.'];
+        if (strlen($gambar) > 400000) {
+            return ['error' => 'Gambar soal terlalu besar (maks ±300 KB setelah dikompres). Pilih gambar yang lebih sederhana.'];
+        }
+    }
+
+    return [
+        'pertanyaan' => $pertanyaan,
+        'opsi_a' => $opsi['opsi_a'],
+        'opsi_b' => $opsi['opsi_b'],
+        'opsi_c' => $opsi['opsi_c'],
+        'opsi_d' => $opsi['opsi_d'],
+        'opsi_e' => $opsiE,
+        'kunci_jawaban' => $kunci,
+        'gambar' => $gambar,
+        'opsi_huruf' => $opsiHuruf,
+    ];
+}
+
+/** Mode "belum berhuruf": buang penanda "A." / "B)" / "C -" di depan teks. */
+function buangHurufOpsi(string $v): string
+{
+    $b = preg_replace('/^[A-E][\s.):\-–]+/iu', '', $v);
+    if ($b === null) return trim($v); // UTF-8 tidak valid — biarkan apa adanya
+    return trim($b);
+}
+
+/** Panjang teks dalam karakter (fallback bila ekstensi mbstring tidak ada). */
+function panjangTeks(string $t): int
+{
+    return function_exists('mb_strlen') ? mb_strlen($t) : strlen($t);
+}
+
 function a_tambahSoal(array $d): array
 {
     $ujianId = bersih($d['ujian_id'] ?? '');
-    $pertanyaan = bersih($d['pertanyaan'] ?? '');
-    foreach (['opsi_a', 'opsi_b', 'opsi_c', 'opsi_d'] as $w) {
-        if (bersih($d[$w] ?? '') === '') return galat('Opsi A–D wajib diisi (opsi E opsional).');
-    }
-    $kunci = strtoupper(bersih($d['kunci_jawaban'] ?? ''));
-    if (!in_array($kunci, ['A', 'B', 'C', 'D', 'E'], true)) return galat('Kunci jawaban harus huruf A–E.');
-    if ($kunci === 'E' && bersih($d['opsi_e'] ?? '') === '') {
-        return galat('Opsi E kosong — kunci tidak boleh E.');
-    }
-    if ($pertanyaan === '') return galat('Pertanyaan wajib diisi.');
+    $v = validasiIsiSoal($d);
+    if (isset($v['error'])) return galat($v['error']);
 
-    $id = sisipSoal($ujianId, [
-        'pertanyaan' => $pertanyaan,
-        'opsi_a' => bersih($d['opsi_a'] ?? ''),
-        'opsi_b' => bersih($d['opsi_b'] ?? ''),
-        'opsi_c' => bersih($d['opsi_c'] ?? ''),
-        'opsi_d' => bersih($d['opsi_d'] ?? ''),
-        'opsi_e' => bersih($d['opsi_e'] ?? ''),
-        'kunci_jawaban' => $kunci,
-    ]);
+    $id = sisipSoal($ujianId, $v);
     naikkanRevisi($ujianId);
     return ['success' => true, 'id' => $id, 'message' => 'Soal ditambahkan.'];
 }
 
-/** Perbaiki soal yang sudah ada (pertanyaan/opsi/kunci) — menaikkan revisi. */
+/** Perbaiki soal yang sudah ada (pertanyaan/opsi/kunci/gambar) — menaikkan revisi. */
 function a_ubahSoal(array $d): array
 {
     $id = bersih($d['id'] ?? '');
-    $pertanyaan = bersih($d['pertanyaan'] ?? '');
-    foreach (['opsi_a', 'opsi_b', 'opsi_c', 'opsi_d'] as $w) {
-        if (bersih($d[$w] ?? '') === '') return galat('Opsi A–D wajib diisi (opsi E opsional).');
-    }
-    $kunci = strtoupper(bersih($d['kunci_jawaban'] ?? ''));
-    if (!in_array($kunci, ['A', 'B', 'C', 'D', 'E'], true)) return galat('Kunci jawaban harus huruf A–E.');
-    if ($kunci === 'E' && bersih($d['opsi_e'] ?? '') === '') {
-        return galat('Opsi E kosong — kunci tidak boleh E.');
-    }
-    if ($pertanyaan === '') return galat('Pertanyaan wajib diisi.');
+    $v = validasiIsiSoal($d);
+    if (isset($v['error'])) return galat($v['error']);
 
     $lama = satu('SELECT ujian_id FROM soal WHERE id = ?', [$id]);
     if (!$lama) return galat('Soal tidak ditemukan.');
 
     jalan(
-        'UPDATE soal SET pertanyaan = ?, opsi_a = ?, opsi_b = ?, opsi_c = ?, opsi_d = ?, opsi_e = ?, kunci_jawaban = ? WHERE id = ?',
+        'UPDATE soal SET pertanyaan = ?, opsi_a = ?, opsi_b = ?, opsi_c = ?, opsi_d = ?, opsi_e = ?, opsi_huruf = ?, kunci_jawaban = ?, gambar = ? WHERE id = ?',
         [
-            $pertanyaan,
-            bersih($d['opsi_a'] ?? ''),
-            bersih($d['opsi_b'] ?? ''),
-            bersih($d['opsi_c'] ?? ''),
-            bersih($d['opsi_d'] ?? ''),
-            bersih($d['opsi_e'] ?? ''),
-            $kunci,
+            $v['pertanyaan'],
+            $v['opsi_a'],
+            $v['opsi_b'],
+            $v['opsi_c'],
+            $v['opsi_d'],
+            $v['opsi_e'],
+            $v['opsi_huruf'],
+            $v['kunci_jawaban'],
+            $v['gambar'],
             $id,
         ]
     );
@@ -1398,6 +1456,38 @@ function a_ubahSoal(array $d): array
         'success' => true,
         'message' => 'Soal diperbarui — siswa yang sudah mengunduh perlu sinkron ulang.',
     ];
+}
+
+/** Impor massal hasil pemecah teks Word: soal = [ {pertanyaan, opsi_*, kunci_jawaban}, … ] */
+function a_imporSoal(array $d): array
+{
+    $ujianId = bersih($d['ujian_id'] ?? '');
+    if ($ujianId === '') return galat('Ujian tidak valid.');
+    $daftar = is_array($d['soal'] ?? null) ? $d['soal'] : [];
+    if (!$daftar) return galat('Tidak ada soal untuk diimpor.');
+    if (count($daftar) > 200) return galat('Maksimal 200 soal per sekali impor.');
+
+    $masuk = 0;
+    $lewati = 0;
+    foreach ($daftar as $s) {
+        if (!is_array($s)) {
+            $lewati++;
+            continue;
+        }
+        $v = validasiIsiSoal($s);
+        if (isset($v['error'])) {
+            $lewati++;
+            continue;
+        }
+        sisipSoal($ujianId, $v);
+        $masuk++;
+    }
+    if ($masuk === 0) return galat('Tidak ada soal yang valid untuk diimpor.');
+    naikkanRevisi($ujianId);
+
+    $pesan = $masuk . ' soal diimpor.';
+    if ($lewati) $pesan .= ' ' . $lewati . ' dilewati (belum lengkap).';
+    return ['success' => true, 'masuk' => $masuk, 'lewati' => $lewati, 'message' => $pesan];
 }
 
 function a_tambahSoalContoh(array $d): array

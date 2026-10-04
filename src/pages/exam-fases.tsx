@@ -316,13 +316,25 @@ export function UjianFase(props: {
   const soal = sesi.soal[sesi.indeks];
   const terjawab = sesi.jawaban[soal?.id ?? ""];
 
+  /** Huruf di depan teks pilihan ("A. …") untuk deteksi teks berhuruf. */
+  const RE_HURUF_DEPAN = /^[A-E][\s.)\-–—:]+/i;
+  /** Mode "sudah berhuruf": tampil apa adanya (lengkapi bila huruf hilang);
+   *  mode normal: teks polos — huruf ditunjukkan lewat kotak di kiri. */
+  const sudahHuruf = Boolean(soal?.opsi_huruf);
+  const siapkan = (huruf: Pilihan, teks: string): string => {
+    if (!sudahHuruf) return teks.replace(RE_HURUF_DEPAN, "");
+    return RE_HURUF_DEPAN.test(teks) ? teks : `${huruf}. ${teks}`;
+  };
+
   const opsi: { huruf: Pilihan; teks: string }[] = soal
     ? [
-        { huruf: "A", teks: soal.opsi_a },
-        { huruf: "B", teks: soal.opsi_b },
-        { huruf: "C", teks: soal.opsi_c },
-        { huruf: "D", teks: soal.opsi_d },
-        ...(soal.opsi_e ? [{ huruf: "E" as Pilihan, teks: soal.opsi_e }] : []),
+        { huruf: "A", teks: siapkan("A", soal.opsi_a) },
+        { huruf: "B", teks: siapkan("B", soal.opsi_b) },
+        { huruf: "C", teks: siapkan("C", soal.opsi_c) },
+        { huruf: "D", teks: siapkan("D", soal.opsi_d) },
+        ...(soal.opsi_e
+          ? [{ huruf: "E" as Pilihan, teks: siapkan("E", soal.opsi_e) }]
+          : []),
       ]
     : [];
 
@@ -380,6 +392,14 @@ export function UjianFase(props: {
             {soal?.pertanyaan}
           </p>
 
+          {soal?.gambar && (
+            <img
+              src={soal.gambar}
+              alt={`Gambar soal ${sesi.indeks + 1}`}
+              className="mt-4 max-h-64 w-full rounded-2xl border border-border/70 object-contain"
+            />
+          )}
+
           <div className="mt-5 space-y-2.5">
             {opsi.map(({ huruf, teks }) => {
               const aktif = terjawab === huruf;
@@ -394,15 +414,17 @@ export function UjianFase(props: {
                       : "border-border/70 bg-card hover:border-foreground/30"
                   }`}
                 >
-                  <span
-                    className={`flex size-8 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${
-                      aktif
-                        ? "bg-emerald-600 text-white"
-                        : "bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {huruf}
-                  </span>
+                  {sudahHuruf ? null : (
+                    <span
+                      className={`flex size-8 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${
+                        aktif
+                          ? "bg-emerald-600 text-white"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {huruf}
+                    </span>
+                  )}
                   <span className="leading-6">{teks}</span>
                   {aktif && (
                     <CheckCircle2 className="ml-auto size-4 shrink-0 text-emerald-600" />

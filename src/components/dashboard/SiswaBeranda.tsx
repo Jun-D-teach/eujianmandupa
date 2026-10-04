@@ -111,6 +111,8 @@ export function SiswaUjian() {
           opsi_c: s.opsi_c,
           opsi_d: s.opsi_d,
           opsi_e: s.opsi_e || undefined,
+          gambar: s.gambar || undefined,
+          opsi_huruf: s.opsi_huruf || undefined,
         })),
         jawaban,
         indeks: Math.max(0, Math.min(sesiLama.indeks, data.soal.length - 1)),

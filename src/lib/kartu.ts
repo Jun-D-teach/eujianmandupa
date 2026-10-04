@@ -57,8 +57,14 @@ export const SET_KOSONG: SetKartu = {
 /**
  * Baca file gambar, skalakan ke lebar maksimal, lalu kembalikan data URL JPEG.
  * Memastikan ukuran hasil jauh di bawah batas kolom database.
+ * @param kualitas Kompresi JPEG 0–1 (0.85 = kartu; lebih kecil untuk gambar
+ *                 soal agar muat di penyimpanan offline HP siswa).
  */
-export function gambarKeDataUrl(file: File, lebarMaks = 360): Promise<string> {
+export function gambarKeDataUrl(
+  file: File,
+  lebarMaks = 360,
+  kualitas = 0.85,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!file.type.startsWith("image/")) {
       reject(new Error(`"${file.name}" bukan file gambar.`));
@@ -91,7 +97,7 @@ export function gambarKeDataUrl(file: File, lebarMaks = 360): Promise<string> {
         ctx.fillRect(0, 0, lebar, tinggi);
         ctx.drawImage(img, 0, 0, lebar, tinggi);
         try {
-          resolve(canvas.toDataURL("image/jpeg", 0.85));
+          resolve(canvas.toDataURL("image/jpeg", kualitas));
         } catch {
           reject(new Error("Gagal mengubah gambar."));
         }

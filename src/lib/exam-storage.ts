@@ -19,6 +19,10 @@ export type SoalUjian = {
   opsi_c: string;
   opsi_d: string;
   opsi_e?: string;
+  /** Gambar soal (data URL) — disimpan di HP agar tampil saat offline. */
+  gambar?: string;
+  /** 1 = teks pilihan sudah menyertakan huruf A–E. */
+  opsi_huruf?: number;
 };
 
 export type Pelanggaran = {

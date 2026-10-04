@@ -1,15 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { gasCall, tokenValid, type SoalGas, type SiswaGas, type UjianGas } from "@/lib/api";
 import {
   cetakKartu,
   cocokSasaran,
+  gambarKeDataUrl,
   gayaKartu,
   kartuHTML,
   type CetakMode,
   type IsiKartu,
   type SetKartu,
 } from "@/lib/kartu";
+import {
+  bacaFileSoal,
+  parseTeksSoal,
+  type BarisSoalOtomat,
+} from "@/lib/soal-import";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -47,6 +53,8 @@ import {
   CalendarClock,
   ClipboardList,
   Download,
+  FileText,
+  ImagePlus,
   KeyRound,
   Pencil,
   Plus,
@@ -58,7 +66,10 @@ import {
   Target,
   Trash2,
   TriangleAlert,
+  Upload,
   Users,
+  Wand2,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -71,7 +82,20 @@ const FORM_KOSONG = {
   opsi_c: "",
   opsi_d: "",
   opsi_e: "",
+  gambar: "",
 };
+
+/** Batas data URL gambar soal — menjaga kuota penyimpanan offline HP siswa. */
+const MAKS_GAMBAR_SOAL = 350_000;
+
+/** Deteksi huruf "A." / "B)" di depan teks pilihan. */
+const RE_HURUF_DEPAN = /^[A-E][\s.)\-–—:]+/i;
+
+/** Teks pilihan untuk daftar admin — selalu tampil lengkap berhuruf A–E. */
+function labelOpsi(huruf: string, teks: string, sudahHuruf?: number): string {
+  if (!sudahHuruf) return `${huruf}. ${teks.replace(RE_HURUF_DEPAN, "")}`;
+  return RE_HURUF_DEPAN.test(teks) ? teks : `${huruf}. ${teks}`;
+}
 
 /** Label jadwal ramah baca: Jumat, 12 Oktober 2026 pukul 08.00. */
 function jadwalLabel(v?: string): string {
@@ -913,9 +937,23 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
   const [soal, setSoal] = useState<SoalGas[] | null>(null);
   const [form, setForm] = useState(FORM_KOSONG);
   const [kunci, setKunci] = useState<Kunci>("A");
+  /** Pilihan sudah menyertakan huruf A–E (teks diketik beserta hurufnya). */
+  const [sudahHuruf, setSudahHuruf] = useState(false);
+  /** Kotak tempel: satu soal lengkap dipecah otomatis ke kolom A–E. */
+  const [tempel, setTempel] = useState("");
+  const [prosesGambar, setProsesGambar] = useState(false);
+  const refGambar = useRef<HTMLInputElement | null>(null);
   /** id soal yang sedang diperbaiki (null = mode tambah). */
   const [editId, setEditId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Dialog impor soal dari Word (.docx / tempel teks).
+  const [imporBuka, setImporBuka] = useState(false);
+  const [teksImpor, setTeksImpor] = useState("");
+  const [namaFileImpor, setNamaFileImpor] = useState("");
+  const [pratinjau, setPratinjau] = useState<BarisSoalOtomat[] | null>(null);
+  const [imporBusy, setImporBusy] = useState(false);
+  const refFileImpor = useRef<HTMLInputElement | null>(null);
 
   const muat = () => {
     setSoal(null);
@@ -941,14 +979,19 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       opsi_c: s.opsi_c,
       opsi_d: s.opsi_d,
       opsi_e: s.opsi_e || "",
+      gambar: s.gambar || "",
     });
     setKunci(((s.kunci_jawaban || "A").toUpperCase() as Kunci) || "A");
+    setSudahHuruf((s.opsi_huruf ?? 0) === 1);
+    setTempel("");
   };
 
   const batalEdit = () => {
     setEditId(null);
     setForm(FORM_KOSONG);
     setKunci("A");
+    setTempel("");
+    // Mode "sudah berhuruf" sengaja dipertahankan agar nyaman untuk soal berikutnya.
   };
 
   const simpan = async () => {
@@ -975,6 +1018,8 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
         opsi_d: form.opsi_d.trim(),
         opsi_e: form.opsi_e.trim(),
         kunci_jawaban: kunci,
+        gambar: form.gambar,
+        opsi_huruf: sudahHuruf ? 1 : 0,
       };
       if (editId) {
         await gasCall("ubahSoal", { id: editId, ...muatan });
@@ -986,11 +1031,154 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       setForm(FORM_KOSONG);
       setKunci("A");
       setEditId(null);
+      setTempel("");
       muat();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal menyimpan soal.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** Upload gambar soal → data URL JPEG ukuran HP (dikecilkan otomatis). */
+  const pilihGambar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setProsesGambar(true);
+    try {
+      const dataUrl = await gambarKeDataUrl(file, 900, 0.72);
+      if (dataUrl.length > MAKS_GAMBAR_SOAL) {
+        throw new Error(
+          "Gambar masih terlalu besar setelah dikompres (maks ±300 KB). Pilih gambar yang lebih sederhana atau potong dulu gambarnya.",
+        );
+      }
+      setForm((f) => ({ ...f, gambar: dataUrl }));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal membaca gambar.");
+    } finally {
+      setProsesGambar(false);
+    }
+  };
+
+  /** Pecah kotak tempel (satu soal lengkap) menjadi kolom pertanyaan & A–E. */
+  const pecahTempel = () => {
+    const hasil = parseTeksSoal(tempel);
+    const b = hasil[0];
+    if (!b) {
+      toast.error(
+        'Tidak menemukan pilihan berhuruf A–E. Tulis pilihan seperti "A. … B. …" lalu coba lagi.',
+      );
+      return;
+    }
+    if (hasil.length > 1) {
+      toast.warning(
+        `Teks berisi ${hasil.length} soal — hanya soal pertama yang dipakai. Untuk banyak soal, gunakan “Impor dari Word”.`,
+      );
+    }
+    const amb = (i: number) => (sudahHuruf ? b.opsiMentah[i] : b.opsi[i]);
+    setForm((f) => ({
+      ...f,
+      pertanyaan: b.pertanyaan || f.pertanyaan,
+      opsi_a: amb(0),
+      opsi_b: amb(1),
+      opsi_c: amb(2),
+      opsi_d: amb(3),
+      opsi_e: amb(4),
+    }));
+    if (b.kunci) setKunci(b.kunci);
+    setTempel("");
+    const jumlah = [0, 1, 2, 3, 4].filter((i) => amb(i) !== "").length;
+    toast.success(
+      `Teks terurai: ${jumlah} pilihan${b.kunci ? `, kunci ${b.kunci}` : " — kunci belum terdeteksi"}.`,
+    );
+  };
+
+  /* ---------------- Impor dari Word (dialog) ---------------- */
+
+  const bukaImpor = () => {
+    setTeksImpor("");
+    setNamaFileImpor("");
+    setPratinjau(null);
+    setImporBuka(true);
+  };
+
+  const pilihFileImpor = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImporBusy(true);
+    try {
+      const teks = await bacaFileSoal(file);
+      if (!teks.trim()) throw new Error("File tidak berisi teks.");
+      setTeksImpor(teks);
+      setNamaFileImpor(file.name);
+      setPratinjau(null);
+      toast.success('File dibaca — klik "Baca & pratinjau".');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal membaca file.");
+    } finally {
+      setImporBusy(false);
+    }
+  };
+
+  const uraiTeks = () => {
+    const hasil = parseTeksSoal(teksImpor);
+    if (hasil.length === 0) {
+      toast.error(
+        'Tidak menemukan soal. Format yang didukung: nomor "1." atau "1)" + pilihan "A. …" (per baris atau satu baris).',
+      );
+      return;
+    }
+    setPratinjau(hasil);
+  };
+
+  const barisSiap = (pratinjau ?? []).filter(
+    (b) =>
+      b.pertanyaan.trim() !== "" &&
+      [0, 1, 2, 3].every((i) => b.opsi[i].trim() !== "") &&
+      b.kunci !== "",
+  );
+
+  const setKunciPratinjau = (i: number, h: Kunci) =>
+    setPratinjau((rows) =>
+      rows ? rows.map((r, j) => (j === i ? { ...r, kunci: h } : r)) : rows,
+    );
+
+  const hapusPratinjau = (i: number) =>
+    setPratinjau((rows) => (rows ? rows.filter((_, j) => j !== i) : rows));
+
+  const jalankanImpor = async () => {
+    if (barisSiap.length === 0) return;
+    setImporBusy(true);
+    try {
+      const res = await gasCall<{ message?: string }>("imporSoal", {
+        ujian_id: ujianId,
+        soal: barisSiap.map((b) => ({
+          pertanyaan: b.pertanyaan.trim(),
+          opsi_a: b.opsi[0].trim(),
+          opsi_b: b.opsi[1].trim(),
+          opsi_c: b.opsi[2].trim(),
+          opsi_d: b.opsi[3].trim(),
+          opsi_e: b.opsi[4].trim(),
+          kunci_jawaban: b.kunci,
+        })),
+      });
+      const dilewati = (pratinjau?.length ?? 0) - barisSiap.length;
+      toast.success(
+        `${res.message ?? `${barisSiap.length} soal diimpor.`}${
+          dilewati > 0 ? ` ${dilewati} baris belum lengkap dilewati.` : ""
+        }`,
+      );
+      setImporBuka(false);
+      setTeksImpor("");
+      setNamaFileImpor("");
+      setPratinjau(null);
+      muat();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal mengimpor soal.");
+    } finally {
+      setImporBusy(false);
     }
   };
 
@@ -1027,15 +1215,20 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
           <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
             Tambahkan soal satu per satu, atau isi 5 soal contoh untuk percobaan.
           </p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-4 gap-2"
-            onClick={isiContoh}
-            disabled={busy}
-          >
-            <Sparkles className="size-4" /> Isi 5 soal contoh
-          </Button>
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={isiContoh}
+              disabled={busy}
+            >
+              <Sparkles className="size-4" /> Isi 5 soal contoh
+            </Button>
+            <Button variant="outline" size="sm" className="gap-2" onClick={bukaImpor}>
+              <FileText className="size-4" /> Impor dari Word
+            </Button>
+          </div>
         </div>
       ) : (
         <ol className="space-y-3">
@@ -1052,12 +1245,21 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                   <p className="mt-1 text-sm font-semibold leading-6">
                     {s.pertanyaan}
                   </p>
+                  {s.gambar && (
+                    <img
+                      src={s.gambar}
+                      alt={`Gambar soal ${i + 1}`}
+                      className="mt-2 max-h-44 rounded-xl border border-border/70 object-contain"
+                    />
+                  )}
                   <ul className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-                    <li>A. {s.opsi_a}</li>
-                    <li>B. {s.opsi_b}</li>
-                    <li>C. {s.opsi_c}</li>
-                    <li>D. {s.opsi_d}</li>
-                    {s.opsi_e && <li>E. {s.opsi_e}</li>}
+                    <li>{labelOpsi("A", s.opsi_a, s.opsi_huruf)}</li>
+                    <li>{labelOpsi("B", s.opsi_b, s.opsi_huruf)}</li>
+                    <li>{labelOpsi("C", s.opsi_c, s.opsi_huruf)}</li>
+                    <li>{labelOpsi("D", s.opsi_d, s.opsi_huruf)}</li>
+                    {s.opsi_e && (
+                      <li>{labelOpsi("E", s.opsi_e, s.opsi_huruf)}</li>
+                    )}
                   </ul>
                   <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-bold text-emerald-700">
                     <KeyRound className="size-3.5" /> Kunci: {s.kunci_jawaban}
@@ -1092,7 +1294,20 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
 
       {/* Tambah soal */}
       <div className="rounded-2xl border border-border/70 bg-background/60 p-4">
-        <p className="text-sm font-bold">{editId ? "Ubah / perbaiki soal" : "Tambah soal"}</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-bold">
+            {editId ? "Ubah / perbaiki soal" : "Tambah soal"}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={bukaImpor}
+            disabled={busy || imporBusy}
+          >
+            <FileText className="size-3.5" /> Impor dari Word
+          </Button>
+        </div>
         {editId && (
           <p className="mt-1 text-xs leading-5 text-amber-700">
             Perbaikan menaikkan revisi soal — siswa yang sudah mengunduh akan
@@ -1105,15 +1320,131 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
             onChange={set("pertanyaan")}
             placeholder="Tulis pertanyaan…"
           />
+
+          {/* Pilihan gaya penulisan pilihan jawaban */}
+          <div className="grid gap-2 rounded-2xl border border-border/70 bg-card p-3">
+            <p className="text-xs font-bold">Pilihan jawaban saat menulis soal:</p>
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input
+                type="radio"
+                name={`huruf-${ujianId}`}
+                className="mt-0.5 accent-emerald-600"
+                checked={!sudahHuruf}
+                onChange={() => setSudahHuruf(false)}
+              />
+              <span className="text-xs leading-5">
+                <strong>Belum menyertakan huruf</strong> — isi pilihan tanpa A., B., …
+                (huruf ditambahkan otomatis saat tampil ke siswa).
+              </span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input
+                type="radio"
+                name={`huruf-${ujianId}`}
+                className="mt-0.5 accent-emerald-600"
+                checked={sudahHuruf}
+                onChange={() => setSudahHuruf(true)}
+              />
+              <span className="text-xs leading-5">
+                <strong>Sudah menyertakan huruf A–E</strong> — pilihan diketik beserta
+                hurufnya (mis. “A. Jakarta”) dan tampil apa adanya untuk siswa.
+              </span>
+            </label>
+          </div>
+
+          {/* Tempel satu soal lengkap → pecah otomatis */}
+          <div className="rounded-2xl border border-dashed border-border/70 p-3">
+            <Textarea
+              value={tempel}
+              onChange={(e) => setTempel(e.target.value)}
+              rows={3}
+              placeholder="Opsional: tempel satu soal lengkap di sini — pertanyaan + pilihan A. B. C. D. (kunci seperti “Kunci: B” terdeteksi otomatis)"
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={pecahTempel}
+                disabled={!tempel.trim()}
+              >
+                <Wand2 className="size-3.5" /> Pecah otomatis ke kolom A–E
+              </Button>
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                {sudahHuruf
+                  ? "Huruf A., B., … dipertahankan apa adanya."
+                  : "Huruf A., B., … dibuang dari kolom."}
+              </p>
+            </div>
+          </div>
+
           <div className="grid gap-3 sm:grid-cols-2">
             {PILIHAN.map((p) => (
               <Input
                 key={p}
                 value={form[`opsi_${p}` as keyof typeof form]}
                 onChange={set(`opsi_${p}` as keyof typeof form)}
-                placeholder={p === "E" ? "Opsi E (opsional)" : `Opsi ${p}`}
+                placeholder={
+                  sudahHuruf
+                    ? p === "E"
+                      ? `E. … (opsional)`
+                      : `${p}. …`
+                    : p === "E"
+                      ? "Opsi E (opsional)"
+                      : `Opsi ${p}`
+                }
               />
             ))}
+          </div>
+
+          {/* Gambar soal (untuk soal bergambar) */}
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              ref={refGambar}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => void pilihGambar(e)}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => refGambar.current?.click()}
+              disabled={prosesGambar}
+            >
+              <ImagePlus className="size-3.5" />
+              {prosesGambar
+                ? "Memproses…"
+                : form.gambar
+                  ? "Ganti gambar"
+                  : "Tambah gambar soal"}
+            </Button>
+            {form.gambar && (
+              <span className="relative inline-block">
+                <img
+                  src={form.gambar}
+                  alt="Pratinjau gambar soal"
+                  className="h-16 rounded-lg border border-border/70 object-contain"
+                />
+                <button
+                  type="button"
+                  onClick={() => setForm((f) => ({ ...f, gambar: "" }))}
+                  className="absolute -right-2 -top-2 flex size-5 items-center justify-center rounded-full bg-red-600 text-white shadow"
+                  aria-label="Hapus gambar"
+                  title="Hapus gambar"
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            )}
+            {form.gambar && (
+              <span className="text-[11px] leading-4 text-muted-foreground">
+                Gambar otomatis dikompres & ikut tersimpan di HP siswa.
+              </span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -1159,6 +1490,174 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
           </div>
         </div>
       </div>
+
+      {/* Dialog impor soal dari Word (.docx / tempel teks) */}
+      <Dialog open={imporBuka} onOpenChange={(open) => !open && setImporBuka(false)}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Impor soal dari Word</DialogTitle>
+            <DialogDescription>
+              Unggah file .docx atau tempel teks soal — nomor “1.”, pilihan
+              “A. …”, dan kunci jawaban dibaca otomatis lalu ditampilkan untuk
+              diperiksa dulu sebelum masuk. Gambar di dalam dokumen belum ikut
+              diimpor (bisa ditambahkan manual per soal).
+            </DialogDescription>
+          </DialogHeader>
+
+          <input
+            ref={refFileImpor}
+            type="file"
+            accept=".docx,.txt"
+            className="hidden"
+            onChange={(e) => void pilihFileImpor(e)}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => refFileImpor.current?.click()}
+              disabled={imporBusy}
+            >
+              <Upload className="size-4" /> Pilih file .docx
+            </Button>
+            {namaFileImpor && (
+              <span className="text-xs font-semibold text-muted-foreground">
+                {namaFileImpor}
+              </span>
+            )}
+          </div>
+
+          <Textarea
+            value={teksImpor}
+            onChange={(e) => setTeksImpor(e.target.value)}
+            rows={7}
+            placeholder="… atau tempel langsung isi dokumen Word di sini."
+          />
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              className="gap-2"
+              onClick={uraiTeks}
+              disabled={imporBusy || !teksImpor.trim()}
+            >
+              <Wand2 className="size-4" /> Baca & pratinjau
+            </Button>
+            {pratinjau && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setPratinjau(null)}
+              >
+                Ulang
+              </Button>
+            )}
+          </div>
+
+          {pratinjau && (
+            <div className="space-y-2">
+              <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                Pratinjau — {barisSiap.length} dari {pratinjau.length} soal siap
+                diimpor
+              </p>
+              {pratinjau.map((b, i) => {
+                const siap = barisSiap.includes(b);
+                const kurangPilihan = [0, 1, 2, 3].some(
+                  (idx) => b.opsi[idx].trim() === "",
+                );
+                return (
+                  <div
+                    key={`${b.nomor}-${i}`}
+                    className="rounded-xl border border-border/70 bg-background/60 p-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 text-xs font-semibold leading-5">
+                        <span className="text-muted-foreground">
+                          {b.nomor ? `${b.nomor}. ` : ""}
+                        </span>
+                        {b.pertanyaan || "(pertanyaan kosong)"}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 shrink-0 text-muted-foreground hover:text-red-600"
+                        onClick={() => hapusPratinjau(i)}
+                        aria-label="Keluarkan dari daftar impor"
+                        title="Keluarkan dari daftar impor"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                    <ul className="mt-1.5 grid gap-0.5 text-[11px] leading-4 text-muted-foreground sm:grid-cols-2">
+                      {(["A", "B", "C", "D", "E"] as const).map((h, idx) =>
+                        b.opsi[idx] ? (
+                          <li key={h}>
+                            <span className="font-bold text-foreground">{h}.</span>{" "}
+                            {b.opsi[idx]}
+                          </li>
+                        ) : null,
+                      )}
+                    </ul>
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-semibold text-muted-foreground">
+                        Kunci:
+                      </span>
+                      {(["A", "B", "C", "D", "E"] as const).map((h) => (
+                        <button
+                          key={h}
+                          type="button"
+                          onClick={() => setKunciPratinjau(i, h)}
+                          className={`size-6 rounded-lg text-[11px] font-bold transition-colors ${
+                            b.kunci === h
+                              ? "bg-emerald-600 text-white"
+                              : "border border-border/70 bg-card text-muted-foreground hover:border-foreground/40"
+                          }`}
+                          aria-label={`Pilih kunci ${h}`}
+                        >
+                          {h}
+                        </button>
+                      ))}
+                      {!siap && (
+                        <span className="ml-auto rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                          {!b.pertanyaan.trim()
+                            ? "pertanyaan kosong"
+                            : kurangPilihan
+                              ? "pilihan kurang dari 4"
+                              : "kunci belum dipilih"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setImporBuka(false)}
+              disabled={imporBusy}
+            >
+              Batal
+            </Button>
+            <Button
+              type="button"
+              className="gap-2"
+              onClick={jalankanImpor}
+              disabled={imporBusy || barisSiap.length === 0}
+            >
+              <FileText className="size-4" /> Impor {barisSiap.length} soal
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -78,6 +78,10 @@ export type SoalGas = {
   opsi_d: string;
   opsi_e: string;
   kunci_jawaban?: string;
+  /** Gambar soal (data URL JPEG) — opsional, untuk soal bergambar. */
+  gambar?: string;
+  /** 1 = teks pilihan sudah menyertakan huruf A–E (tampil apa adanya). */
+  opsi_huruf?: number;
 };
 
 export type HasilGas = {
