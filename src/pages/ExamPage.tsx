@@ -922,6 +922,15 @@ export default function ExamPage() {
         )}
       </main>
 
+      {/* Peringatan visual sirene —kedip merah layar penuh, tidak bisa
+          dibungkam tombol volume (saluran visual pendamping suara & getar). */}
+      {sireneNyala && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-40 border-[6px] border-transparent animate-[sirene-strobe_0.8s_steps(1,end)_infinite]"
+        />
+      )}
+
       {/* Modal pelanggaran */}
       {modal && sesi && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-5 backdrop-blur-sm">
