@@ -7,7 +7,6 @@ import {
   cekPin,
   tokenValid,
   cocokToken,
-  pinPengawas,
   simpanPinTersimpan,
   type UjianGas,
 } from "@/lib/api";
@@ -190,7 +189,6 @@ export default function ExamPage() {
   const [pinSalah, setPinSalah] = useState(0);
   const [pesanKunci, setPesanKunci] = useState<string | null>(null);
   const [bukaBusy, setBukaBusy] = useState(false);
-  const [tampilGrid, setTampilGrid] = useState(false);
   const [nama, setNama] = useState(user?.nama ?? "");
   const [kelas, setKelas] = useState(user?.kelas ?? "");
   const [token, setToken] = useState("");
@@ -700,6 +698,9 @@ export default function ExamPage() {
     if (!sesi) return;
     if (i < 0 || i >= sesi.soal.length) return;
     setSesi({ ...sesi, indeks: i });
+    // Lompat ke atas agar soal terpilih langsung terlihat — dipakai bar nomor
+    // soal di header maupun tombol Sebelumnya/Berikutnya.
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   /**
@@ -729,7 +730,7 @@ export default function ExamPage() {
         void gasCall("catatBukaKunci", {
           ujian_id: ujianId,
           nama: `${sesi?.nama ?? "-"} (${sesi?.kelas ?? "-"})`,
-          catatan: "PIN diverifikasi lokal oleh pengawas",
+          catatan: "PIN pengawas diverifikasi lokal di perangkat",
         }).catch(() => {});
       }
     } finally {
@@ -854,7 +855,10 @@ export default function ExamPage() {
         </div>
 
         {fase === "ujian" && sesi && (
-          <div className="mx-auto flex w-full max-w-2xl items-center justify-between gap-3 px-4 pb-3 text-xs font-semibold text-muted-foreground">
+          <>
+            <div
+              className="mx-auto flex w-full max-w-2xl items-center justify-between gap-3 px-4 pb-3 text-xs font-semibold text-muted-foreground"
+            >
             <span>
               Terjawab {totalTerjawab}/{sesi.soal.length}
             </span>
@@ -895,7 +899,42 @@ export default function ExamPage() {
                 </button>
               )}
             </span>
-          </div>
+            </div>
+
+            {/* Bar nomor soal — hijau = sudah dijawab; klik = pindah ke soal. */}
+            <div className="border-t border-border/60 bg-background/95">
+              <div
+                role="group"
+                aria-label="Daftar nomor soal"
+                className="scrollbar-none mx-auto flex w-full max-w-2xl items-center gap-2 overflow-x-auto px-4 py-2"
+              >
+                {sesi.soal.map((s, i) => {
+                  const dijawab = Boolean(sesi.jawaban[s.id]);
+                  const aktif = i === sesi.indeks;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => pindahSoal(i)}
+                      aria-current={aktif ? "true" : undefined}
+                      aria-label={`Soal ${i + 1}${dijawab ? " — terjawab" : " — belum dijawab"}`}
+                      className={`h-8 w-8 shrink-0 rounded-lg text-xs font-bold transition-colors ${
+                        dijawab
+                          ? aktif
+                            ? "bg-emerald-500 text-white ring-2 ring-foreground ring-offset-2 ring-offset-background"
+                            : "bg-emerald-500 text-white shadow-sm"
+                          : aktif
+                            ? "bg-foreground text-background"
+                            : "bg-muted text-muted-foreground hover:bg-muted/70"
+                      }`}
+                    >
+                      {i + 1}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
         )}
       </header>
 
@@ -946,8 +985,6 @@ export default function ExamPage() {
             onJawab={jawab}
             onPindah={pindahSoal}
             onSelesai={() => setTanyaSelesai(true)}
-            onGrid={() => setTampilGrid((v) => !v)}
-            tampilGrid={tampilGrid}
           />
         )}
 
@@ -1122,8 +1159,9 @@ export default function ExamPage() {
             </h2>
             <p className="mt-3 text-sm leading-6 text-white/80">
               Terdeteksi <strong>3 pelanggaran</strong> selama ujian berlangsung.
-              Serahkan HP kepada pengawas untuk memasukkan PIN — setelah terbuka,
-              jawaban sebelumnya tetap ada dan ujian bisa dilanjutkan offline.
+              Layar hanya terbuka dengan 6 digit PIN pengawas — masukkan PIN
+              untuk melanjutkan; jawaban sebelumnya tetap ada dan ujian bisa
+              dilanjutkan offline.
             </p>
 
             <div className="mt-5 flex justify-center gap-2">
@@ -1177,13 +1215,10 @@ export default function ExamPage() {
                 </InputOTP>
               </div>
               <p className="mt-3 text-xs leading-5 text-white/65">
-                Kunci dibuka dengan PIN pengawas di perangkat (tidak butuh
-                internet). PIN aktif di perangkat ini:{" "}
-                <strong className="font-mono tracking-[0.25em] text-white">
-                  {pinPengawas()}
-                </strong>{" "}
-                — diatur admin di menu Pengaturan. Audit pembukaan dikirim ke
-                server bila HP online.
+                PIN tidak ditampilkan di layar — minta ke pengawas ruang
+                (diatur admin di menu Pengaturan). Verifikasi dilakukan lokal
+                di perangkat, jadi tidak butuh internet; audit pembukaan
+                dikirim ke server bila HP online.
               </p>
               {pesanKunci && (
                 <p className="mt-2 rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-amber-300">
@@ -1219,7 +1254,6 @@ export default function ExamPage() {
             <AlertDialogAction
               onClick={() => {
                 if (sesi) setSesi({ ...sesi, fase: "kirim" });
-                setTampilGrid(false);
               }}
             >
               Ya, selesai

@@ -8,7 +8,6 @@ import {
   ArrowRight,
   CheckCircle2,
   Download,
-  Grid3X3,
   KeyRound,
   Send,
   Trophy,
@@ -173,7 +172,7 @@ export function InstruksiFase(props: {
     "Masukkan token pengawas pada kolom di bawah — token diperiksa langsung di HP (bisa offline), ujian baru terbuka kalau token cocok.",
     `Waktu ujian ${props.sesi.durasi_menit ?? 60} menit dihitung sejak tombol Mulai Ujian. Saat habis, sistem otomatis berpindah ke pengiriman jawaban.`,
     "Setiap pelanggaran membunyikan sirene dan menambah 1 strike. Selama sirene menyala, ujian terkunci — tidak bisa dijawab sampai sirene dimatikan lewat tombol khusus, yang hanya aktif saat HP offline.",
-    "Pada strike ke-3 layar terkunci; pengawas membukanya dengan PIN (tanpa internet).",
+    "Pada strike ke-3 layar terkunci dan hanya bisa dibuka dengan 6 digit PIN pengawas (tanpa internet) — PIN tidak ditampilkan di layar.",
     "Jawaban tersimpan otomatis di HP. Setelah selesai, nyalakan internet untuk mengirim.",
   ];
 
@@ -317,8 +316,6 @@ export function UjianFase(props: {
   onJawab: (p: Pilihan) => void;
   onPindah: (i: number) => void;
   onSelesai: () => void;
-  onGrid: () => void;
-  tampilGrid: boolean;
 }) {
   const { sesi } = props;
   const soal = sesi.soal[sesi.indeks];
@@ -348,52 +345,15 @@ export function UjianFase(props: {
 
   return (
     <div className="space-y-4">
-      {props.tampilGrid && (
-        <Card className="border-border/70">
-          <CardContent className="p-4">
-            <p className="mb-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-              Daftar soal
-            </p>
-            <div className="grid grid-cols-6 gap-2 sm:grid-cols-8">
-              {sesi.soal.map((s, i) => {
-                const dijawab = Boolean(sesi.jawaban[s.id]);
-                const aktif = i === sesi.indeks;
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => props.onPindah(i)}
-                    className={`aspect-square rounded-xl text-xs font-bold transition-colors ${
-                      aktif
-                        ? "bg-ink text-white"
-                        : dijawab
-                          ? "bg-emerald-500/15 text-emerald-700 ring-1 ring-emerald-500/40"
-                          : "bg-muted text-muted-foreground hover:bg-muted/70"
-                    }`}
-                  >
-                    {i + 1}
-                  </button>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       <Card className="border-border/70 shadow-[0_1px_2px_rgba(16,20,24,0.04)]">
         <CardContent className="p-5">
           <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-muted-foreground">
             <span>
               Soal {sesi.indeks + 1} dari {sesi.soal.length}
             </span>
-            <button
-              type="button"
-              onClick={props.onGrid}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-[11px] transition-colors hover:bg-muted"
-            >
-              <Grid3X3 className="size-3.5" />
-              {props.tampilGrid ? "Tutup" : "Semua soal"}
-            </button>
+            <span className="normal-case font-semibold">
+              hijau = sudah dijawab
+            </span>
           </div>
 
           <p className="mt-4 text-base font-semibold leading-7 sm:text-lg">
