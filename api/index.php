@@ -286,7 +286,7 @@ const AKSES = [
     'importGuru' => 1, 'buatAkunGuru' => 1,
 
     'getPengaturan' => 2, 'aturPin' => 2, 'buatPengguna' => 2,
-    'ubahPeran' => 2, 'getPengguna' => 2,
+    'ubahPeran' => 2, 'getPengguna' => 2, 'ubahPasswordPengguna' => 2,
     'getKartuSet' => 2, 'aturKartuSet' => 2,
 ];
 
@@ -474,6 +474,7 @@ function jalankan(string $action, array $d): array
         case 'aturKartuSet': return a_aturKartuSet($d);
         case 'buatPengguna': return a_buatPengguna($d);
         case 'ubahPeran': return a_ubahPeran($d);
+        case 'ubahPasswordPengguna': return a_ubahPasswordPengguna($d);
         case 'getGuru': return a_getGuru();
         case 'tambahGuru': return a_tambahGuru($d);
         case 'ubahGuru': return a_ubahGuru($d);
@@ -875,10 +876,22 @@ function a_ubahGuru(array $d): array
 {
     $v = validasiGuru($d);
     if (isset($v['error'])) return galat($v['error']);
+    $id = bersih($d['id'] ?? '');
+    $lama = satu('SELECT nip FROM guru WHERE id = ?', [$id]);
     $n = jalan(
         'UPDATE guru SET nip = ?, nama = ?, mapel = ? WHERE id = ?',
-        [$v['nip'], $v['nama'], $v['mapel'], bersih($d['id'] ?? '')]
+        [$v['nip'], $v['nama'], $v['mapel'], $id]
     );
+    if ($n > 0 && $lama) {
+        // Username login guru = NIP → ikut diganti supaya bisa login memakai NIP baru.
+        $lamaKunci = strtolower(bersih($lama['nip']));
+        $baruKunci = strtolower($v['nip']);
+        if ($lamaKunci !== '' && $baruKunci !== '' && $lamaKunci !== $baruKunci
+            && !satu('SELECT id FROM pengguna WHERE username = ?', [$baruKunci])) {
+            $p = jalan("UPDATE pengguna SET username = ? WHERE username = ? AND role = 'guru'", [$baruKunci, $lamaKunci]);
+            if ($p === 0) jalan('UPDATE pengguna SET username = ? WHERE username = ?', [$baruKunci, $lamaKunci]);
+        }
+    }
     return $n > 0 ? ['success' => true, 'message' => 'Data guru diperbarui.'] : galat('Guru tidak ditemukan.');
 }
 
@@ -903,21 +916,63 @@ function a_hapusGuruMassal(array $d): array
         : galat('Guru tidak ditemukan.');
 }
 
-/** Ubah password guru — sinkron ke akun login (username = NIP) bila sudah dibuat. */
+/**
+ * Ubah password guru — WAJIB disinkronkan ke akun login (tabel pengguna),
+ * karena login selalu membaca tabel pengguna, bukan tabel guru.
+ */
 function a_ubahPasswordGuru(array $d): array
 {
     $id = bersih($d['id'] ?? '');
     $pass = bersih($d['password'] ?? '');
     if (strlen($pass) < 4) return galat('Password minimal 4 karakter.');
-    $g = satu('SELECT nip FROM guru WHERE id = ?', [$id]);
+    $g = satu('SELECT nip, nama, mapel FROM guru WHERE id = ?', [$id]);
     if (!$g) return galat('Guru tidak ditemukan.');
     jalan('UPDATE guru SET password = ? WHERE id = ?', [$pass, $id]);
-    // Sinkronkan akun login guru bila sudah ada (username = NIP, peran guru).
-    jalan(
-        'UPDATE pengguna SET password = ? WHERE username = ? AND role = ?',
-        [$pass, strtolower(bersih($g['nip'])), 'guru']
-    );
-    return ['success' => true, 'message' => 'Password guru diperbarui.'];
+
+    $nip = bersih($g['nip']);
+    $kunci = strtolower($nip);
+    if ($kunci === '') {
+        return [
+            'success' => true,
+            'message' => 'Password guru diperbarui, tetapi NIP belum diisi sehingga akun login belum bisa dibuat. Isi NIP lalu gunakan "Buat akun login".',
+        ];
+    }
+
+    // (1) Akun login yang username-nya = NIP (peran apa pun) — login selalu mencari berdasarkan username.
+    $ada = satu('SELECT id FROM pengguna WHERE username = ? LIMIT 1', [$kunci]);
+    // (2) Akun dibuat manual dengan username lain — cocokkan lewat nama pada peran guru.
+    if (!$ada && bersih($g['nama']) !== '') {
+        $ada = satu(
+            "SELECT id FROM pengguna WHERE role = 'guru' AND LOWER(nama) = LOWER(?) ORDER BY dibuat LIMIT 1",
+            [bersih($g['nama'])]
+        );
+    }
+    if ($ada) {
+        jalan('UPDATE pengguna SET password = ? WHERE id = ?', [$pass, (string) $ada['id']]);
+    } else {
+        // (3) Akun login belum ada sama sekali → buat otomatis supaya password baru bisa dipakai.
+        jalan(
+            'INSERT INTO pengguna (id, username, password, nama, kelas, role) VALUES (?,?,?,?,?,?)',
+            [idBaru('p'), $kunci, $pass, bersih($g['nama']) ?: $nip, bersih($g['mapel']), 'guru']
+        );
+        return ['success' => true, 'message' => 'Password guru diperbarui. Akun login baru dibuat — username ' . $nip . '.'];
+    }
+    return ['success' => true, 'message' => 'Password guru & akun login (username ' . $nip . ') diperbarui. Login memakai username itu.'];
+}
+
+/** Ganti password akun apa pun (admin/guru/siswa) — khusus admin. */
+function a_ubahPasswordPengguna(array $d): array
+{
+    $id = bersih($d['id'] ?? '');
+    $pass = bersih($d['password'] ?? '');
+    if (strlen($pass) < 4) return galat('Password minimal 4 karakter.');
+    $u = satu('SELECT username, nama, role FROM pengguna WHERE id = ?', [$id]);
+    if (!$u) return galat('Pengguna tidak ditemukan.');
+    jalan('UPDATE pengguna SET password = ? WHERE id = ?', [$pass, $id]);
+    // Bila ini akun guru (username = NIP), samakan password di tabel guru juga.
+    jalan('UPDATE guru SET password = ? WHERE nip = ?', [$pass, (string) $u['username']]);
+    $nama = bersih($u['nama']) !== '' ? bersih($u['nama']) : (string) $u['username'];
+    return ['success' => true, 'message' => 'Password ' . $nama . ' (username ' . $u['username'] . ') diperbarui.'];
 }
 
 /** Impor massal guru: rows = [[nip, nama, mapel, password?], ...] */

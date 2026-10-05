@@ -617,7 +617,8 @@ export function DataGuru() {
             <DialogDescription>
               {passTarget?.nama} — username login{" "}
               <code className="rounded bg-muted px-1">{passTarget?.nip}</code>.
-              Bila akun login sudah dibuat, password ikut diperbarui.
+              Akun login ikut diperbarui — dibuat otomatis bila belum ada,
+              sehingga password baru pasti bisa dipakai untuk masuk.
             </DialogDescription>
           </DialogHeader>
           <form

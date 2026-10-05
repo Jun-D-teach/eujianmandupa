@@ -5,9 +5,17 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Empty, EmptyContent, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Download, ShieldCheck, UserPlus } from "lucide-react";
+import { Download, KeyRound, ShieldCheck, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 const PERAN = [
@@ -27,6 +35,11 @@ export function Pengguna() {
     kelas: "",
     role: "siswa",
   });
+  // Ganti password akun yang sudah ada (termasuk akun admin sendiri).
+  const [passTarget, setPassTarget] = useState<PenggunaGas | null>(null);
+  const [passBaru, setPassBaru] = useState("");
+  const [passUlang, setPassUlang] = useState("");
+  const [busyPass, setBusyPass] = useState(false);
 
   const muat = () => {
     setDaftar(null);
@@ -72,6 +85,38 @@ export function Pengguna() {
       toast.success("Peran diperbarui.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal memperbarui peran.");
+    }
+  };
+
+  const tutupDialogPass = () => {
+    setPassTarget(null);
+    setPassBaru("");
+    setPassUlang("");
+  };
+
+  const simpanPassword = async () => {
+    if (!passTarget) return;
+    if (passBaru.length < 4) {
+      toast.error("Password minimal 4 karakter.");
+      return;
+    }
+    if (passBaru !== passUlang) {
+      toast.error("Password dan ulangan tidak sama.");
+      return;
+    }
+    setBusyPass(true);
+    try {
+      const res = await gasCall<{ message?: string }>("ubahPasswordPengguna", {
+        id: passTarget.id,
+        password: passBaru,
+      });
+      muat();
+      tutupDialogPass();
+      toast.success(res.message || `Password ${passTarget.nama || passTarget.username} diperbarui.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal mengubah password.");
+    } finally {
+      setBusyPass(false);
     }
   };
 
@@ -251,6 +296,19 @@ export function Pengguna() {
                             </option>
                           ))}
                         </select>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPassTarget(u);
+                            setPassBaru("");
+                            setPassUlang("");
+                          }}
+                          className="inline-flex size-9 items-center justify-center rounded-xl border border-border/70 bg-card text-muted-foreground transition-colors hover:border-ink hover:text-foreground"
+                          aria-label={`Ganti password ${u.nama || u.username}`}
+                          title="Ganti password akun ini"
+                        >
+                          <KeyRound className="size-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -272,6 +330,63 @@ export function Pengguna() {
           </div>
         ))}
       </div>
+
+      {/* Dialog ganti password akun (admin/guru/siswa) */}
+      <Dialog
+        open={passTarget !== null}
+        onOpenChange={(open) => !open && tutupDialogPass()}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Ganti password akun</DialogTitle>
+            <DialogDescription>
+              {passTarget?.nama || passTarget?.username} — username{" "}
+              <code className="rounded bg-muted px-1">{passTarget?.username}</code>
+              . Password baru langsung dipakai untuk login.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void simpanPassword();
+            }}
+            className="grid gap-4"
+          >
+            <div className="grid gap-2">
+              <Label htmlFor="pg-pass-baru">Password baru *</Label>
+              <Input
+                id="pg-pass-baru"
+                type="password"
+                value={passBaru}
+                onChange={(e) => setPassBaru(e.target.value)}
+                placeholder="minimal 4 karakter"
+                autoComplete="new-password"
+                required
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="pg-pass-ulang">Ulangi password *</Label>
+              <Input
+                id="pg-pass-ulang"
+                type="password"
+                value={passUlang}
+                onChange={(e) => setPassUlang(e.target.value)}
+                placeholder="ketik ulang password baru"
+                autoComplete="new-password"
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={tutupDialogPass}>
+                Batal
+              </Button>
+              <Button type="submit" disabled={busyPass}>
+                {busyPass ? "Menyimpan…" : "Simpan password"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
