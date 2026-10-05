@@ -1368,9 +1368,18 @@ function validasiIsiSoal(array $d): array
 
     $opsi = [];
     foreach (['opsi_a', 'opsi_b', 'opsi_c', 'opsi_d'] as $w) {
-        $v = bersih($d[$w] ?? '');
+        $huruf = strtoupper(substr($w, -1));
+        $asli = bersih($d[$w] ?? '');
+        $v = $asli;
         if (!$opsiHuruf && $v !== '') $v = buangHurufOpsi($v);
-        if ($v === '') return ['error' => 'Opsi A–D wajib diisi (opsi E opsional).'];
+        if ($v === '') {
+            // Bedakan "kosong" vs "hanya huruf" agar guru tahu opsi mana
+            // yang perlu diperbaiki (mis. mengetik "A." saja di kolom B).
+            if ($asli !== '') {
+                return ['error' => 'Opsi ' . $huruf . ' hanya berisi huruf ("' . $asli . '") — tulis teks pilihan, mis. "' . $huruf . '. Jawaban".'];
+            }
+            return ['error' => 'Opsi ' . $huruf . ' wajib diisi (opsi E opsional).'];
+        }
         if (panjangTeks($v) > 600) return ['error' => 'Setiap pilihan maksimal 600 karakter.'];
         $opsi[$w] = $v;
     }

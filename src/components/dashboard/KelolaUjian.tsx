@@ -999,9 +999,21 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       toast.error("Pertanyaan wajib diisi.");
       return;
     }
-    if (OPSI_WAJIB.some((p) => !form[`opsi_${p}` as keyof typeof form].trim())) {
-      toast.error("Opsi A–D wajib diisi; opsi E bersifat opsional.");
-      return;
+    // Validasi meniru backend (validasiIsiSoal): pada mode normal, huruf
+    // depan "A." DIBUANG — nilai yang hanya berisi huruf jadi kosong di
+    // server. Tangkap di sini agar pesan menyebut opsi mana & cara mengisi.
+    for (const p of OPSI_WAJIB) {
+      const nilai = form[`opsi_${p}` as keyof typeof form].trim();
+      if (!nilai) {
+        toast.error(`Opsi ${p} wajib diisi (opsi E opsional).`);
+        return;
+      }
+      if (!sudahHuruf && nilai.replace(RE_HURUF_DEPAN, "").trim() === "") {
+        toast.error(
+          `Opsi ${p} hanya berisi huruf ("${nilai}") — tulis teks pilihannya, mis. "${p}. Jawaban".`,
+        );
+        return;
+      }
     }
     if (kunci === "E" && !form.opsi_e.trim()) {
       toast.error("Opsi E kosong — pilih kunci A–D atau isi opsi E.");
