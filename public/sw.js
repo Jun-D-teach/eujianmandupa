@@ -8,19 +8,52 @@
  * - Soal & jawaban ujian TIDAK disimpan di service worker, melainkan di
  *   LocalStorage (lihat src/lib/exam-storage.ts).
  */
-const CACHE_NAME = "ujianaman-v3";
+const CACHE_NAME = "ujianaman-v4";
 /* Path RELATIF — app tetap bekerja saat di-host di subfolder
  * (mis. man2plg.sch.id/eujian-mandupa/). */
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
 
+/**
+ * Precache berkas entry & chunk (nama ber-hash sehingga tidak bisa ditulis
+ * manual): mulai dari index.html → js/css yang dirujuknya → tiap js
+ * diikuti chunk dinamisnya ("./X-abc.js" = ./assets/X-abc.js).
+ * Hasilnya: reload saat internet mati tetap menyajikan aplikasi utuh.
+ * CATATAN: naikkan CACHE_NAME di setiap rilis agar precache ikut segar.
+ */
+async function precacheAset(cache) {
+  const antre = ["./index.html"];
+  const sudah = new Set();
+  while (antre.length > 0) {
+    const url = antre.shift();
+    if (sudah.has(url)) continue;
+    sudah.add(url);
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      await cache.put(url, res.clone());
+      const nama = url.split("/").pop() || "";
+      const teks = /\.(html|js)$/.test(nama) ? await res.text() : "";
+      if (!teks) continue;
+      const kandidat = nama.endsWith(".html")
+        ? (teks.match(/assets\/[A-Za-z0-9._-]+/g) || []).map((m) => "./" + m)
+        : (teks.match(/\.\/[A-Za-z0-9._-]+\.js/g) || []).map(
+            (m) => "./assets/" + m.slice(2),
+          );
+      for (const k of kandidat) if (!sudah.has(k)) antre.push(k);
+    } catch (_err) {
+      /* satu berkas gagal tidak menggagalkan pemasangan */
+    }
+  }
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches
-      .open(CACHE_NAME)
-      .then((cache) =>
-        Promise.allSettled(SHELL.map((url) => cache.add(url))),
-      )
-      .then(() => self.skipWaiting()),
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      await Promise.allSettled(SHELL.map((url) => cache.add(url)));
+      await precacheAset(cache);
+      await self.skipWaiting();
+    })(),
   );
 });
 

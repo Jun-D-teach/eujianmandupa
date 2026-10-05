@@ -8,12 +8,15 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router";
 import "./index.css";
 import { registerServiceWorker } from "./lib/pwa";
+// ExamPage diimpor STATIS (bukan lazy) — kode ujian harus sudah ikut terbaca
+// begitu shell aplikasi terbuka, supaya tombol "Kerjakan" tetap jalan saat
+// internet dimatikan. Lazy import = fetch chunk = gagal saat offline.
+import ExamPage from "./pages/ExamPage.tsx";
 
 // Lazy load route components for better code splitting
 const Landing = lazy(() => import("./pages/Landing.tsx"));
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
-const ExamPage = lazy(() => import("./pages/ExamPage.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
 // Simple loading fallback for route transitions
@@ -61,6 +64,34 @@ class RootErrorBoundary extends React.Component<
   }
   render() {
     if (this.state.hasError) {
+      // Gagal memuat chunk saat offline (lazy import / jaringan mati) →
+      // tampilkan panduan yang bisa dimengerti siswa, bukan layar error.
+      const gagalKoneksi = /dynamically imported module|failed to fetch|load failed|networkerror|network request failed/i.test(
+        this.state.message,
+      );
+      if (gagalKoneksi) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-background text-foreground p-6">
+            <div className="max-w-md space-y-4 text-center">
+              <p className="text-sm font-semibold">
+                Koneksi internet terputus
+              </p>
+              <p className="text-xs leading-5 text-muted-foreground">
+                Aplikasi belum menyimpan bagian ini di perangkat. Sambungkan
+                internet sebentar lalu muat ulang halaman — soal dan jawaban
+                tetap aman di perangkat.
+              </p>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="rounded-xl border border-border bg-muted px-4 py-2 text-xs font-semibold transition hover:bg-muted/70"
+              >
+                Muat ulang
+              </button>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="min-h-screen flex items-center justify-center bg-background text-foreground p-6">
           <div className="max-w-lg text-center">
