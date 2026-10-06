@@ -16,6 +16,7 @@ import {
   parseTeksSoal,
   type BarisSoalOtomat,
 } from "@/lib/soal-import";
+import { adaFormat, opsiHTML, soalHTML } from "@/lib/soal-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -50,13 +51,20 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  AlignCenter,
+  AlignJustify,
+  AlignRight,
+  Bold,
   CalendarClock,
   ClipboardList,
   Download,
   FileText,
   ImagePlus,
+  Italic,
   KeyRound,
+  ListOrdered,
   Pencil,
+  Pilcrow,
   Plus,
   Power,
   Printer,
@@ -66,6 +74,7 @@ import {
   Target,
   Trash2,
   TriangleAlert,
+  Underline,
   Upload,
   Users,
   Wand2,
@@ -91,10 +100,57 @@ const MAKS_GAMBAR_SOAL = 350_000;
 /** Deteksi huruf "A." / "B)" di depan teks pilihan. */
 const RE_HURUF_DEPAN = /^[A-E][\s.)\-–—:]+/i;
 
-/** Teks pilihan untuk daftar admin — selalu tampil lengkap berhuruf A–E. */
+/** Teks pilihan untuk daftar admin — beri huruf A–E, lalu render format
+ *  (tebal/miring) jadi HTML aman (lihat src/lib/soal-format.ts). */
 function labelOpsi(huruf: string, teks: string, sudahHuruf?: number): string {
-  if (!sudahHuruf) return `${huruf}. ${teks.replace(RE_HURUF_DEPAN, "")}`;
-  return RE_HURUF_DEPAN.test(teks) ? teks : `${huruf}. ${teks}`;
+  if (!sudahHuruf)
+    return opsiHTML(`${huruf}. ${teks.replace(RE_HURUF_DEPAN, "")}`);
+  return opsiHTML(RE_HURUF_DEPAN.test(teks) ? teks : `${huruf}. ${teks}`);
+}
+
+/** Tombol kecil toolbar format penulisan pada kotak tulis soal. */
+function TombolFormat(props: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      disabled={props.disabled}
+      title={props.label}
+      aria-label={props.label}
+      className="flex size-7 items-center justify-center rounded-lg border border-border/70 bg-card text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {props.children}
+    </button>
+  );
+}
+
+/**
+ * Tulis teks ke textarea pada rentang [mulai, akhir] lalu sinkronkan state.
+ * Memakai execCommand("insertText") bila didukung agar undo/redo browser
+ * (Ctrl+Z) tetap berfungsi untuk aksi toolbar.
+ */
+function tulisTextarea(
+  el: HTMLTextAreaElement,
+  teks: string,
+  mulai: number,
+  akhir: number,
+  set: (v: string) => void,
+) {
+  el.focus();
+  el.setSelectionRange(mulai, akhir);
+  let sukses = false;
+  try {
+    sukses = document.execCommand("insertText", false, teks);
+  } catch {
+    sukses = false;
+  }
+  if (!sukses) el.setRangeText(teks, mulai, akhir, "end");
+  set(el.value);
 }
 
 /** Label jadwal ramah baca: Jumat, 12 Oktober 2026 pukul 08.00. */
@@ -941,6 +997,8 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
   const [tempel, setTempel] = useState("");
   const [prosesGambar, setProsesGambar] = useState(false);
   const refGambar = useRef<HTMLInputElement | null>(null);
+  /** Kotak tulis utama (penampung soal) — jadi sasaran toolbar format. */
+  const refTempel = useRef<HTMLTextAreaElement | null>(null);
   /** id soal yang sedang diperbaiki (null = mode tambah). */
   const [editId, setEditId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -964,7 +1022,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
 
   const set =
     (field: keyof typeof form) =>
-    (e: React.ChangeEvent<HTMLInputElement>) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
       setForm((f) => ({ ...f, [field]: e.target.value }));
 
   /** Isi form dari soal terpilih → mode ubah. */
@@ -1070,6 +1128,110 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
     }
   };
 
+  /* ---------------- Toolbar format penulisan (kotak tulis) ---------------- */
+
+  /** Bungkus/lepas penanda tebal–miring–garis bawah pada teks terpilih. */
+  const bungkusFormat = (tanda: string) => {
+    const el = refTempel.current;
+    if (!el) return;
+    const nilai = el.value;
+    const awal = el.selectionStart;
+    const akhir = el.selectionEnd;
+    // Sudah dibungkus penanda yang sama → lepas (toggle).
+    if (
+      awal >= tanda.length &&
+      nilai.slice(awal - tanda.length, awal) === tanda &&
+      nilai.slice(akhir, akhir + tanda.length) === tanda
+    ) {
+      tulisTextarea(
+        el,
+        nilai.slice(awal, akhir),
+        awal - tanda.length,
+        akhir + tanda.length,
+        setTempel,
+      );
+      return;
+    }
+    const pilih = nilai.slice(awal, akhir);
+    // Token awal baris ("A. " / "1. ") tetap di luar penanda agar deteksi
+    // pilihan/nomor saat dipecah tidak terganggu.
+    const token = pilih.match(/^([A-Ea-e][.)\-–—:]\s*|\d{1,3}[.)\-–—:]\s*)/);
+    const geser = token ? token[0].length : 0;
+    const mulai = awal + geser;
+    tulisTextarea(el, tanda + pilih.slice(geser) + tanda, mulai, akhir, setTempel);
+    if (pilih === "") {
+      el.setSelectionRange(mulai + tanda.length, mulai + tanda.length);
+    }
+  };
+
+  /** Numbering otomatis: nomori ulang tiap baris terpilih jadi 1. 2. 3. … */
+  const numberingOtomatis = () => {
+    const el = refTempel.current;
+    if (!el) return;
+    const nilai = el.value;
+    const mulai =
+      nilai.lastIndexOf("\n", Math.max(0, el.selectionStart - 1)) + 1;
+    const iAkhir = nilai.indexOf("\n", el.selectionEnd);
+    const akhir = iAkhir === -1 ? nilai.length : iAkhir;
+    let n = 0;
+    const hasil = nilai
+      .slice(mulai, akhir)
+      .split("\n")
+      .map((baris) => {
+        if (baris.trim() === "") return baris;
+        n += 1;
+        const tanpaNomor = baris
+          .trim()
+          .replace(/^([*_~]{0,4})\s*\d{1,3}[.)\-–—:]\s*/, "$1");
+        return `${n}. ${tanpaNomor}`;
+      })
+      .join("\n");
+    tulisTextarea(el, hasil, mulai, akhir, setTempel);
+  };
+
+  /** Sisipkan paragraf baru (baris baru) di kursor. */
+  const sisipParagraf = () => {
+    const el = refTempel.current;
+    if (!el) return;
+    tulisTextarea(el, "\n", el.selectionStart, el.selectionEnd, setTempel);
+  };
+
+  /** Rata paragraf: "rata" = kiri-kanan (default, tanpa penanda), selain itu
+   *  pasang/lepas penanda [tengah]…[/tengah] atau [kanan]…[/kanan]. */
+  const aturRata = (mode: "tengah" | "kanan" | "rata") => {
+    const el = refTempel.current;
+    if (!el) return;
+    const nilai = el.value;
+    if (mode === "rata") {
+      const bersih = nilai.replace(
+        /\[(tengah|kanan|kiri)\]([\s\S]*?)\[\/\1\]/g,
+        "$2",
+      );
+      if (bersih !== nilai) {
+        tulisTextarea(el, bersih, 0, nilai.length, setTempel);
+      }
+      return;
+    }
+    const awal = el.selectionStart;
+    const akhir = el.selectionEnd;
+    const pilih = nilai.slice(awal, akhir);
+    const buka = `[${mode}]`;
+    const tutup = `[/${mode}]`;
+    if (
+      nilai.slice(awal - buka.length, awal) === buka &&
+      nilai.slice(akhir, akhir + tutup.length) === tutup
+    ) {
+      tulisTextarea(el, pilih, awal - buka.length, akhir + tutup.length, setTempel);
+      return;
+    }
+    if (pilih === "") {
+      tulisTextarea(el, buka + tutup, awal, akhir, setTempel);
+      el.setSelectionRange(awal + buka.length, awal + buka.length);
+      return;
+    }
+    tulisTextarea(el, buka + pilih + tutup, awal, akhir, setTempel);
+  };
+
   /** Pecah kotak tempel (satu soal lengkap) menjadi kolom pertanyaan & A–E. */
   const pecahTempel = () => {
     const hasil = parseTeksSoal(tempel);
@@ -1085,7 +1247,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
         `Teks berisi ${hasil.length} soal — hanya soal pertama yang dipakai. Untuk banyak soal, gunakan “Impor dari Word”.`,
       );
     }
-    const amb = (i: number) => b.opsi[i];
+    const amb = (i: number) => b.opsi[i] ?? "";
     setForm((f) => ({
       ...f,
       pertanyaan: b.pertanyaan || f.pertanyaan,
@@ -1096,11 +1258,17 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       opsi_e: amb(4),
     }));
     if (b.kunci) setKunci(b.kunci);
-    setTempel("");
+    // Teks asli dibiarkan di kotak tulis agar bisa dikoreksi & dipecah ulang.
     const jumlah = [0, 1, 2, 3, 4].filter((i) => amb(i) !== "").length;
-    toast.success(
-      `Teks terurai: ${jumlah} pilihan${b.kunci ? `, kunci ${b.kunci}` : " — kunci belum terdeteksi"}.`,
-    );
+    if (jumlah === 0) {
+      toast.warning(
+        "Soal masuk ke kolom soal — pilihan A–E belum terdeteksi. Tulis pilihan berawalan “A. …” lalu klik Pecah otomatis lagi, atau isi kolom A–E di bawah.",
+      );
+    } else {
+      toast.success(
+        `Soal → kolom soal, ${jumlah} pilihan → kolom A–E${b.kunci ? `, kunci ${b.kunci}` : " — kunci belum terdeteksi"}.`,
+      );
+    }
   };
 
   /* ---------------- Impor dari Word (dialog) ---------------- */
@@ -1251,9 +1419,10 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                   <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                     Soal {i + 1}
                   </p>
-                  <p className="mt-1 text-sm font-semibold leading-6">
-                    {s.pertanyaan}
-                  </p>
+                  <div
+                    className="mt-1 text-sm font-semibold leading-6"
+                    dangerouslySetInnerHTML={{ __html: soalHTML(s.pertanyaan) }}
+                  />
                   {s.gambar && (
                     <img
                       src={s.gambar}
@@ -1262,12 +1431,32 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                     />
                   )}
                   <ul className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-                    <li>{labelOpsi("A", s.opsi_a, s.opsi_huruf)}</li>
-                    <li>{labelOpsi("B", s.opsi_b, s.opsi_huruf)}</li>
-                    <li>{labelOpsi("C", s.opsi_c, s.opsi_huruf)}</li>
-                    <li>{labelOpsi("D", s.opsi_d, s.opsi_huruf)}</li>
+                    <li
+                      dangerouslySetInnerHTML={{
+                        __html: labelOpsi("A", s.opsi_a, s.opsi_huruf),
+                      }}
+                    />
+                    <li
+                      dangerouslySetInnerHTML={{
+                        __html: labelOpsi("B", s.opsi_b, s.opsi_huruf),
+                      }}
+                    />
+                    <li
+                      dangerouslySetInnerHTML={{
+                        __html: labelOpsi("C", s.opsi_c, s.opsi_huruf),
+                      }}
+                    />
+                    <li
+                      dangerouslySetInnerHTML={{
+                        __html: labelOpsi("D", s.opsi_d, s.opsi_huruf),
+                      }}
+                    />
                     {s.opsi_e && (
-                      <li>{labelOpsi("E", s.opsi_e, s.opsi_huruf)}</li>
+                      <li
+                        dangerouslySetInnerHTML={{
+                          __html: labelOpsi("E", s.opsi_e, s.opsi_huruf),
+                        }}
+                      />
                     )}
                   </ul>
                   <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-bold text-emerald-700">
@@ -1324,19 +1513,78 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
           </p>
         )}
         <div className="mt-3 space-y-3">
-          <Input
-            value={form.pertanyaan}
-            onChange={set("pertanyaan")}
-            placeholder="Tulis pertanyaan…"
-          />
-
-          {/* Tempel satu soal lengkap → pecah otomatis */}
+          {/* Kotak tulis utama — penampung soal; hasilnya dipecah ke kolom
+              soal + kolom A–E di bawah. */}
           <div className="rounded-2xl border border-dashed border-border/70 p-3">
+            <div className="mb-2 flex flex-wrap items-center gap-1">
+              <span className="mr-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                Tulis soal
+              </span>
+              <TombolFormat
+                label="Tebal"
+                onClick={() => bungkusFormat("**")}
+                disabled={tempel === ""}
+              >
+                <Bold className="size-3.5" />
+              </TombolFormat>
+              <TombolFormat
+                label="Miring"
+                onClick={() => bungkusFormat("*")}
+                disabled={tempel === ""}
+              >
+                <Italic className="size-3.5" />
+              </TombolFormat>
+              <TombolFormat
+                label="Garis bawah"
+                onClick={() => bungkusFormat("__")}
+                disabled={tempel === ""}
+              >
+                <Underline className="size-3.5" />
+              </TombolFormat>
+              <span className="mx-1 h-5 w-px bg-border" />
+              <TombolFormat
+                label="Numbering otomatis (1. 2. 3.)"
+                onClick={numberingOtomatis}
+                disabled={tempel === ""}
+              >
+                <ListOrdered className="size-3.5" />
+              </TombolFormat>
+              <TombolFormat
+                label="Paragraf baru"
+                onClick={sisipParagraf}
+                disabled={tempel === ""}
+              >
+                <Pilcrow className="size-3.5" />
+              </TombolFormat>
+              <span className="mx-1 h-5 w-px bg-border" />
+              <TombolFormat
+                label="Rata kiri-kanan (rata paragraph)"
+                onClick={() => aturRata("rata")}
+                disabled={tempel === ""}
+              >
+                <AlignJustify className="size-3.5" />
+              </TombolFormat>
+              <TombolFormat
+                label="Rata tengah"
+                onClick={() => aturRata("tengah")}
+                disabled={tempel === ""}
+              >
+                <AlignCenter className="size-3.5" />
+              </TombolFormat>
+              <TombolFormat
+                label="Rata kanan"
+                onClick={() => aturRata("kanan")}
+                disabled={tempel === ""}
+              >
+                <AlignRight className="size-3.5" />
+              </TombolFormat>
+            </div>
             <Textarea
+              ref={refTempel}
               value={tempel}
               onChange={(e) => setTempel(e.target.value)}
-              rows={3}
-              placeholder="Opsional: tempel satu soal lengkap di sini — pertanyaan + pilihan A. B. C. D. (kunci seperti “Kunci: B” terdeteksi otomatis)"
+              rows={6}
+              placeholder="Tulis atau tempel satu soal lengkap di sini: pertanyaan, lalu pilihan A. B. C. D. (kunci seperti “Kunci: B” terdeteksi otomatis). Pilih teks lalu klik tombol di atas untuk tebal, miring, numbering, atau rata paragraph."
             />
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Button
@@ -1350,9 +1598,34 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                 <Wand2 className="size-3.5" /> Pecah otomatis ke kolom A–E
               </Button>
               <p className="text-[11px] leading-4 text-muted-foreground">
-                Huruf A., B., … di depan pilihan dirapikan otomatis.
+                Setelah diklik: soal tampil di <strong>kolom soal</strong>,
+                jawaban di <strong>kolom A–E</strong> di bawah. Huruf A., B., …
+                dirapikan otomatis.
               </p>
             </div>
+          </div>
+
+          {/* Kolom soal — hasil pecah otomatis, bisa dikoreksi langsung */}
+          <div className="grid gap-1.5">
+            <Label htmlFor="kolom-soal">Kolom soal (pertanyaan)</Label>
+            <Textarea
+              id="kolom-soal"
+              value={form.pertanyaan}
+              onChange={set("pertanyaan")}
+              rows={3}
+              placeholder="Pertanyaan muncul di sini setelah klik “Pecah otomatis ke kolom A–E” — boleh dikoreksi langsung."
+            />
+            {adaFormat(form.pertanyaan) && (
+              <div className="rounded-xl border border-border/70 bg-background/60 px-3 py-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Pratinjau tampilan ke siswa
+                </p>
+                <div
+                  className="mt-1 text-sm leading-6"
+                  dangerouslySetInnerHTML={{ __html: soalHTML(form.pertanyaan) }}
+                />
+              </div>
+            )}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -1552,7 +1825,13 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                         <span className="text-muted-foreground">
                           {b.nomor ? `${b.nomor}. ` : ""}
                         </span>
-                        {b.pertanyaan || "(pertanyaan kosong)"}
+                        <span
+                          dangerouslySetInnerHTML={{
+                            __html: opsiHTML(
+                              b.pertanyaan || "(pertanyaan kosong)",
+                            ),
+                          }}
+                        />
                       </p>
                       <Button
                         type="button"
@@ -1567,13 +1846,16 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                       </Button>
                     </div>
                     <ul className="mt-1.5 grid gap-0.5 text-[11px] leading-4 text-muted-foreground sm:grid-cols-2">
-                      {(["A", "B", "C", "D", "E"] as const).map((h, idx) =>
-                        b.opsi[idx] ? (
-                          <li key={h}>
-                            <span className="font-bold text-foreground">{h}.</span>{" "}
-                            {b.opsi[idx]}
-                          </li>
-                        ) : null,
+                      {(["A", "B", "C", "D", "E"] as const).map((h, idx) =>                          b.opsi[idx] ? (
+                            <li key={h}>
+                              <span className="font-bold text-foreground">{h}.</span>{" "}
+                              <span
+                                dangerouslySetInnerHTML={{
+                                  __html: opsiHTML(b.opsi[idx]),
+                                }}
+                              />
+                            </li>
+                          ) : null,
                       )}
                     </ul>
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">

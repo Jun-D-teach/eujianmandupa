@@ -74,9 +74,10 @@ const RE_BARIS_KUNCI_GANDA =
 /** Baris berisi satu huruf saja (blok kunci tanpa nomor): "A". */
 const RE_BARIS_HURUF = /^\s*\(?\s*([A-E])\s*\)?\s*$/i;
 
-/** Keyword kunci di akhir baris: "Kunci: B", "Jawaban : (C)". */
+/** Keyword kunci di akhir baris: "Kunci: B", "Jawaban : (C)".
+ *  Toleran penanda format penulisan: "**Kunci: B**" juga dikenali. */
 const RE_KUNCI_EKOR =
-  /(?:^|\s)(?:kunci(?:\s*(?:jawaban|jawab))?|jawab(?:an)?)\s*[:=-]?\s*\(?\s*([A-E])\)?\s*$/i;
+  /(?:^|[\s*_~])(?:kunci(?:\s*(?:jawaban|jawab))?|jawab(?:an)?)\s*[:=-]?\s*\(?\s*([A-E])\)?[\s*]*$/i;
 
 /** Pasangan "nomor + huruf" untuk menguras blok kunci. */
 const RE_PASANGAN = /(\d{1,3})[.)\-–—:]\s*\(?\s*([A-E])\)?/g;
@@ -150,9 +151,10 @@ type Blok = { nomor: string; baris: string[] };
 
 type Penanda = { huruf: Huruf; pos: number; isi: number };
 
-/** Ketat: huruf harus diawali spasi/awal baris — dipakai MENENTUKAN apakah
- *  baris ini baris pilihan (mencegah "nilai A. adalah" dianggap pilihan). */
-const RE_TANDA_KETAT = /(^|\s)([A-Ea-e])[.)\-–—:]\s*/g;
+/** Ketat: huruf harus diawali spasi/penanda format/awal baris — dipakai
+ *  MENENTUKAN apakah baris ini baris pilihan (mencegah "nilai A. adalah"
+ *  dianggap pilihan; "**A. …**" tetap dikenali sebagai pilihan). */
+const RE_TANDA_KETAT = /(^|[\s*_~])([A-Ea-e])[.)\-–—:]\s*/g;
 /** Longgar: mendeteksi pilihan yang menempel tanpa spasi (hasil XML Word
  *  yang memecah run, mis. "VenusB. Bumi") — dipakai SETELAH baris pasti
  *  baris pilihan. */
@@ -236,19 +238,27 @@ function uraikanBlok(blok: Blok): BarisSoalOtomat {
     //    posisi pemecahan memakai pola longgar (menangkap pilihan menempel).
     const ketat = cariPenanda(b);
     const diAwal =
-      ketat.length > 0 && b.slice(0, ketat[0].pos).trim() === "";
+      ketat.length > 0 &&
+      b.slice(0, ketat[0].pos).replace(/[*_~]/g, "").trim() === "";
     const pakai = ketat.length >= 2 || (ketat.length === 1 && diAwal);
     if (pakai) {
       const penanda = cariPenanda(b, true);
       const prefix = b.slice(0, penanda[0].pos).trim();
-      if (prefix) tambah(prefix);
+      // Hanya penanda format ("**" di depan baris pilihan)? Bukan teks
+      // pertanyaan — pindahkan ke isi pilihan supaya tebal/miring seimbang.
+      const prefixFormat = /^[*_~]+$/.test(prefix) ? prefix : "";
+      if (prefix && !prefixFormat) tambah(prefix);
       for (let i = 0; i < penanda.length; i++) {
         const p = penanda[i];
         const akhir = i + 1 < penanda.length ? penanda[i + 1].pos : b.length;
         const idx = DAFTAR_HURUF.indexOf(p.huruf);
         if (idx < 0) continue;
-        const teksBersih = b.slice(p.isi, akhir).trim();
-        const teksMentah = b.slice(p.pos, akhir).trim();
+        let teksBersih = b.slice(p.isi, akhir).trim();
+        let teksMentah = b.slice(p.pos, akhir).trim();
+        if (prefixFormat && i === 0) {
+          teksBersih = prefixFormat + teksBersih;
+          teksMentah = prefixFormat + teksMentah;
+        }
         slot[idx] = slot[idx] ? `${slot[idx]} ${teksBersih}` : teksBersih;
         mentah[idx] = mentah[idx] ? `${mentah[idx]} ${teksMentah}` : teksMentah;
         opsiTerakhir = idx;
@@ -259,7 +269,13 @@ function uraikanBlok(blok: Blok): BarisSoalOtomat {
     tambah(b);
   }
 
-  let pertanyaan = tanya.join(" ").replace(/\s+/g, " ").trim();
+  // Baris baru dari guru = paragraf baru saat ditampilkan — jangan diratakan
+  // jadi satu baris (lihat src/lib/soal-format.ts).
+  let pertanyaan = tanya
+    .map((t) => t.replace(/[ \t]+/g, " "))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 
   // Kunci tertempel di ekor pertanyaan: "… adalah (C)".
   if (!kunci && jumlahOpsi() >= 2) {
@@ -283,6 +299,20 @@ function uraikanBlok(blok: Blok): BarisSoalOtomat {
 /* API utama                                                           */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Pecah awal baris bernomor ("1.", "2)", "Soal 5.") jadi nomor + isi.
+ * Toleran penanda format penulisan: "**1. Pertanyaan**" diperlakukan sama
+ * dengan "1. Pertanyaan" — penanda yang ikut tertelan dikembalikan ke isi
+ * supaya pasangan tebal/miring tetap seimbang saat dirender.
+ */
+function pecahNomor(line: string): { nomor: string; sisa: string } | null {
+  const penanda = (line.match(/^\s*[*_~]{1,4}/) ?? [""])[0];
+  const polos = line.slice(penanda.length);
+  const m = polos.match(RE_SOAL) ?? polos.match(RE_SOAL_LABEL);
+  if (!m) return null;
+  return { nomor: m[1] ?? "", sisa: (penanda + (m[2] ?? "")).trim() };
+}
+
 /** Pecah teks (dokumen Word hasil salin-tempel / .docx terurai) jadi daftar soal. */
 export function parseTeksSoal(teks: string): BarisSoalOtomat[] {
   const garis = normalisasi(teks).split("\n");
@@ -293,9 +323,9 @@ export function parseTeksSoal(teks: string): BarisSoalOtomat[] {
   // Pecah menjadi blok per nomor soal.
   const blok: Blok[] = [];
   for (const line of isi) {
-    const m = line.match(RE_SOAL) ?? line.match(RE_SOAL_LABEL);
+    const m = pecahNomor(line);
     if (m) {
-      blok.push({ nomor: m[1] ?? "", baris: [m[2] ?? ""] });
+      blok.push({ nomor: m.nomor, baris: [m.sisa] });
     } else if (blok.length > 0) {
       blok[blok.length - 1].baris.push(line);
     } else {

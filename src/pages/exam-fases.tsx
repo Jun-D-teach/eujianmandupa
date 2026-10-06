@@ -15,6 +15,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import type { Pilihan, SesiUjian } from "@/lib/exam-storage";
+import { opsiHTML, soalHTML } from "@/lib/soal-format";
 
 /** Label waktu mulai id-ID (duplikat ringan dari ExamPage). */
 function labelTgl(tglMulai?: string): string {
@@ -356,9 +357,10 @@ export function UjianFase(props: {
             </span>
           </div>
 
-          <p className="mt-4 text-base font-semibold leading-7 sm:text-lg">
-            {soal?.pertanyaan}
-          </p>
+          <div
+            className="mt-4 text-base font-semibold leading-7 sm:text-lg"
+            dangerouslySetInnerHTML={{ __html: soalHTML(soal?.pertanyaan ?? "") }}
+          />
 
           {soal?.gambar && (
             <img
@@ -393,7 +395,10 @@ export function UjianFase(props: {
                       {huruf}
                     </span>
                   )}
-                  <span className="leading-6">{teks}</span>
+                  <span
+                    className="leading-6"
+                    dangerouslySetInnerHTML={{ __html: opsiHTML(teks) }}
+                  />
                   {aktif && (
                     <CheckCircle2 className="ml-auto size-4 shrink-0 text-emerald-600" />
                   )}
