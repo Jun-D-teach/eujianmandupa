@@ -100,6 +100,13 @@ const MAKS_GAMBAR_SOAL = 350_000;
 /** Deteksi huruf "A." / "B)" di depan teks pilihan. */
 const RE_HURUF_DEPAN = /^[A-E][\s.)\-–—:]+/i;
 
+/** Kunci state form untuk sebuah huruf opsi: "A" → "opsi_a".
+ *  Selalu huruf kecil supaya value input, handler set(), dan muatan simpan
+ *  memakai kunci yang sama (dulu "opsi_A" membuat input kosong walau
+ *  "Pecah otomatis" sudah mengisi, dan simpan crash membaca undefined). */
+const fieldOpsi = (huruf: string) =>
+  `opsi_${huruf.toLowerCase()}` as keyof typeof FORM_KOSONG;
+
 /** Teks pilihan untuk daftar admin — beri huruf A–E, lalu render format
  *  (tebal/miring) jadi HTML aman (lihat src/lib/soal-format.ts). */
 function labelOpsi(huruf: string, teks: string, sudahHuruf?: number): string {
@@ -1057,7 +1064,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
     // dibuang oleh server — nilai yang hanya berisi huruf jadi kosong di sana.
     // Tangkap di sini agar pesan menyebut opsi mana & cara mengisinya.
     for (const p of OPSI_WAJIB) {
-      const nilai = form[`opsi_${p}` as keyof typeof form].trim();
+      const nilai = form[fieldOpsi(p)].trim();
       if (!nilai) {
         toast.error(`Opsi ${p} wajib diisi (opsi E opsional).`);
         return;
@@ -1632,8 +1639,8 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
             {PILIHAN.map((p) => (
               <Input
                 key={p}
-                value={form[`opsi_${p}` as keyof typeof form]}
-                onChange={set(`opsi_${p}` as keyof typeof form)}
+                value={form[fieldOpsi(p)]}
+                onChange={set(fieldOpsi(p))}
                 placeholder={p === "E" ? "Opsi E (opsional)" : `Opsi ${p}`}
               />
             ))}

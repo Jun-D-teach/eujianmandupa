@@ -166,6 +166,21 @@ function cariPenanda(baris: string, longgar = false): Penanda[] {
   const keluar: Penanda[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(baris)) !== null) {
+    if (longgar) {
+      // Huruf kecil yang menempel huruf sebelumnya = bagian dari kata,
+      // bukan penanda pilihan ("siswa-siswa", "jakarta.") — kalau dianggap
+      // penanda, teks opsi terpotong di tengah kata. Penanda asli tetap
+      // terkena: di awal baris, setelah spasi, atau huruf besar menempel
+      // ("VenusB. Bumi" hasil run Word yang menempel).
+      const sebelum = m.index > 0 ? baris[m.index - 1] : "";
+      if (
+        m.index > 0 &&
+        m[1] === m[1].toLowerCase() &&
+        /[a-z]/i.test(sebelum)
+      ) {
+        continue;
+      }
+    }
     const pos = m.index + (longgar ? 0 : m[1].length);
     const h = keHuruf(longgar ? m[1] : m[2]);
     if (h) keluar.push({ huruf: h, pos, isi: m.index + m[0].length });
