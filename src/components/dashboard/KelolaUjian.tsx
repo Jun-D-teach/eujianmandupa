@@ -937,8 +937,6 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
   const [soal, setSoal] = useState<SoalGas[] | null>(null);
   const [form, setForm] = useState(FORM_KOSONG);
   const [kunci, setKunci] = useState<Kunci>("A");
-  /** Pilihan sudah menyertakan huruf A–E (teks diketik beserta hurufnya). */
-  const [sudahHuruf, setSudahHuruf] = useState(false);
   /** Kotak tempel: satu soal lengkap dipecah otomatis ke kolom A–E. */
   const [tempel, setTempel] = useState("");
   const [prosesGambar, setProsesGambar] = useState(false);
@@ -982,7 +980,6 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       gambar: s.gambar || "",
     });
     setKunci(((s.kunci_jawaban || "A").toUpperCase() as Kunci) || "A");
-    setSudahHuruf((s.opsi_huruf ?? 0) === 1);
     setTempel("");
   };
 
@@ -991,7 +988,6 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
     setForm(FORM_KOSONG);
     setKunci("A");
     setTempel("");
-    // Mode "sudah berhuruf" sengaja dipertahankan agar nyaman untuk soal berikutnya.
   };
 
   const simpan = async () => {
@@ -999,16 +995,16 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       toast.error("Pertanyaan wajib diisi.");
       return;
     }
-    // Validasi meniru backend (validasiIsiSoal): pada mode normal, huruf
-    // depan "A." DIBUANG — nilai yang hanya berisi huruf jadi kosong di
-    // server. Tangkap di sini agar pesan menyebut opsi mana & cara mengisi.
+    // Validasi meniru backend (validasiIsiSoal): penanda "A." di depan teks
+    // dibuang oleh server — nilai yang hanya berisi huruf jadi kosong di sana.
+    // Tangkap di sini agar pesan menyebut opsi mana & cara mengisinya.
     for (const p of OPSI_WAJIB) {
       const nilai = form[`opsi_${p}` as keyof typeof form].trim();
       if (!nilai) {
         toast.error(`Opsi ${p} wajib diisi (opsi E opsional).`);
         return;
       }
-      if (!sudahHuruf && nilai.replace(RE_HURUF_DEPAN, "").trim() === "") {
+      if (nilai.replace(RE_HURUF_DEPAN, "").trim() === "") {
         toast.error(
           `Opsi ${p} hanya berisi huruf ("${nilai}") — tulis teks pilihannya, mis. "${p}. Jawaban".`,
         );
@@ -1031,7 +1027,8 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
         opsi_e: form.opsi_e.trim(),
         kunci_jawaban: kunci,
         gambar: form.gambar,
-        opsi_huruf: sudahHuruf ? 1 : 0,
+        // opsi_huruf tidak dikirim lagi — server mendeteksi sendiri apakah
+        // guru menulis pilihan beserta hurufnya atau tidak.
       };
       if (editId) {
         await gasCall("ubahSoal", { id: editId, ...muatan });
@@ -1088,7 +1085,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
         `Teks berisi ${hasil.length} soal — hanya soal pertama yang dipakai. Untuk banyak soal, gunakan “Impor dari Word”.`,
       );
     }
-    const amb = (i: number) => (sudahHuruf ? b.opsiMentah[i] : b.opsi[i]);
+    const amb = (i: number) => b.opsi[i];
     setForm((f) => ({
       ...f,
       pertanyaan: b.pertanyaan || f.pertanyaan,
@@ -1333,37 +1330,6 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
             placeholder="Tulis pertanyaan…"
           />
 
-          {/* Pilihan gaya penulisan pilihan jawaban */}
-          <div className="grid gap-2 rounded-2xl border border-border/70 bg-card p-3">
-            <p className="text-xs font-bold">Pilihan jawaban saat menulis soal:</p>
-            <label className="flex cursor-pointer items-start gap-2.5">
-              <input
-                type="radio"
-                name={`huruf-${ujianId}`}
-                className="mt-0.5 accent-emerald-600"
-                checked={!sudahHuruf}
-                onChange={() => setSudahHuruf(false)}
-              />
-              <span className="text-xs leading-5">
-                <strong>Belum menyertakan huruf</strong> — isi pilihan tanpa A., B., …
-                (huruf ditambahkan otomatis saat tampil ke siswa).
-              </span>
-            </label>
-            <label className="flex cursor-pointer items-start gap-2.5">
-              <input
-                type="radio"
-                name={`huruf-${ujianId}`}
-                className="mt-0.5 accent-emerald-600"
-                checked={sudahHuruf}
-                onChange={() => setSudahHuruf(true)}
-              />
-              <span className="text-xs leading-5">
-                <strong>Sudah menyertakan huruf A–E</strong> — pilihan diketik beserta
-                hurufnya (mis. “A. Jakarta”) dan tampil apa adanya untuk siswa.
-              </span>
-            </label>
-          </div>
-
           {/* Tempel satu soal lengkap → pecah otomatis */}
           <div className="rounded-2xl border border-dashed border-border/70 p-3">
             <Textarea
@@ -1384,9 +1350,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                 <Wand2 className="size-3.5" /> Pecah otomatis ke kolom A–E
               </Button>
               <p className="text-[11px] leading-4 text-muted-foreground">
-                {sudahHuruf
-                  ? "Huruf A., B., … dipertahankan apa adanya."
-                  : "Huruf A., B., … dibuang dari kolom."}
+                Huruf A., B., … di depan pilihan dirapikan otomatis.
               </p>
             </div>
           </div>
@@ -1397,18 +1361,15 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                 key={p}
                 value={form[`opsi_${p}` as keyof typeof form]}
                 onChange={set(`opsi_${p}` as keyof typeof form)}
-                placeholder={
-                  sudahHuruf
-                    ? p === "E"
-                      ? `E. … (opsional)`
-                      : `${p}. …`
-                    : p === "E"
-                      ? "Opsi E (opsional)"
-                      : `Opsi ${p}`
-                }
+                placeholder={p === "E" ? "Opsi E (opsional)" : `Opsi ${p}`}
               />
             ))}
           </div>
+          <p className="text-[11px] leading-4 text-muted-foreground">
+            Isi jawaban di tiap kolom — boleh ditulis beserta hurufnya
+            (mis. “A. Jakarta”) atau tanpa huruf (“Jakarta”); huruf A–E otomatis
+            dirapikan saat tampil ke siswa.
+          </p>
 
           {/* Gambar soal (untuk soal bergambar) */}
           <div className="flex flex-wrap items-center gap-3">

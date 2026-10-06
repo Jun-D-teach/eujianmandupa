@@ -1418,16 +1418,21 @@ function validasiIsiSoal(array $d): array
     $pertanyaan = bersih($d['pertanyaan'] ?? '');
     if ($pertanyaan === '') return ['error' => 'Pertanyaan wajib diisi.'];
 
-    // Mode "sudah menyertakan huruf" — teks pilihan diketik beserta A., B., …
-    $opsiHuruf = !empty($d['opsi_huruf']) ? 1 : 0;
+    // Huruf depan pilihan tidak perlu dipilih mode lagi — DETEKSI OTOMATIS:
+    // bila semua pilihan berisi memakai penanda hurufnya sendiri ("A. …" di
+    // kolom A, "B. …" di kolom B), teks disimpan apa adanya; selain itu
+    // penanda dibuang dan huruf dipasang saat tampil ke siswa.
+    // Klien yang mengirim opsi_huruf secara eksplisit tetap dihormati.
+    $opsiHuruf = (array_key_exists('opsi_huruf', $d) && $d['opsi_huruf'] !== null && $d['opsi_huruf'] !== '')
+        ? (!empty($d['opsi_huruf']) ? 1 : 0)
+        : deteksiHurufOpsi($d);
 
     $opsi = [];
     foreach (['opsi_a', 'opsi_b', 'opsi_c', 'opsi_d'] as $w) {
         $huruf = strtoupper(substr($w, -1));
         $asli = bersih($d[$w] ?? '');
-        $v = $asli;
-        if (!$opsiHuruf && $v !== '') $v = buangHurufOpsi($v);
-        if ($v === '') {
+        $polos = $asli === '' ? '' : buangHurufOpsi($asli);
+        if ($polos === '') {
             // Bedakan "kosong" vs "hanya huruf" agar guru tahu opsi mana
             // yang perlu diperbaiki (mis. mengetik "A." saja di kolom B).
             if ($asli !== '') {
@@ -1435,12 +1440,19 @@ function validasiIsiSoal(array $d): array
             }
             return ['error' => 'Opsi ' . $huruf . ' wajib diisi (opsi E opsional).'];
         }
+        $v = $opsiHuruf ? $asli : $polos;
         if (panjangTeks($v) > 600) return ['error' => 'Setiap pilihan maksimal 600 karakter.'];
         $opsi[$w] = $v;
     }
     $opsiE = bersih($d['opsi_e'] ?? '');
-    if (!$opsiHuruf && $opsiE !== '') $opsiE = buangHurufOpsi($opsiE);
-    if ($opsiE !== '' && panjangTeks($opsiE) > 600) return ['error' => 'Setiap pilihan maksimal 600 karakter.'];
+    if ($opsiE !== '') {
+        $polosE = buangHurufOpsi($opsiE);
+        if ($polosE === '') {
+            return ['error' => 'Opsi E hanya berisi huruf ("' . $opsiE . '") — tulis teks pilihannya atau kosongkan kolomnya.'];
+        }
+        if (!$opsiHuruf) $opsiE = $polosE;
+        if (panjangTeks($opsiE) > 600) return ['error' => 'Setiap pilihan maksimal 600 karakter.'];
+    }
 
     $kunci = strtoupper(bersih($d['kunci_jawaban'] ?? ''));
     if (!in_array($kunci, ['A', 'B', 'C', 'D', 'E'], true)) return ['error' => 'Kunci jawaban harus huruf A–E.'];
@@ -1465,14 +1477,33 @@ function validasiIsiSoal(array $d): array
         'gambar' => $gambar,
         'opsi_huruf' => $opsiHuruf,
     ];
-}
-
-/** Mode "belum berhuruf": buang penanda "A." / "B)" / "C -" di depan teks. */
+}/** Mode "belum berhuruf": buang penanda "A." / "B)" / "C -" di depan teks.
+ *  Catatan: tanda hubung HARUS di-escape (\-) — tanpa itu PCRE membacanya
+ *  sebagai rentang " "–"–" dan ikut menghapus seluruh teks berawalan A–E. */
 function buangHurufOpsi(string $v): string
 {
-    $b = preg_replace('/^[A-E][\s.):\-–]+/iu', '', $v);
+    $b = preg_replace('/^[A-E][\s.)\-–—:]+/iu', '', $v);
     if ($b === null) return trim($v); // UTF-8 tidak valid — biarkan apa adanya
     return trim($b);
+}
+
+/**
+ * Deteksi otomatis: 1 bila SEMUA pilihan berisi memakai penanda hurufnya
+ * sendiri ("A. …" di kolom A dst.) — teks disimpan apa adanya.
+ * Selain itu (sebagian berhuruf / tidak ada) → 0, penanda dibuang semua.
+ */
+function deteksiHurufOpsi(array $d): int
+{
+    $jumlah = 0;
+    $semua = true;
+    foreach (['opsi_a', 'opsi_b', 'opsi_c', 'opsi_d', 'opsi_e'] as $w) {
+        $teks = bersih($d[$w] ?? '');
+        if ($teks === '') continue;
+        $jumlah++;
+        $huruf = strtoupper(substr($w, -1));
+        if (!preg_match('/^' . $huruf . '[\s.)\-–—:]+/iu', $teks)) $semua = false;
+    }
+    return ($jumlah > 0 && $semua) ? 1 : 0;
 }
 
 /** Panjang teks dalam karakter (fallback bila ekstensi mbstring tidak ada). */
