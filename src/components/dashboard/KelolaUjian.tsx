@@ -1255,6 +1255,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       );
     }
     const amb = (i: number) => b.opsi[i] ?? "";
+    const pertanyaanLama = form.pertanyaan;
     setForm((f) => ({
       ...f,
       pertanyaan: b.pertanyaan || f.pertanyaan,
@@ -1267,7 +1268,17 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
     if (b.kunci) setKunci(b.kunci);
     // Teks asli dibiarkan di kotak tulis agar bisa dikoreksi & dipecah ulang.
     const jumlah = [0, 1, 2, 3, 4].filter((i) => amb(i) !== "").length;
-    if (jumlah === 0) {
+    if (!b.pertanyaan) {
+      // Kotak hanya berisi pilihan (tanpa baris pertanyaan) — jangan klaim
+      // soal masuk kolom soal; arahkan guru ke kolom soal supaya tidak
+      // merasa soalnya "hilang".
+      toast.warning(
+        pertanyaanLama
+          ? `${jumlah} pilihan → kolom A–E. Kotak tulis tidak berisi baris pertanyaan — kolom soal TIDAK diubah (masih teks sebelumnya).`
+          : `${jumlah} pilihan → kolom A–E, tetapi baris pertanyaan tidak ditemukan di kotak tulis. Tulis/tempel pertanyaan sebagai baris PERTAMA di atas “A.” lalu klik Pecah lagi — atau ketik langsung di kolom soal.`,
+      );
+      document.getElementById("kolom-soal")?.focus();
+    } else if (jumlah === 0) {
       toast.warning(
         "Soal masuk ke kolom soal — pilihan A–E belum terdeteksi. Tulis pilihan berawalan “A. …” lalu klik Pecah otomatis lagi, atau isi kolom A–E di bawah.",
       );
@@ -1605,7 +1616,8 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                 <Wand2 className="size-3.5" /> Pecah otomatis ke kolom A–E
               </Button>
               <p className="text-[11px] leading-4 text-muted-foreground">
-                Setelah diklik: soal tampil di <strong>kolom soal</strong>,
+                Pertanyaan harus <strong>baris pertama</strong> di atas huruf
+                A. Setelah diklik: soal tampil di <strong>kolom soal</strong>,
                 jawaban di <strong>kolom A–E</strong> di bawah. Huruf A., B., …
                 dirapikan otomatis.
               </p>
