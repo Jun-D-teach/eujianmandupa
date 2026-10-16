@@ -890,6 +890,8 @@ function a_ubahGuru(array $d): array
             && !satu('SELECT id FROM pengguna WHERE username = ?', [$baruKunci])) {
             $p = jalan("UPDATE pengguna SET username = ? WHERE username = ? AND role = 'guru'", [$baruKunci, $lamaKunci]);
             if ($p === 0) jalan('UPDATE pengguna SET username = ? WHERE username = ?', [$baruKunci, $lamaKunci]);
+            // Rename bisa mengenai akun bekas peran 'siswa' — samakan peran.
+            samakanPeranGuru($baruKunci, bersih($v['nama']));
         }
     }
     return $n > 0 ? ['success' => true, 'message' => 'Data guru diperbarui.'] : galat('Guru tidak ditemukan.');
@@ -914,6 +916,32 @@ function a_hapusGuruMassal(array $d): array
     return $n > 0
         ? ['success' => true, 'hapus' => $n, 'message' => $n . ' guru dihapus.']
         : galat('Guru tidak ditemukan.');
+}
+
+/**
+ * Kembalikan akun login guru (username = NIP) ke peran 'guru' bila masih
+ * berperan 'siswa' — kasus lama: akun dibuat lebih dulu dari data siswa /
+ * peran lupa diset, sehingga login guru masuk tampilan siswa. Perbaikan
+ * hanya dilakukan bila aman: nama akun cocok dengan nama guru, atau nama
+ * akun masih placeholder (= username). Selain itu admin diminta memeriksa
+ * menu Pengguna (jangan otomatis menaikkan peran akun yang namanya beda).
+ * @return array{status:'sudah'|'diperbaiki'|'perlu-cek', role:string}
+ */
+function samakanPeranGuru(string $kunciUsername, string $namaGuru): array
+{
+    $u = satu('SELECT id, nama, role FROM pengguna WHERE username = ? LIMIT 1', [$kunciUsername]);
+    if (!$u) return ['status' => 'perlu-cek', 'role' => ''];
+    $role = strtolower(bersih($u['role']));
+    if ($role === 'guru') return ['status' => 'sudah', 'role' => $role];
+    $namaAkun = strtolower(trim(bersih($u['nama'])));
+    $namaGuruBersih = strtolower(trim($namaGuru));
+    $cocok = ($namaGuruBersih !== '' && $namaAkun === $namaGuruBersih)
+        || $namaAkun === '' || $namaAkun === strtolower($kunciUsername);
+    if ($role === 'siswa' && $cocok) {
+        jalan("UPDATE pengguna SET role = 'guru' WHERE id = ?", [(string) $u['id']]);
+        return ['status' => 'diperbaiki', 'role' => 'guru'];
+    }
+    return ['status' => 'perlu-cek', 'role' => $role];
 }
 
 /**
@@ -949,6 +977,16 @@ function a_ubahPasswordGuru(array $d): array
     }
     if ($ada) {
         jalan('UPDATE pengguna SET password = ? WHERE id = ?', [$pass, (string) $ada['id']]);
+        // Akun guru bisa tersisa berperan 'siswa' (dibuat lama dari data siswa
+        // / peran lupa diset) — perbaiki otomatis bila namanya cocok, supaya
+        // login guru tidak masuk tampilan siswa.
+        $peran = samakanPeranGuru($kunci, bersih($g['nama']));
+        if ($peran['status'] === 'diperbaiki') {
+            return ['success' => true, 'message' => 'Password guru & akun login (username ' . $nip . ') diperbarui — peran akun diperbaiki otomatis menjadi Guru.'];
+        }
+        if ($peran['status'] === 'perlu-cek') {
+            return ['success' => true, 'message' => 'Password guru diperbarui, tetapi akun username ' . $nip . ' berperan "' . $peran['role'] . '" — buka tab Pengguna dan ubah perannya ke Guru bila akun ini memang untuk guru.'];
+        }
     } else {
         // (3) Akun login belum ada sama sekali → buat otomatis supaya password baru bisa dipakai.
         jalan(
@@ -1023,10 +1061,24 @@ function a_buatAkunGuru(array $d): array
 
     $dibuat = 0;
     $lewati = 0;
+    $diperbaiki = 0;
+    $perluCek = [];
     foreach ($guru as $g) {
         $nip = bersih($g['nip']);
         $kunci = strtolower($nip);
-        if ($nip === '' || isset($ada[$kunci])) {
+        if ($nip === '') {
+            $lewati++;
+            continue;
+        }
+        if (isset($ada[$kunci])) {
+            // Akun sudah ada — pastikan perannya 'guru', bukan sisa 'siswa'
+            // (login guru dengan akun itu akan masuk tampilan siswa).
+            $peran = samakanPeranGuru($kunci, bersih($g['nama']));
+            if ($peran['status'] === 'diperbaiki') {
+                $diperbaiki++;
+            } elseif ($peran['status'] === 'perlu-cek') {
+                $perluCek[] = $nip . ' (peran: ' . $peran['role'] . ')';
+            }
             $lewati++;
             continue;
         }
@@ -1040,6 +1092,8 @@ function a_buatAkunGuru(array $d): array
     }
     $pesan = $dibuat . ' akun guru dibuat (username = NIP).';
     if ($lewati) $pesan .= ' ' . $lewati . ' dilewati (sudah ada).';
+    if ($diperbaiki) $pesan .= ' ' . $diperbaiki . ' peran diperbaiki otomatis menjadi Guru.';
+    if ($perluCek) $pesan .= ' Periksa tab Pengguna untuk: ' . implode(', ', $perluCek) . '.';
     return ['success' => true, 'dibuat' => $dibuat, 'lewati' => $lewati, 'message' => $pesan];
 }
 
