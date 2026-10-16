@@ -721,10 +721,38 @@ function a_ubahSiswa(array $d): array
 {
     $v = validasiSiswa($d);
     if (isset($v['error'])) return galat($v['error']);
+    $id = bersih($d['id'] ?? '');
+    if ($id === '') return galat('Siswa tidak ditemukan.');
+    if (satu('SELECT id FROM siswa WHERE nisn = ? AND id <> ?', [$v['nisn'], $id])) {
+        return galat('NISN "' . $v['nisn'] . '" sudah dipakai siswa lain.');
+    }
+    $lama = satu('SELECT nisn FROM siswa WHERE id = ?', [$id]);
     $n = jalan(
         'UPDATE siswa SET nisn = ?, nama = ?, tgllahir = ?, kelas = ? WHERE id = ?',
-        [$v['nisn'], $v['nama'], $v['tgllahir'], $v['kelas'], bersih($d['id'] ?? '')]
+        [$v['nisn'], $v['nama'], $v['tgllahir'], $v['kelas'], $id]
     );
+    if ($n > 0) {
+        // Sinkron akun login siswa (username = NISN). Login membaca tabel
+        // pengguna, bukan tabel siswa — tanpa sinkron ini, siswa yang login
+        // masih melihat nama/kelas lama walau data siswa sudah benar.
+        $kunciLama = $lama ? strtolower(bersih($lama['nisn'])) : '';
+        $kunciBaru = strtolower($v['nisn']);
+        if ($kunciLama !== '') {
+            jalan(
+                "UPDATE pengguna SET nama = ?, kelas = ? WHERE username = ? AND role NOT IN ('guru','admin')",
+                [$v['nama'], $v['kelas'], $kunciLama]
+            );
+            // NISN berubah → username akun login ikut diganti (dengan jaga
+            // agar tidak menimpa akun lain yang sudah memakai NISN baru).
+            if ($kunciBaru !== $kunciLama
+                && !satu('SELECT id FROM pengguna WHERE username = ?', [$kunciBaru])) {
+                jalan(
+                    "UPDATE pengguna SET username = ? WHERE username = ? AND role NOT IN ('guru','admin')",
+                    [$kunciBaru, $kunciLama]
+                );
+            }
+        }
+    }
     return $n > 0 ? ['success' => true, 'message' => 'Data siswa diperbarui.'] : galat('Siswa tidak ditemukan.');
 }
 
@@ -892,6 +920,15 @@ function a_ubahGuru(array $d): array
             if ($p === 0) jalan('UPDATE pengguna SET username = ? WHERE username = ?', [$baruKunci, $lamaKunci]);
             // Rename bisa mengenai akun bekas peran 'siswa' — samakan peran.
             samakanPeranGuru($baruKunci, bersih($v['nama']));
+        }
+        // Sinkron nama & mapel ke akun login (username = NIP). Login membaca
+        // tabel pengguna — tanpa sinkron ini tampilan guru tetap nama/mapel
+        // lama walau data guru sudah benar (sama seperti kasus siswa).
+        if ($baruKunci !== '') {
+            jalan(
+                "UPDATE pengguna SET nama = ?, kelas = ? WHERE username = ? AND role = 'guru'",
+                [bersih($v['nama']), bersih($v['mapel']), $baruKunci]
+            );
         }
     }
     return $n > 0 ? ['success' => true, 'message' => 'Data guru diperbarui.'] : galat('Guru tidak ditemukan.');
