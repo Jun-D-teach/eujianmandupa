@@ -185,6 +185,35 @@ function pastikanStruktur(): void
             kunci VARCHAR(64) NOT NULL PRIMARY KEY,
             nilai TEXT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS ruang (
+            id VARCHAR(40) NOT NULL PRIMARY KEY,
+            nama VARCHAR(64) NOT NULL,
+            kapasitas INT NOT NULL DEFAULT 20,
+            komposisi TEXT NULL,
+            urutan INT NOT NULL DEFAULT 0,
+            dibuat DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS penempatan (
+            ruang_id VARCHAR(40) NOT NULL,
+            nisn VARCHAR(32) NOT NULL,
+            nama VARCHAR(160) NOT NULL DEFAULT '',
+            kelas VARCHAR(64) NOT NULL DEFAULT '',
+            kursi INT NOT NULL DEFAULT 0,
+            PRIMARY KEY (ruang_id, kursi),
+            KEY idx_penempatan_nisn (nisn)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS jadwal_pengawas (
+            id VARCHAR(40) NOT NULL PRIMARY KEY,
+            hari_ke INT NOT NULL DEFAULT 1,
+            tanggal VARCHAR(16) NOT NULL DEFAULT '',
+            sesi INT NOT NULL DEFAULT 1,
+            jam VARCHAR(16) NOT NULL DEFAULT '',
+            ruang_id VARCHAR(40) NOT NULL DEFAULT '',
+            ruang_nama VARCHAR(64) NOT NULL DEFAULT '',
+            nip VARCHAR(32) NOT NULL DEFAULT '',
+            nama VARCHAR(160) NOT NULL DEFAULT '',
+            KEY idx_jadwal_tanggal (tanggal)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
     ];
 
     foreach ($ddl as $sql) db()->exec($sql);
@@ -288,6 +317,9 @@ const AKSES = [
     'getPengaturan' => 2, 'aturPin' => 2, 'buatPengguna' => 2,
     'ubahPeran' => 2, 'getPengguna' => 2, 'ubahPasswordPengguna' => 2,
     'getKartuSet' => 2, 'aturKartuSet' => 2,
+
+    'getRuangSet' => 2, 'simpanRuang' => 2, 'hapusRuang' => 2,
+    'simpanPengawas' => 2, 'buatJadwalPengawas' => 2, 'buatPenempatan' => 2,
 ];
 
 function tingkatPeran($role): int
@@ -472,6 +504,12 @@ function jalankan(string $action, array $d): array
         case 'aturPin': return a_aturPin($d);
         case 'getKartuSet': return a_getKartuSet();
         case 'aturKartuSet': return a_aturKartuSet($d);
+        case 'getRuangSet': return a_getRuangSet();
+        case 'simpanRuang': return a_simpanRuang($d);
+        case 'hapusRuang': return a_hapusRuang($d);
+        case 'simpanPengawas': return a_simpanPengawas($d);
+        case 'buatJadwalPengawas': return a_buatJadwalPengawas($d);
+        case 'buatPenempatan': return a_buatPenempatan($d);
         case 'buatPengguna': return a_buatPengguna($d);
         case 'ubahPeran': return a_ubahPeran($d);
         case 'ubahPasswordPengguna': return a_ubahPasswordPengguna($d);
@@ -1876,6 +1914,386 @@ function a_aturKartuSet(array $d): array
     simpanPengaturan('kartu_logo', (string) ($d['logo'] ?? ''));
     simpanPengaturan('kartu_ttd', (string) ($d['ttd'] ?? ''));
     return ['success' => true, 'message' => 'Pengaturan kartu ujian disimpan.'];
+}
+
+/* ------------------------------------------------------------------ */
+/* RUANG UJIAN, JADWAL PENGAWAS & PENEMPATAN TEMPAT DUDUK (admin)      */
+/* ------------------------------------------------------------------ */
+
+/** Tingkat dari kelas: "X.1" → "X", "XI" → "XI". */
+function tingkatDariKelas(string $kelas): string
+{
+    $k = strtoupper(trim($kelas));
+    if ($k === '') return '';
+    $pos = strpos($k, '.');
+    return $pos !== false ? trim(substr($k, 0, $pos)) : $k;
+}
+
+/** Urut tingkat: X, XI, XII — selain itu di belakang. */
+function urutTingkat(string $t): int
+{
+    $map = ['X' => 1, 'XI' => 2, 'XII' => 3, 'XIII' => 4];
+    return $map[strtoupper(trim($t))] ?? 99;
+}
+
+/** Daftar ruang (terurut urutan buat). */
+function daftarRuang(): array
+{
+    return array_map(function ($r) {
+        $komp = [];
+        $j = json_decode((string) ($r['komposisi'] ?? ''), true);
+        if (is_array($j)) {
+            foreach ($j as $t => $n) {
+                $tk = strtoupper(bersih($t));
+                if ($tk !== '' && (int) $n > 0) $komp[$tk] = (int) $n;
+            }
+        }
+        return [
+            'id' => (string) $r['id'],
+            'nama' => (string) $r['nama'],
+            'kapasitas' => (int) $r['kapasitas'],
+            'komposisi' => $komp,
+            'urutan' => (int) $r['urutan'],
+        ];
+    }, semua('SELECT * FROM ruang ORDER BY urutan, nama'));
+}
+
+/** NIP guru pengawas terpilih (tersimpan JSON di tabel pengaturan). */
+function daftarPengawas(): array
+{
+    $j = json_decode(bacaPengaturan('ruang_pengawas', '[]'), true);
+    $out = [];
+    if (is_array($j)) {
+        foreach ($j as $nip) {
+            $n = bersih($nip);
+            if ($n !== '') $out[] = $n;
+        }
+    }
+    return array_values(array_unique($out));
+}
+
+/** Normalisasi jam "07:30" / "7.30" → "07.30" (bila valid). */
+function jamNormal(string $v): string
+{
+    if (!preg_match('/^(\d{1,2})[:.\-](\d{2})$/', trim($v), $m)) return '';
+    $j = (int) $m[1];
+    $mi = (int) $m[2];
+    if ($j > 23 || $mi > 59) return '';
+    return sprintf('%02d.%02d', $j, $mi);
+}
+
+function a_getRuangSet(): array
+{
+    $ruang = daftarRuang();
+    $namaRuang = [];
+    foreach ($ruang as $r) $namaRuang[$r['id']] = $r['nama'];
+
+    $jadwal = [];
+    foreach (semua('SELECT * FROM jadwal_pengawas ORDER BY tanggal, sesi, ruang_nama') as $r) {
+        $rid = (string) $r['ruang_id'];
+        $jadwal[] = [
+            'id' => (string) $r['id'],
+            'hari_ke' => (int) $r['hari_ke'],
+            'tanggal' => (string) $r['tanggal'],
+            'sesi' => (int) $r['sesi'],
+            'jam' => (string) $r['jam'],
+            'ruang_id' => $rid,
+            'ruang_nama' => (string) ($r['ruang_nama'] !== '' ? $r['ruang_nama'] : ($namaRuang[$rid] ?? '')),
+            'nip' => (string) $r['nip'],
+            'nama' => (string) $r['nama'],
+        ];
+    }
+
+    $penempatan = [];
+    $sql = 'SELECT p.ruang_id, p.nisn, p.nama, p.kelas, p.kursi, r.nama AS rnama
+            FROM penempatan p LEFT JOIN ruang r ON r.id = p.ruang_id
+            ORDER BY r.urutan, r.nama, p.kursi';
+    foreach (semua($sql) as $p) {
+        $penempatan[] = [
+            'ruang_id' => (string) $p['ruang_id'],
+            'ruang_nama' => (string) ($p['rnama'] ?? ''),
+            'nisn' => (string) $p['nisn'],
+            'nama' => (string) $p['nama'],
+            'kelas' => (string) $p['kelas'],
+            'kursi' => (int) $p['kursi'],
+        ];
+    }
+
+    return [
+        'success' => true,
+        'ruang' => $ruang,
+        'pengawas' => daftarPengawas(),
+        'jadwal' => $jadwal,
+        'penempatan' => $penempatan,
+    ];
+}
+
+function a_simpanRuang(array $d): array
+{
+    $id = bersih($d['id'] ?? '');
+    $nama = bersih($d['nama'] ?? '');
+    if ($nama === '') return galat('Nama ruang wajib diisi.');
+    if (strlen($nama) > 64) return galat('Nama ruang maksimal 64 karakter.');
+    $kapasitas = max(1, min(200, (int) ($d['kapasitas'] ?? 0)));
+
+    $komp = [];
+    if (is_array($d['komposisi'] ?? null)) {
+        foreach ($d['komposisi'] as $t => $n) {
+            $tk = strtoupper(bersih($t));
+            $jml = (int) $n;
+            if ($tk === '' || $jml < 0) continue;
+            if ($jml > 0) $komp[$tk] = $jml;
+        }
+    }
+    $totalKomp = (int) array_sum($komp);
+    if ($komp && $totalKomp !== $kapasitas) {
+        return galat(
+            "Total komposisi ($totalKomp siswa) harus SAMA dengan kapasitas ruang ($kapasitas). "
+            . 'Atau kosongkan komposisi agar diisi otomatis dari data siswa.'
+        );
+    }
+
+    $kompJson = $komp ? (string) json_encode($komp, JSON_UNESCAPED_UNICODE) : '';
+    $pesanTambahan = '';
+
+    if ($id !== '') {
+        $lama = satu('SELECT kapasitas, komposisi FROM ruang WHERE id = ?', [$id]);
+        if (!$lama) return galat('Ruang tidak ditemukan.');
+        $strukturBaru = ((int) $lama['kapasitas'] !== $kapasitas)
+            || (string) $lama['komposisi'] !== $kompJson;
+        jalan(
+            'UPDATE ruang SET nama = ?, kapasitas = ?, komposisi = ? WHERE id = ?',
+            [$nama, $kapasitas, $kompJson, $id]
+        );
+        // Jadwal pengawas ikut memakai nama ruang terbaru.
+        jalan('UPDATE jadwal_pengawas SET ruang_nama = ? WHERE ruang_id = ?', [$nama, $id]);
+        if ($strukturBaru) {
+            jalan('DELETE FROM penempatan WHERE ruang_id = ?', [$id]);
+            $pesanTambahan = ' Struktur ruang berubah — penempatan pada ruang ini direset, susun ulang tempat duduk.';
+        }
+    } else {
+        $maks = satu('SELECT MAX(urutan) AS m FROM ruang');
+        $id = idBaru('rg');
+        jalan(
+            'INSERT INTO ruang (id, nama, kapasitas, komposisi, urutan) VALUES (?,?,?,?,?)',
+            [$id, $nama, $kapasitas, $kompJson, ((int) ($maks['m'] ?? 0)) + 1]
+        );
+    }
+
+    return ['success' => true, 'id' => $id, 'message' => 'Ruang "' . $nama . '" tersimpan.' . $pesanTambahan];
+}
+
+function a_hapusRuang(array $d): array
+{
+    $id = bersih($d['id'] ?? '');
+    if ($id === '') return galat('Ruang tidak valid.');
+    $lama = satu('SELECT nama FROM ruang WHERE id = ?', [$id]);
+    if (!$lama) return galat('Ruang tidak ditemukan.');
+    jalan('DELETE FROM ruang WHERE id = ?', [$id]);
+    jalan('DELETE FROM penempatan WHERE ruang_id = ?', [$id]);
+    jalan('DELETE FROM jadwal_pengawas WHERE ruang_id = ?', [$id]);
+    return ['success' => true, 'message' => 'Ruang "' . bersih($lama['nama']) . '" beserta jadwal & penempatannya dihapus.'];
+}
+
+function a_simpanPengawas(array $d): array
+{
+    $namaGuru = [];
+    foreach (semua('SELECT nip, nama FROM guru') as $g) {
+        $namaGuru[strtolower(bersih($g['nip']))] = true;
+    }
+    $pilih = [];
+    $tanpa = 0;
+    foreach ((is_array($d['nips'] ?? null) ? $d['nips'] : []) as $nip) {
+        $n = bersih($nip);
+        if ($n === '') continue;
+        if (!isset($namaGuru[strtolower($n)])) {
+            $tanpa++;
+            continue;
+        }
+        $pilih[] = $n;
+    }
+    $pilih = array_values(array_unique($pilih));
+    simpanPengaturan('ruang_pengawas', (string) json_encode($pilih));
+    $pesan = count($pilih) . ' guru ditetapkan sebagai pengawas ruang.';
+    if ($tanpa > 0) $pesan .= " $tanpa NIP tidak ditemukan di Data Guru dan dilewati.";
+    return ['success' => true, 'pengawas' => $pilih, 'message' => $pesan];
+}
+
+function a_buatJadwalPengawas(array $d): array
+{
+    $mulai = bersih($d['tanggal_mulai'] ?? '');
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $mulai)) {
+        return galat('Tanggal mulai ujian wajib diisi (format YYYY-MM-DD).');
+    }
+    $totalHari = max(1, min(60, (int) ($d['total_hari'] ?? 0)));
+    $sesiHari = max(1, min(10, (int) ($d['sesi_per_hari'] ?? 0)));
+
+    $ruang = daftarRuang();
+    if (!$ruang) return galat('Belum ada ruang — buat daftar ruang dulu.');
+    $pengawas = daftarPengawas();
+    if (!$pengawas) return galat('Belum ada guru pengawas — centang guru pengawas dulu.');
+
+    $namaGuru = [];
+    foreach (semua('SELECT nip, nama FROM guru') as $g) {
+        $namaGuru[strtolower(bersih($g['nip']))] = bersih($g['nama']);
+    }
+
+    // Jam per sesi: dari input (pisah koma/spasi/baris) atau default 2,5 jam.
+    $jam = [];
+    $potong = preg_split('/[,;\n]+/', (string) ($d['jam'] ?? '')) ?: [];
+    foreach ($potong as $p) {
+        $n = jamNormal($p);
+        if ($n !== '' && !in_array($n, $jam, true)) $jam[] = $n;
+    }
+    while (count($jam) < $sesiHari) {
+        $menit = 450 + count($jam) * 150; // 07.30, 10.00, 12.30, 15.00, …
+        $jam[] = sprintf('%02d.%02d', intdiv($menit, 60) % 24, $menit % 60);
+    }
+    $jam = array_slice($jam, 0, max($sesiHari, 1));
+
+    jalan('DELETE FROM jadwal_pengawas', []);
+    $idx = 0;
+    $dibuat = 0;
+    $awal = new DateTime($mulai);
+    for ($h = 1; $h <= $totalHari; $h++) {
+        $tanggal = (clone $awal)->modify('+' . ($h - 1) . ' days')->format('Y-m-d');
+        for ($s = 1; $s <= $sesiHari; $s++) {
+            foreach ($ruang as $rg) {
+                $nip = $pengawas[$idx % count($pengawas)];
+                $idx++;
+                jalan(
+                    'INSERT INTO jadwal_pengawas
+                     (id, hari_ke, tanggal, sesi, jam, ruang_id, ruang_nama, nip, nama)
+                     VALUES (?,?,?,?,?,?,?,?,?)',
+                    [
+                        idBaru('jp'),
+                        $h,
+                        $tanggal,
+                        $s,
+                        $jam[$s - 1],
+                        $rg['id'],
+                        $rg['nama'],
+                        $nip,
+                        $namaGuru[strtolower($nip)] ?? $nip,
+                    ]
+                );
+                $dibuat++;
+            }
+        }
+    }
+
+    $pesan = "$dibuat penugasan dibuat: $totalHari hari × $sesiHari sesi/hari × "
+        . count($ruang) . ' ruang, merata dari ' . count($pengawas) . ' guru pengawas.';
+    if (count($pengawas) < count($ruang)) {
+        $pesan .= ' PERINGATAN: guru pengawas lebih sedikit dari jumlah ruang — ada guru yang mengawasi lebih dari satu ruang dalam sesi sama.';
+    }
+    return ['success' => true, 'dibuat' => $dibuat, 'jam' => $jam, 'message' => $pesan];
+}
+
+function a_buatPenempatan(array $d): array
+{
+    $ruang = daftarRuang();
+    if (!$ruang) return galat('Belum ada ruang — buat daftar ruang dulu.');
+    $siswa = semua('SELECT nisn, nama, kelas FROM siswa');
+    if (!$siswa) return galat('Data siswa masih kosong — impor data siswa dulu.');
+
+    // Urut: tingkat (X, XI, XII) → kelas → nama → NISN (natural).
+    usort($siswa, function ($a, $b) {
+        $ta = urutTingkat(tingkatDariKelas((string) $a['kelas']));
+        $tb = urutTingkat(tingkatDariKelas((string) $b['kelas']));
+        if ($ta !== $tb) return $ta <=> $tb;
+        $ka = strnatcasecmp((string) $a['kelas'], (string) $b['kelas']);
+        if ($ka !== 0) return $ka;
+        $na = strnatcasecmp((string) $a['nama'], (string) $b['nama']);
+        if ($na !== 0) return $na;
+        return strnatcasecmp((string) $a['nisn'], (string) $b['nisn']);
+    });
+
+    // Kantong siswa per tingkat (belum terpakai semua).
+    $kantong = [];
+    foreach ($siswa as $s) {
+        $t = tingkatDariKelas((string) $s['kelas']);
+        if ($t === '') $t = 'LAIN';
+        $kantong[$t][] = [
+            'nisn' => bersih($s['nisn']),
+            'nama' => bersih($s['nama']),
+            'kelas' => bersih($s['kelas']),
+        ];
+    }
+
+    jalan('DELETE FROM penempatan', []);
+    $total = 0;
+    $ringkas = [];
+    $kurang = [];
+
+    foreach ($ruang as $rg) {
+        $kursi = 1;
+        $terisi = 0;
+        $pakai = []; // tingkat => sisa jatah (menipis saat digilir)
+        if ($rg['komposisi']) {
+            foreach ($rg['komposisi'] as $t => $n) $pakai[$t] = (int) $n;
+        } else {
+            foreach (array_keys($kantong) as $t) $pakai[$t] = PHP_INT_MAX;
+        }
+        // Urut tingkat agar hasil rapat: X, XI, XII, …
+        uksort($pakai, function ($a, $b) {
+            return urutTingkat($a) <=> urutTingkat($b);
+        });
+        $tingkats = array_keys($pakai);
+        $perTingkat = [];
+        $i = 0;
+        while ($terisi < $rg['kapasitas'] && $tingkats) {
+            // Berhenti bila tak ada lagi siswa yang bisa diambil.
+            $ada = false;
+            foreach ($tingkats as $t) {
+                if ($pakai[$t] > 0 && !empty($kantong[$t])) {
+                    $ada = true;
+                    break;
+                }
+            }
+            if (!$ada) break;
+            $t = $tingkats[$i % count($tingkats)];
+            $i++;
+            if ($pakai[$t] <= 0 || empty($kantong[$t])) continue;
+            $s = array_shift($kantong[$t]);
+            if (!$s || $s['nisn'] === '') continue;
+            $pakai[$t] = $pakai[$t] === PHP_INT_MAX ? PHP_INT_MAX : $pakai[$t] - 1;
+            $perTingkat[$t] = ($perTingkat[$t] ?? 0) + 1;
+            jalan(
+                'INSERT INTO penempatan (ruang_id, nisn, nama, kelas, kursi) VALUES (?,?,?,?,?)',
+                [$rg['id'], $s['nisn'], $s['nama'], $s['kelas'], $kursi]
+            );
+            $kursi++;
+            $terisi++;
+            $total++;
+        }
+        // Catat kekurangan terhadap komposisi yang diminta.
+        $kurangRuang = [];
+        foreach ($rg['komposisi'] as $t => $n) {
+            $isi = (int) ($perTingkat[$t] ?? 0);
+            if ($isi < $n) $kurangRuang[] = "$t hanya $isi/$n";
+        }
+        $ringkas[] = [
+            'ruang' => $rg['nama'],
+            'terisi' => $terisi,
+            'kapasitas' => $rg['kapasitas'],
+        ];
+        if ($terisi < $rg['kapasitas'] || $kurangRuang) {
+            $ket = $terisi . '/' . $rg['kapasitas'];
+            if ($kurangRuang) $ket .= ' — kurang: ' . implode(', ', $kurangRuang);
+            $kurang[] = $rg['nama'] . ' (' . $ket . ')';
+        }
+    }
+
+    // Sisa siswa yang belum punya tempat (di luar total kapasitas semua ruang).
+    $sisaSiswa = 0;
+    foreach ($kantong as $q) $sisaSiswa += count($q);
+
+    $pesan = "$total siswa ditempatkan di " . count($ruang) . ' ruang.';
+    if ($kurang) $pesan .= ' Ruang belum penuh: ' . implode(', ', $kurang) . ' (data siswa sesuai tingkat kurang).';
+    if ($sisaSiswa > 0) $pesan .= " $sisaSiswa siswa belum terbagi — tambah ruang/kapasitas lalu susun ulang.";
+
+    return ['success' => true, 'ditempatkan' => $total, 'ringkas' => $ringkas, 'message' => $pesan];
 }
 
 /* ------------------------------------------------------------------ */

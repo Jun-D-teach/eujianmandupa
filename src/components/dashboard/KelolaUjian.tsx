@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { gasCall, tokenValid, type SoalGas, type SiswaGas, type UjianGas } from "@/lib/api";
+import { gasCall, tokenValid, type RuangSetGas, type SoalGas, type SiswaGas, type UjianGas } from "@/lib/api";
 import {
   cetakKartu,
   cocokSasaran,
@@ -378,6 +378,10 @@ export function KelolaUjian() {
   const [cetakTarget, setCetakTarget] = useState<UjianGas | null>(null);
   const [cetakSet, setCetakSet] = useState<SetKartu | null>(null);
   const [cetakSiswa, setCetakSiswa] = useState<SiswaGas[] | null>(null);
+  /** Hasil penentuan ruang (Pengaturan → Ruang ujian): NISN → ruang & kursi. */
+  const [cetakTempat, setCetakTempat] = useState<
+    Map<string, { ruang: string; noDuduk: number }>
+  >(new Map());
   const [cetakMode, setCetakMode] = useState<CetakMode>("A4");
   const [cetakMuat, setCetakMuat] = useState(false);
 
@@ -486,19 +490,27 @@ export function KelolaUjian() {
     }
   };
 
-  /** Buka dialog cetak kartu — muat setelan kop/TTD + siswa sesuai sasaran. */
+  /** Buka dialog cetak kartu — muat setelan kop/TTD, siswa sesuai sasaran,
+   *  dan hasil penentuan ruang (bila sudah dibuat admin). */
   const bukaCetak = async (u: UjianGas) => {
     setCetakTarget(u);
     setCetakSet(null);
     setCetakSiswa(null);
+    setCetakTempat(new Map());
     setCetakMuat(true);
     try {
-      const [set, siswa] = await Promise.all([
+      const [set, siswa, rs] = await Promise.all([
         gasCall<SetKartu>("getKartuSet"),
         gasCall<{ siswa: SiswaGas[] }>("getSiswa"),
+        gasCall<RuangSetGas>("getRuangSet").catch(() => null),
       ]);
       setCetakSet(set);
       setCetakSiswa(siswa.siswa.filter((s) => cocokSasaran(u, s.kelas)));
+      const peta = new Map<string, { ruang: string; noDuduk: number }>();
+      for (const p of rs?.penempatan ?? []) {
+        peta.set(p.nisn, { ruang: p.ruang_nama, noDuduk: p.kursi });
+      }
+      setCetakTempat(peta);
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Gagal memuat data kartu ujian.",
@@ -509,35 +521,40 @@ export function KelolaUjian() {
     }
   };
 
-  const jalankanCetak = () => {
-    if (!cetakTarget || !cetakSet || !cetakSiswa || cetakSiswa.length === 0) return;
-    const kartu: IsiKartu[] = cetakSiswa.map((s) => ({
+  /** Isi satu kartu — menyertakan ruang & no. duduk bila penempatan ada. */
+  const kartuDari = (u: UjianGas, s: SiswaGas): IsiKartu => {
+    const t = cetakTempat.get(s.nisn);
+    return {
       nisn: s.nisn,
       nama: s.nama,
       kelas: s.kelas,
-      judul: cetakTarget.judul,
-      jadwal: cetakTarget.tgl_mulai
-        ? jadwalLabel(cetakTarget.tgl_mulai)
+      judul: u.judul,
+      jadwal: u.tgl_mulai
+        ? jadwalLabel(u.tgl_mulai)
         : "Tanpa jadwal (langsung dibuka)",
-      durasi: cetakTarget.durasi_menit,
-    }));
+      durasi: u.durasi_menit,
+      ruang: t?.ruang,
+      noDuduk: t?.noDuduk,
+    };
+  };
+
+  const jalankanCetak = () => {
+    if (!cetakTarget || !cetakSet || !cetakSiswa || cetakSiswa.length === 0) return;
+    const kartu: IsiKartu[] = cetakSiswa.map((s) => kartuDari(cetakTarget, s));
     cetakKartu(cetakSet, kartu, cetakMode, (pesan) => toast.error(pesan));
   };
 
   /** Kartu contoh untuk pratinjau (siswa pertama yang cocok sasaran). */
   const contohKartu: IsiKartu | null =
     cetakTarget && cetakSiswa && cetakSiswa.length > 0
-      ? {
-          nisn: cetakSiswa[0].nisn,
-          nama: cetakSiswa[0].nama,
-          kelas: cetakSiswa[0].kelas,
-          judul: cetakTarget.judul,
-          jadwal: cetakTarget.tgl_mulai
-            ? jadwalLabel(cetakTarget.tgl_mulai)
-            : "Tanpa jadwal (langsung dibuka)",
-          durasi: cetakTarget.durasi_menit,
-        }
+      ? kartuDari(cetakTarget, cetakSiswa[0])
       : null;
+
+  /** Berapa kartu peserta yang sudah punya ruang & no. duduk. */
+  const jumlahBertempat =
+    cetakSiswa && cetakSiswa.length > 0
+      ? cetakSiswa.filter((s) => cetakTempat.has(s.nisn)).length
+      : 0;
 
   const konfirmasiHapus = async () => {
     if (!hapusTarget) return;
@@ -898,6 +915,9 @@ export function KelolaUjian() {
               "{cetakTarget?.judul}" — kartu ukuran KTP (85,6 × 54 mm) untuk {" "}
               {cetakSiswa?.length ?? 0} siswa sesuai sasaran ujian, lengkap
               dengan kop, logo & tanda tangan kepala madrasah.
+              {jumlahBertempat > 0
+                ? ` ${jumlahBertempat} kartu menyertakan ruang & no. duduk dari hasil penentuan ruang.`
+                : ""}
             </DialogDescription>
           </DialogHeader>
 

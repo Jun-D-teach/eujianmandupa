@@ -108,6 +108,49 @@ export type PenggunaGas = {
   role: Role;
 };
 
+/* Data ruang ujian, jadwal pengawas & penempatan tempat duduk (admin). */
+
+export type KomposisiRuang = Record<string, number>;
+
+export type RuangGas = {
+  id: string;
+  nama: string;
+  kapasitas: number;
+  /** {"X": 10, "XI": 10} — kosong = diisi otomatis menggilir data siswa. */
+  komposisi: KomposisiRuang;
+  urutan: number;
+};
+
+export type JadwalPengawasGas = {
+  id: string;
+  hari_ke: number;
+  /** "YYYY-MM-DD" */
+  tanggal: string;
+  sesi: number;
+  /** "07.30" */
+  jam: string;
+  ruang_id: string;
+  ruang_nama: string;
+  nip: string;
+  nama: string;
+};
+
+export type PenempatanGas = {
+  ruang_id: string;
+  ruang_nama: string;
+  nisn: string;
+  nama: string;
+  kelas: string;
+  kursi: number;
+};
+
+export type RuangSetGas = {
+  ruang: RuangGas[];
+  pengawas: string[];
+  jadwal: JadwalPengawasGas[];
+  penempatan: PenempatanGas[];
+};
+
 const KUNCI_USER = "ujianaman:user";
 const KUNCI_SESI = "ujianaman:sesi";
 

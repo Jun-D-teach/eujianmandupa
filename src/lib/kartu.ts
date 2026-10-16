@@ -32,6 +32,10 @@ export type IsiKartu = {
   /** Label jadwal jadi, mis. "Jumat, 12 Oktober 2026 pukul 08.00". */
   jadwal: string;
   durasi: number;
+  /** Hasil penentuan ruang (Pengaturan → Ruang ujian) — opsional. */
+  ruang?: string;
+  /** Nomor tempat duduk peserta pada ruang tersebut. */
+  noDuduk?: number;
 };
 
 export type CetakMode = "A4" | "KTP";
@@ -211,6 +215,14 @@ export function kartuHTML(set: SetKartu, k: IsiKartu): string {
     `<tr><td class="lbl">${label}</td><td class="dot">:</td>` +
     `<td class="val">${esc(nilai) || "&nbsp;"}</td></tr>`;
 
+  // Ruang & no. duduk hanya tampil bila penempatan sudah dibuat admin.
+  const barisRuang = k.ruang
+    ? baris("Ruang", k.ruang)
+    : "";
+  const barisKursi = k.noDuduk
+    ? baris("No. duduk", String(k.noDuduk))
+    : "";
+
   return `
 <div class="kartu">
   <div class="kop">
@@ -226,6 +238,8 @@ export function kartuHTML(set: SetKartu, k: IsiKartu): string {
       ${baris("NISN", k.nisn)}
       ${baris("Nama", k.nama)}
       ${baris("Kelas", k.kelas)}
+      ${barisRuang}
+      ${barisKursi}
     </table>
     <div class="bawah">
       <table class="data ujian">
