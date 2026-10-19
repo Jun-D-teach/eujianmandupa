@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   getGuruRingkasGas,
   getJadwalHarianGas,
@@ -19,7 +19,6 @@ import {
   jadwalHarianHTML,
   labelTanggal,
   normalisasiJam,
-  pengawasOtomatis,
 } from "@/lib/jadwal-harian";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -34,7 +33,6 @@ import {
   Printer,
   Save,
   Search,
-  Shuffle,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -96,11 +94,6 @@ export function PengaturanJadwal() {
   const [mapelSesi, setMapelSesi] = useState<string[]>(["", "", ""]);
   const [pengawasSesi, setPengawasSesi] = useState<string[][]>([[], [], []]);
   const [baris, setBaris] = useState<BarisJadwalHarianGas[] | null>(null);
-  // Pengawas otomatis: berapa nama per sesi (gilir merata antar sesi & tanggal).
-  const [perSesiOto, setPerSesiOto] = useState(1);
-  const perSesiRef = useRef(1);
-  // Ref daftar guru agar efek muat jadwal tak perlu dependensi ke state guru.
-  const guruRef = useRef<GuruRingkasGas[]>([]);
   // Mulai true: baris pertama dimuat begitu setelan siap; di-set "true" hanya
   // dari handler perubahan (tanggal/kolom) agar tidak ada setState sinkron di efek.
   const [memuatJadwal, setMemuatJadwal] = useState(true);
@@ -122,7 +115,6 @@ export function PengaturanJadwal() {
         setHariKerja(s.hari_kerja);
         setLibur(s.libur);
         setGuru(g.guru ?? []);
-        guruRef.current = g.guru ?? [];
         setKartu({
           sekolah: k.sekolah ?? SET_KOSONG.sekolah,
           alamat: k.alamat ?? "",
@@ -165,24 +157,6 @@ export function PengaturanJadwal() {
           });
           return n;
         });
-        // Sesi hari ini yang belum tersimpan pengawasnya → isi otomatis (gilir).
-        const otomatis = new Map<number, string[]>();
-        const sesiHari = hitungSesiTanggal(
-          tanggal,
-          setel.hari_kerja,
-          setel.libur,
-        ).sesi;
-        const perlu = sesiHari.filter(
-          (s) => !res.baris.some((b) => b.sesi === s && b.pengawas.length),
-        );
-        if (perlu.length && guruRef.current.length) {
-          pengawasOtomatis(
-            tanggal,
-            guruRef.current.map((g) => g.nama),
-            perlu,
-            perSesiRef.current,
-          ).forEach((daftar, i) => otomatis.set(perlu[i], daftar));
-        }
         setPengawasSesi((p) => {
           const n = Array.from(
             { length: Math.max(p.length, res.total) },
@@ -190,9 +164,6 @@ export function PengaturanJadwal() {
           );
           res.baris.forEach((b) => {
             n[b.sesi - 1] = b.pengawas;
-          });
-          otomatis.forEach((daftar, s) => {
-            n[s - 1] = daftar;
           });
           return n;
         });
@@ -224,42 +195,6 @@ export function PengaturanJadwal() {
     setJamSesi((j) => Array.from({ length: n }, (_, i) => j[i] || auto[i]));
     setMapelSesi((m) => Array.from({ length: n }, (_, i) => m[i] ?? ""));
     setPengawasSesi((p) => Array.from({ length: n }, (_, i) => p[i] ?? []));
-  };
-
-  const ubahPerSesiOto = (n: number) => {
-    perSesiRef.current = n;
-    setPerSesiOto(n);
-  };
-
-  /** Gilir ulang pengawas otomatis untuk seluruh sesi hari ini (menimpa draft). */
-  const gilirPengawas = () => {
-    if (!guruRef.current.length) {
-      toast.error("Belum ada data guru untuk digilir.");
-      return;
-    }
-    if (!sesiAktif.length) {
-      toast.error("Tanggal ini tidak punya sesi.");
-      return;
-    }
-    const hasil = pengawasOtomatis(
-      tanggal,
-      guruRef.current.map((g) => g.nama),
-      sesiAktif,
-      perSesiOto,
-    );
-    setPengawasSesi((p) => {
-      const n = Array.from(
-        { length: Math.max(p.length, totalSesi) },
-        (_, i) => p[i] ?? [],
-      );
-      sesiAktif.forEach((s, i) => {
-        n[s - 1] = hasil[i];
-      });
-      return n;
-    });
-    toast.success(
-      `Pengawas digilir otomatis (${perSesiOto} per sesi untuk sesi ${sesiAktif.join(", ")}). Perikla lalu simpan.`,
-    );
   };
 
   const ubahJam = (i: number, v: string) =>
@@ -540,42 +475,6 @@ export function PengaturanJadwal() {
             </Card>
           ) : (
             <>
-              <Card className="border-border/70 p-5">
-                <div className="flex flex-wrap items-end gap-3">
-                  <div className="grid gap-2">
-                    <Label htmlFor="pengawas-per-sesi">
-                      Pengawas per sesi (otomatis)
-                    </Label>
-                    <select
-                      id="pengawas-per-sesi"
-                      value={perSesiOto}
-                      onChange={(e) => ubahPerSesiOto(Number(e.target.value))}
-                      className="h-9 w-40 rounded-md border border-input bg-background px-3 text-sm"
-                    >
-                      {[1, 2, 3].map((n) => (
-                        <option key={n} value={n}>
-                          {n} pengawas
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="gap-2"
-                    disabled={memuatJadwal || !guru.length}
-                    onClick={gilirPengawas}
-                  >
-                    <Shuffle className="size-4" /> Gilir pengawas otomatis
-                  </Button>
-                  <p className="max-w-md text-[11px] leading-5 text-muted-foreground">
-                    Nama guru digilir merata antar sesi &amp; antar tanggal —
-                    otomatis terisi saat tanggal dibuka (bila belum tersimpan),
-                    hasilnya bebas dimanualkan lalu disimpan.
-                  </p>
-                </div>
-              </Card>
-
               <div className="space-y-4">
                 {sesiAktif.map((s) => {
                   const cari = cariGuru[s] ?? "";

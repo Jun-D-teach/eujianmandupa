@@ -92,49 +92,6 @@ export function jamMulaiOtomatis(total: number, mulaiMenit = 7 * 60 + 30): strin
   return out;
 }
 
-/** Hari sejak epoch (lokal) — offset giliran yang stabil per tanggal. */
-function offsetTanggal(tanggal: string): number {
-  const d = parseISO(tanggal);
-  if (!d) return 0;
-  return Math.floor(
-    Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86_400_000,
-  );
-}
-
-/**
- * Penugasan pengawas otomatis per sesi satu tanggal: daftar nama digilir
- * merata (perSesi nama per sesi, berputar bila guru kurang dari kebutuhan),
- * dan urutan digeser per tanggal — hari berbeda mendapat urutan berbeda,
- * tanggal sama selalu menghasilkan hasil yang sama.
- * Mengembalikan array sepanjang daftarSesi (berurutan sesuai daftarSesi).
- */
-export function pengawasOtomatis(
-  tanggal: string,
-  namaGuru: readonly string[],
-  daftarSesi: readonly number[],
-  perSesi = 1,
-): string[][] {
-  const hasil: string[][] = daftarSesi.map(() => []);
-  const unik = Array.from(
-    new Set(namaGuru.map((n) => n.trim()).filter(Boolean)),
-  );
-  if (!unik.length || !daftarSesi.length) return hasil;
-  const p = Math.max(1, Math.floor(perSesi));
-  const geser = offsetTanggal(tanggal) % unik.length;
-  const urut = [...unik.slice(geser), ...unik.slice(0, geser)];
-  daftarSesi.forEach((_s, i) => {
-    const dipakai = new Set<string>();
-    for (let k = 0; k < p; k++) {
-      const nama = urut[(i * p + k) % urut.length];
-      if (!dipakai.has(nama)) {
-        dipakai.add(nama);
-        hasil[i].push(nama);
-      }
-    }
-  });
-  return hasil;
-}
-
 /**
  * Apakah tanggal ini punya jadwal? Sesi = urutan hari kerja pada kalender.
  * Nomor hari Indonesia: 1=Senin … 7=Minggu.
