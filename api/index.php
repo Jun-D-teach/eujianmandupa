@@ -214,6 +214,13 @@ function pastikanStruktur(): void
             nama VARCHAR(160) NOT NULL DEFAULT '',
             KEY idx_jadwal_tanggal (tanggal)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS jadwal_harian (
+            tanggal VARCHAR(16) NOT NULL,
+            sesi INT NOT NULL DEFAULT 1,
+            mapel VARCHAR(160) NOT NULL DEFAULT '',
+            pengawas TEXT NULL,
+            PRIMARY KEY (tanggal, sesi)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
     ];
 
     foreach ($ddl as $sql) db()->exec($sql);
@@ -320,6 +327,9 @@ const AKSES = [
 
     'getRuangSet' => 2, 'simpanRuang' => 2, 'hapusRuang' => 2,
     'simpanPengawas' => 2, 'buatJadwalPengawas' => 2, 'buatPenempatan' => 2,
+
+    'getSetelGas' => 2, 'setelGas' => 2, 'getGuruGas' => 2,
+    'jadwalHarianHarianGas' => 2, 'jadwalHarianSimpanGas' => 2,
 ];
 
 function tingkatPeran($role): int
@@ -510,6 +520,11 @@ function jalankan(string $action, array $d): array
         case 'simpanPengawas': return a_simpanPengawas($d);
         case 'buatJadwalPengawas': return a_buatJadwalPengawas($d);
         case 'buatPenempatan': return a_buatPenempatan($d);
+        case 'getSetelGas': return a_getSetelGas();
+        case 'setelGas': return a_setelGas($d);
+        case 'getGuruGas': return a_getGuruGas();
+        case 'jadwalHarianHarianGas': return a_jadwalHarianHarianGas($d);
+        case 'jadwalHarianSimpanGas': return a_jadwalHarianSimpanGas($d);
         case 'buatPengguna': return a_buatPengguna($d);
         case 'ubahPeran': return a_ubahPeran($d);
         case 'ubahPasswordPengguna': return a_ubahPasswordPengguna($d);
@@ -2045,11 +2060,18 @@ function a_simpanRuang(array $d): array
             if ($jml > 0) $komp[$tk] = $jml;
         }
     }
-    $totalKomp = (int) array_sum($komp);
-    if ($komp && $totalKomp !== $kapasitas) {
+    // Setiap ruang = campuran TEPAT dua tingkat (X+XI, X+XII, atau XI+XII)
+    // dan jumlah keduanya harus sama dengan kapasitas ruang.
+    if (count($komp) !== 2) {
         return galat(
-            "Total komposisi ($totalKomp siswa) harus SAMA dengan kapasitas ruang ($kapasitas). "
-            . 'Atau kosongkan komposisi agar diisi otomatis dari data siswa.'
+            'Komposisi ruang harus tepat 2 tingkat (mis. X & XI, X & XII, atau XI & XII) — '
+            . 'kosongkan tingkat yang tidak dipakai.'
+        );
+    }
+    $totalKomp = (int) array_sum($komp);
+    if ($totalKomp !== $kapasitas) {
+        return galat(
+            "Total kedua tingkat ($totalKomp siswa) harus SAMA dengan kapasitas ruang ($kapasitas)."
         );
     }
 
@@ -2294,6 +2316,302 @@ function a_buatPenempatan(array $d): array
     if ($sisaSiswa > 0) $pesan .= " $sisaSiswa siswa belum terbagi — tambah ruang/kapasitas lalu susun ulang.";
 
     return ['success' => true, 'ditempatkan' => $total, 'ringkas' => $ringkas, 'message' => $pesan];
+}
+
+/* ------------------------------------------------------------------ */
+/* JADWAL HARIAN — satu tanggal, N baris = N sesi (digilir antar tingkat) */
+/* ------------------------------------------------------------------ */
+
+/** Nama kolom pada tabel siswa (huruf kecil semua). */
+function kolomSiswa(): array
+{
+    $out = [];
+    foreach (db()->query('SHOW COLUMNS FROM siswa')->fetchAll() as $r) {
+        $out[] = strtolower(bersih($r['Field'] ?? ''));
+    }
+    return $out;
+}
+
+/** Nama hari besar (MINGGU…SABTU) dari tanggal "YYYY-MM-DD". */
+function namaHari(string $tanggal): string
+{
+    static $h = ['MINGGU', 'SENIN', 'SELASA', 'RABU', 'KAMIS', 'JUMAT', 'SABTU'];
+    $ts = strtotime($tanggal);
+    return $ts === false ? '' : ($h[(int) date('w', $ts)] ?? '');
+}
+
+/**
+ * Deteksi otomatis kolom tingkat/kelas/nis/absen dari nama kolom tabel siswa.
+ * "#kelas" berarti tingkat diturunkan dari kolom kelas (mis. "X.1" → "X").
+ */
+function deteksiKolomSiswa(): array
+{
+    $ada = [];
+    foreach (kolomSiswa() as $k) $ada[$k] = true;
+
+    $auto = ['tingkat' => '', 'kelas' => '', 'nis' => '', 'absen' => ''];
+    foreach (['tingkat', 'grade', 'jenjang'] as $k) {
+        if (isset($ada[$k])) { $auto['tingkat'] = $k; break; }
+    }
+    foreach (['kelas', 'class', 'rombel'] as $k) {
+        if (isset($ada[$k])) { $auto['kelas'] = $k; break; }
+    }
+    if ($auto['tingkat'] === '' && $auto['kelas'] !== '') $auto['tingkat'] = '#' . $auto['kelas'];
+    foreach (['nis', 'nisn', 'no_induk'] as $k) {
+        if (isset($ada[$k])) { $auto['nis'] = $k; break; }
+    }
+    foreach (['absen', 'no_absen', 'nomor_absen'] as $k) {
+        if (isset($ada[$k])) { $auto['absen'] = $k; break; }
+    }
+    return $auto;
+}
+
+/** Setelan jadwal harian: deteksi kolom, pilihan admin, kalender (hari kerja + libur). */
+function a_getSetelGas(): array
+{
+    $auto = deteksiKolomSiswa();
+
+    $konf = json_decode(bacaPengaturan('jadwal_kolom'), true);
+    if (!is_array($konf)) $konf = [];
+    $kolom = [
+        'tingkat' => bersih($konf['tingkat'] ?? ''),
+        'kelas' => bersih($konf['kelas'] ?? ''),
+        'nis' => bersih($konf['nis'] ?? ''),
+        'absen' => bersih($konf['absen'] ?? ''),
+    ];
+    foreach ($kolom as $kunci => $v) {
+        if ($v === '') $kolom[$kunci] = $auto[$kunci];
+    }
+
+    $kal = json_decode(bacaPengaturan('kalender_ajaran'), true);
+    if (!is_array($kal)) $kal = [];
+    $hariKerja = [];
+    foreach ((array) ($kal['hari_kerja'] ?? [1, 2, 3, 4, 5]) as $h) {
+        $h = (int) $h;
+        if ($h >= 1 && $h <= 7 && !in_array($h, $hariKerja, true)) $hariKerja[] = $h;
+    }
+    if (!$hariKerja) $hariKerja = [1, 2, 3, 4, 5];
+    sort($hariKerja);
+    $libur = [];
+    foreach ((array) ($kal['libur'] ?? []) as $tgl) {
+        $tgl = bersih($tgl);
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $tgl) && !in_array($tgl, $libur, true)) $libur[] = $tgl;
+    }
+    sort($libur);
+
+    // Contoh baris data siswa — membantu admin mengenali kolom yang tepat.
+    $pilih = [];
+    foreach ([$kolom['tingkat'], $kolom['kelas'], $kolom['nis'], $kolom['absen']] as $c) {
+        if ($c !== '' && strpos($c, '#') !== 0 && !in_array($c, $pilih, true)) $pilih[] = $c;
+    }
+    $contoh = [];
+    if ($pilih) {
+        $sel = 'SELECT ' . implode(', ', array_map(function ($c) {
+            return '`' . str_replace('`', '', $c) . '`';
+        }, $pilih)) . ' FROM siswa ORDER BY kelas, nama LIMIT 6';
+        $contoh = semua($sel);
+    }
+
+    return [
+        'success' => true,
+        'kolom' => $kolom,
+        'auto' => $auto,
+        'daftar_kolom' => kolomSiswa(),
+        'contoh' => $contoh,
+        'hari_kerja' => $hariKerja,
+        'libur' => $libur,
+    ];
+}
+
+/** Simpan setelan jadwal harian (pilihan kolom + kalender hari kerja/libur). */
+function a_setelGas(array $d): array
+{
+    $k = is_array($d['kolom'] ?? null) ? $d['kolom'] : [];
+    $kolom = [
+        'tingkat' => bersih($k['tingkat'] ?? ''),
+        'kelas' => bersih($k['kelas'] ?? ''),
+        'nis' => bersih($k['nis'] ?? ''),
+        'absen' => bersih($k['absen'] ?? ''),
+    ];
+    $valid = kolomSiswa();
+    foreach ($kolom as $c) {
+        // Nilai "#kelas" bukan kolom nyata — tingkat diturunkan dari kolom kelas.
+        if ($c !== '' && strpos($c, '#') !== 0 && !in_array($c, $valid, true)) {
+            return galat("Kolom siswa \"$c\" tidak ada di tabel siswa.");
+        }
+    }
+    if ($kolom['tingkat'] === '' && $kolom['kelas'] === '') {
+        return galat('Pilih minimal kolom Tingkat atau Kelas.');
+    }
+
+    $hariKerja = [];
+    foreach ((array) ($d['hari_kerja'] ?? []) as $h) {
+        $h = (int) $h;
+        if ($h >= 1 && $h <= 7 && !in_array($h, $hariKerja, true)) $hariKerja[] = $h;
+    }
+    if (!$hariKerja) $hariKerja = [1, 2, 3, 4, 5];
+    sort($hariKerja);
+
+    $libur = [];
+    foreach ((array) ($d['libur'] ?? []) as $tgl) {
+        $tgl = bersih($tgl);
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $tgl) && !in_array($tgl, $libur, true)) $libur[] = $tgl;
+    }
+    sort($libur);
+
+    simpanPengaturan('jadwal_kolom', json_encode($kolom, JSON_UNESCAPED_UNICODE));
+    simpanPengaturan(
+        'kalender_ajaran',
+        json_encode(['hari_kerja' => $hariKerja, 'libur' => $libur], JSON_UNESCAPED_UNICODE)
+    );
+
+    return ['success' => true, 'message' => 'Setelan kolom & kalender jadwal disimpan.'];
+}
+
+/** Daftar guru untuk kolom "Pengawas" jadwal harian (admin). */
+function a_getGuruGas(): array
+{
+    return ['success' => true, 'guru' => semua('SELECT nip, nama, mapel FROM guru ORDER BY nama')];
+}
+
+/** Baris jadwal harian siap cetak untuk satu tanggal (digilir antar tingkat). */
+function a_jadwalHarianHarianGas(array $d): array
+{
+    $tanggal = bersih($d['tanggal'] ?? '');
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal)) {
+        return galat('Tanggal tidak valid.');
+    }
+    $k = is_array($d['kolom'] ?? null) ? $d['kolom'] : [];
+    $tTingkat = bersih($k['tingkat'] ?? '');
+    $tKelas = bersih($k['kelas'] ?? '');
+    $tNis = bersih($k['nis'] ?? '');
+    $tAbsen = bersih($k['absen'] ?? '');
+    if ($tTingkat === '' && $tKelas === '') {
+        return galat('Pilih dulu kolom Tingkat atau Kelas di tab "Pengaturan kolom".');
+    }
+    $valid = kolomSiswa();
+    foreach ([$tTingkat, $tKelas, $tNis, $tAbsen] as $c) {
+        if ($c !== '' && strpos($c, '#') !== 0 && !in_array($c, $valid, true)) {
+            return galat("Kolom siswa \"$c\" tidak ada di tabel siswa.");
+        }
+    }
+
+    $kolomSel = array_values(array_filter(
+        array_unique([$tTingkat, $tKelas, $tNis, $tAbsen]),
+        function ($c) { return $c !== '' && strpos($c, '#') !== 0; }
+    ));
+    $sel = 'SELECT ' . implode(', ', array_map(function ($c) {
+        return '`' . str_replace('`', '', $c) . '`';
+    }, $kolomSel)) . ' FROM siswa';
+    $semuaSiswa = semua($sel);
+
+    $baris = [];
+    foreach ($semuaSiswa as $s) {
+        $kelas = $tKelas !== '' ? bersih($s[$tKelas] ?? '') : '';
+        $tingkat = $tTingkat !== '' && strpos($tTingkat, '#') !== 0
+            ? bersih($s[$tTingkat] ?? '')
+            : tingkatDariKelas($kelas);
+        if ($tingkat === '') $tingkat = 'LAIN';
+        $baris[] = [
+            'nis' => $tNis !== '' ? bersih($s[$tNis] ?? '') : '',
+            'nama' => bersih($s['nama'] ?? ''),
+            'kelas' => $kelas,
+            'tingkat' => $tingkat,
+            'absen' => $tAbsen !== '' ? (string) (int) ($s[$tAbsen] ?? 0) : '',
+        ];
+    }
+    if (!$baris) return galat('Data siswa masih kosong — impor data siswa dulu.');
+
+    // Urut dalam tiap tingkat: kelas → nama.
+    usort($baris, function ($a, $b) {
+        $ka = strnatcasecmp($a['kelas'], $b['kelas']);
+        if ($ka !== 0) return $ka;
+        return strnatcasecmp($a['nama'], $b['nama']);
+    });
+
+    // Gilir antar tingkat: baris 1 = siswa pertama tiap tingkat (kolom A, B, C, …).
+    $kelompok = [];
+    foreach ($baris as $b) $kelompok[$b['tingkat']][] = $b;
+    $urut = array_keys($kelompok);
+    usort($urut, function ($a, $b) {
+        return urutTingkat($a) <=> urutTingkat($b);
+    });
+    $gilir = [];
+    $i = 0;
+    while (true) {
+        $ada = false;
+        foreach ($urut as $t) {
+            if (isset($kelompok[$t][$i])) {
+                $gilir[] = $kelompok[$t][$i];
+                $ada = true;
+            }
+        }
+        if (!$ada) break;
+        $i++;
+    }
+
+    // Absensi otomatis per kelas bila kolom absen tidak dipilih.
+    $perKelas = [];
+    foreach ($gilir as $idx => $b) {
+        $kunciKelas = $b['kelas'] !== '' ? $b['kelas'] : $b['tingkat'];
+        $perKelas[$kunciKelas] = ($perKelas[$kunciKelas] ?? 0) + 1;
+        if ($gilir[$idx]['absen'] === '') $gilir[$idx]['absen'] = (string) $perKelas[$kunciKelas];
+    }
+
+    // Mapel & pengawas manual yang tersimpan untuk tanggal + sesi ini.
+    $simpanan = [];
+    $sql = 'SELECT tanggal, sesi, mapel, pengawas FROM jadwal_harian WHERE tanggal = ?';
+    foreach (semua($sql, [$tanggal]) as $r) {
+        $simpanan[(int) $r['sesi']] = [
+            'mapel' => bersih($r['mapel']),
+            'pengawas' => json_decode(bersih($r['pengawas']), true) ?: [],
+        ];
+    }
+
+    $out = [];
+    foreach ($gilir as $idx => $b) {
+        $sesi = $idx + 1;
+        $s = isset($simpanan[$sesi]) ? $simpanan[$sesi] : ['mapel' => '', 'pengawas' => []];
+        $out[] = $b + [
+            'tanggal' => $tanggal,
+            'hari' => namaHari($tanggal),
+            'sesi' => $sesi,
+            'mapel' => $s['mapel'],
+            'pengawas' => $s['pengawas'],
+        ];
+    }
+
+    return [
+        'success' => true,
+        'tanggal' => $tanggal,
+        'hari' => namaHari($tanggal),
+        'total' => count($out),
+        'baris' => $out,
+    ];
+}
+
+/** Simpan (atau kosongkan) mapel + pengawas manual untuk tanggal + sesi. */
+function a_jadwalHarianSimpanGas(array $d): array
+{
+    $tanggal = bersih($d['tanggal'] ?? '');
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal)) {
+        return galat('Tanggal tidak valid.');
+    }
+    $sesi = max(1, (int) ($d['sesi'] ?? 1));
+    $mapel = bersih($d['mapel'] ?? '');
+    $pengawas = [];
+    foreach ((array) ($d['pengawas'] ?? []) as $p) {
+        $p = bersih($p);
+        if ($p !== '' && !in_array($p, $pengawas, true)) $pengawas[] = $p;
+    }
+    jalan('DELETE FROM jadwal_harian WHERE tanggal = ? AND sesi = ?', [$tanggal, $sesi]);
+    if ($mapel !== '' || $pengawas) {
+        jalan(
+            'INSERT INTO jadwal_harian (tanggal, sesi, mapel, pengawas) VALUES (?,?,?,?)',
+            [$tanggal, $sesi, $mapel, json_encode($pengawas, JSON_UNESCAPED_UNICODE)]
+        );
+    }
+    return ['success' => true, 'message' => 'Jadwal harian tersimpan.'];
 }
 
 /* ------------------------------------------------------------------ */

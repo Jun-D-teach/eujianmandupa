@@ -374,3 +374,92 @@ export async function cocokToken(
     .join("");
   return hex === hashServer.trim().toLowerCase();
 }
+
+/* ------------------------------------------------------------------ */
+/* Jadwal harian — kolom siswa, kalender, baris per tanggal (admin)    */
+/* ------------------------------------------------------------------ */
+
+/** Pemetaan kolom tabel siswa yang dipakai jadwal harian. */
+export type KolomJadwalGas = {
+  /** "tingkat" | "#kelas" (diturunkan dari kelas) | "" */
+  tingkat: string;
+  kelas: string;
+  nis: string;
+  /** "" = absensi diisi otomatis 1, 2, 3, … per kelas. */
+  absen: string;
+};
+
+export type SetelJadwalGas = {
+  kolom: KolomJadwalGas;
+  /** Saran otomatis dari server (nama kolom terdeteksi). */
+  auto: KolomJadwalGas;
+  /** Semua nama kolom tabel siswa. */
+  daftar_kolom: string[];
+  /** Cuplikan data asli untuk membantu memilih kolom. */
+  contoh: Record<string, unknown>[];
+  /** Nomor hari Indonesia: 1=Senin … 7=Minggu. */
+  hari_kerja: number[];
+  /** Tanggal libur "YYYY-MM-DD". */
+  libur: string[];
+};
+
+export type BarisJadwalHarianGas = {
+  tanggal: string;
+  /** SENIN, SELASA, … */
+  hari: string;
+  /** 1, 2, 3, … = kolom A, B, C pada cetakan. */
+  sesi: number;
+  mapel: string;
+  pengawas: string[];
+  nis: string;
+  nama: string;
+  kelas: string;
+  tingkat: string;
+  absen: string;
+};
+
+export type JadwalHarianGas = {
+  tanggal: string;
+  hari: string;
+  total: number;
+  baris: BarisJadwalHarianGas[];
+};
+
+export type GuruRingkasGas = { nip: string; nama: string; mapel: string };
+
+/** Ambil setelan jadwal harian (deteksi kolom + kalender). */
+export function getSetelJadwalGas(): Promise<SetelJadwalGas> {
+  return apiCall<SetelJadwalGas>("getSetelGas");
+}
+
+/** Simpan pemetaan kolom + kalender (hari kerja & libur). */
+export function setelJadwalGas(data: {
+  kolom: KolomJadwalGas;
+  hari_kerja: number[];
+  libur: string[];
+}): Promise<{ message?: string }> {
+  return apiCall("setelGas", data);
+}
+
+/** Daftar guru untuk kolom Pengawas. */
+export function getGuruRingkasGas(): Promise<{ guru: GuruRingkasGas[] }> {
+  return apiCall("getGuruGas");
+}
+
+/** Baris jadwal harian satu tanggal (digilir antar tingkat). */
+export function getJadwalHarianGas(
+  tanggal: string,
+  kolom: KolomJadwalGas,
+): Promise<JadwalHarianGas> {
+  return apiCall("jadwalHarianHarianGas", { tanggal, kolom });
+}
+
+/** Simpan mapel + pengawas manual satu baris (tanggal + sesi). */
+export function simpanJadwalHarianGas(data: {
+  tanggal: string;
+  sesi: number;
+  mapel: string;
+  pengawas: string[];
+}): Promise<{ message?: string }> {
+  return apiCall("jadwalHarianSimpanGas", data);
+}

@@ -25,6 +25,7 @@ import { DataSiswa } from "@/components/dashboard/DataSiswa";
 import { DataGuru } from "@/components/dashboard/DataGuru";
 import { PengaturanPin } from "@/components/dashboard/PengaturanPin";
 import { PengaturanRuang } from "@/components/dashboard/PengaturanRuang";
+import { PengaturanJadwal } from "@/components/dashboard/PengaturanJadwal";
 import { PengaturanKartu } from "@/components/dashboard/PengaturanKartu";
 
 type TabId =
@@ -169,7 +170,8 @@ export default function Dashboard() {
         {tabAktif === "atur" && (
           <div className="space-y-10">
             <PengaturanPin />
-            <PengaturanRuang />
+            <PengaturanJadwal />
+            <PengaturanRuang onBukaKartuUjian={() => setTab("kelola")} />
             <PengaturanKartu />
           </div>
         )}

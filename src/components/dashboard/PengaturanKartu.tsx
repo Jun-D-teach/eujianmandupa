@@ -182,6 +182,10 @@ export function PengaturanKartu() {
         <p className="mt-1 text-sm text-muted-foreground">
           Dicetak pada kartu ujian berukuran KTP (85,6 × 54 mm) — buka menu{" "}
           <strong>Kelola Ujian</strong> lalu tombol <strong>Cetak kartu</strong>.
+          <br />
+          Kop ini juga dipakai pada cetakan <strong>Jadwal harian</strong>,{" "}
+          jadwal pengawas &amp; daftar hadir (Pengaturan → Ruang ujian / Jadwal
+          harian).
         </p>
       </div>
 

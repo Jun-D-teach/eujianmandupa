@@ -5,8 +5,8 @@ import {
   type PenempatanGas,
   type RuangGas,
   type RuangSetGas,
-  type SiswaGas,
 } from "@/lib/api";
+import { jamMulaiOtomatis, normalisasiJam } from "@/lib/jadwal-harian";
 import { SET_KOSONG, type SetKartu } from "@/lib/kartu";
 import {
   baganDudukHTML,
@@ -50,12 +50,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-/** Urut tingkat untuk tampilan yang rapi (X, XI, XII, …). */
-function urutTingkatT(t: string): number {
-  const map: Record<string, number> = { X: 1, XI: 2, XII: 3, XIII: 4 };
-  return map[t.trim().toUpperCase()] ?? 99;
-}
-
 type RuangForm = {
   id: string;
   nama: string;
@@ -79,10 +73,11 @@ const KOSONG: RuangSetGas = { ruang: [], pengawas: [], jadwal: [], penempatan: [
  *  c) daftar ruang: kapasitas & komposisi tingkat (penempatan silang),
  *  d) bagan tempat duduk & daftar hadir — hasilnya tampil di kartu ujian.
  */
-export function PengaturanRuang() {
+export function PengaturanRuang({
+  onBukaKartuUjian,
+}: { onBukaKartuUjian?: () => void } = {}) {
   const [ruangSet, setRuangSet] = useState<RuangSetGas | null>(null);
   const [guru, setGuru] = useState<GuruGas[]>([]);
-  const [tingkatList, setTingkatList] = useState<string[]>([]);
   const [setKartu, setSetKartu] = useState<SetKartu>({ ...SET_KOSONG });
 
   const [cari, setCari] = useState("");
@@ -96,7 +91,8 @@ export function PengaturanRuang() {
   const [tglMulai, setTglMulai] = useState("");
   const [totalHari, setTotalHari] = useState(3);
   const [sesiHari, setSesiHari] = useState(2);
-  const [jamSesi, setJamSesi] = useState("");
+  // Tepat N jam untuk N sesi — bawaan 07.30, 10.00, 12.30, … (jeda 150 menit).
+  const [jamSesiList, setJamSesiList] = useState<string[]>(jamMulaiOtomatis(2));
   const [busyJadwal, setBusyJadwal] = useState(false);
 
   const [busyTempat, setBusyTempat] = useState(false);
@@ -108,27 +104,13 @@ export function PengaturanRuang() {
     Promise.all([
       gasCall<RuangSetGas>("getRuangSet"),
       gasCall<{ guru: GuruGas[] }>("getGuru"),
-      gasCall<{ siswa: SiswaGas[] }>("getSiswa"),
       gasCall<SetKartu>("getKartuSet"),
     ])
-      .then(([rs, g, s, kartu]) => {
+      .then(([rs, g, kartu]) => {
         if (!hidup) return;
         setRuangSet(rs ?? KOSONG);
         setPilih(rs.pengawas ?? []);
         setGuru(g.guru ?? []);
-        const t = Array.from(
-          new Set(
-            (s.siswa ?? [])
-              .map((x) => {
-                const k = x.kelas.trim().toUpperCase();
-                if (!k) return "";
-                const titik = k.indexOf(".");
-                return (titik !== -1 ? k.slice(0, titik) : k).trim();
-              })
-              .filter(Boolean),
-          ),
-        ).sort((a, b) => urutTingkatT(a) - urutTingkatT(b));
-        setTingkatList(t);
         setSetKartu({
           sekolah: kartu.sekolah ?? SET_KOSONG.sekolah,
           alamat: kartu.alamat ?? "",
@@ -201,6 +183,11 @@ export function PengaturanRuang() {
   const totalKomposisi = form
     ? Object.values(form.komposisi).reduce((a, b) => a + (b || 0), 0)
     : 0;
+  /** Jumlah tingkat dengan isi > 0 — harus tepat 2 (ruang selalu campuran). */
+  const jumlahTingkatTerisi = form
+    ? (["X", "XI", "XII"] as const).filter((t) => (form.komposisi[t] ?? 0) > 0)
+        .length
+    : 0;
 
   const buatForm = () => setForm({ ...FORM_RUANG_KOSONG });
 
@@ -226,9 +213,15 @@ export function PengaturanRuang() {
       toast.error("Nama ruang wajib diisi.");
       return;
     }
-    if (totalKomposisi > 0 && totalKomposisi !== form.kapasitas) {
+    if (jumlahTingkatTerisi !== 2) {
       toast.error(
-        `Total komposisi (${totalKomposisi}) harus sama dengan kapasitas ruang (${form.kapasitas}).`,
+        "Setiap ruang diisi campuran tepat 2 tingkat — X & XI, X & XII, atau XI & XII.",
+      );
+      return;
+    }
+    if (totalKomposisi !== form.kapasitas) {
+      toast.error(
+        `Total kedua tingkat (${totalKomposisi}) harus sama dengan kapasitas ruang (${form.kapasitas}).`,
       );
       return;
     }
@@ -270,9 +263,31 @@ export function PengaturanRuang() {
   };
 
   /* ---------------- c. jadwal pengawas ---------------- */
+  /** Ubah jumlah sesi/hari → jumlah kolom jam ikut serta (auto terisi bawaan). */
+  const ubahSesiHari = (n: number) => {
+    const v = Math.max(1, Math.min(10, n));
+    setSesiHari(v);
+    const auto = jamMulaiOtomatis(v);
+    setJamSesiList((j) => Array.from({ length: v }, (_, i) => j[i] || auto[i]));
+  };
+
+  const ubahJamSesi = (i: number, v: string) =>
+    setJamSesiList((j) => {
+      const n = [...j];
+      n[i] = v;
+      return n;
+    });
+
   const buatJadwal = async () => {
     if (!tglMulai) {
       toast.error("Pilih tanggal mulai ujian.");
+      return;
+    }
+    const jamBersih = Array.from({ length: sesiHari }, (_, i) =>
+      normalisasiJam(jamSesiList[i] ?? ""),
+    );
+    if (jamBersih.some((j) => !j)) {
+      toast.error("Ada jam per sesi yang tidak valid — format 07.30.");
       return;
     }
     setBusyJadwal(true);
@@ -281,7 +296,7 @@ export function PengaturanRuang() {
         tanggal_mulai: tglMulai,
         total_hari: totalHari,
         sesi_per_hari: sesiHari,
-        jam: jamSesi,
+        jam: jamBersih.join(", "),
       });
       toast.success(res.message || "Jadwal pengawas dibuat.");
       await muatUlang();
@@ -398,15 +413,25 @@ export function PengaturanRuang() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-extrabold tracking-tight">
-          Ruang ujian &amp; pengawas
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Pilih guru pengawas, tentukan ruang &amp; kapasitas peserta, buat
-          jadwal pengawas otomatis, lalu cetak bagan tempat duduk dan daftar
-          hadir — hasil penentuan ruang ikut tercetak di kartu ujian.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-extrabold tracking-tight">
+            Ruang ujian &amp; pengawas
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Pilih guru pengawas, tentukan ruang &amp; kapasitas peserta, buat
+            jadwal pengawas otomatis, lalu cetak bagan tempat duduk dan daftar
+            hadir — hasil penentuan ruang ikut tercetak di kartu ujian.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="shrink-0 gap-2"
+          onClick={() => onBukaKartuUjian?.()}
+        >
+          <Printer className="size-4" /> Cetak kartu ujian
+        </Button>
       </div>
 
       {/* ---------------- 1. Guru pengawas ---------------- */}
@@ -557,52 +582,83 @@ export function PengaturanRuang() {
               </div>
 
               <div className="space-y-2">
-                <Label>Komposisi peserta per tingkat</Label>
-                <div className="flex flex-wrap gap-3">
-                  {(Array.from(
-                    new Set([...tingkatList, ...Object.keys(form.komposisi)]),
-                  )
-                    .filter(Boolean)
-                    .sort((a, b) => urutTingkatT(a) - urutTingkatT(b))
-                    .map((t) => (
-                      <div
-                        key={t}
-                        className="flex items-center gap-2 rounded-xl border border-border/70 bg-card px-3 py-2"
+                <Label>Komposisi peserta per tingkat *</Label>
+                <p className="text-[11px] leading-5 text-muted-foreground">
+                  Setiap ruang diisi campuran <strong>tepat dua tingkat</strong>{" "}
+                  — X &amp; XI, X &amp; XII, atau XI &amp; XII. Pilih
+                  pasangannya, lalu isi jumlah siswa tiap tingkat; jumlah
+                  keduanya <strong>wajib sama</strong> dengan kapasitas ruang.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {(["X + XI", "X + XII", "XI + XII"] as const).map((pasangan) => {
+                    const [a, b] = pasangan.split(" + ");
+                    const aktif =
+                      (form.komposisi[a] ?? 0) > 0 && (form.komposisi[b] ?? 0) > 0;
+                    return (
+                      <button
+                        key={pasangan}
+                        type="button"
+                        title={`Ruang ini diisi tingkat ${a} & ${b} — tingkat lain dikosongkan`}
+                        onClick={() =>
+                          setForm((f) =>
+                            f
+                              ? {
+                                  ...f,
+                                  komposisi: {
+                                    [a]: f.komposisi[a] ?? 0,
+                                    [b]: f.komposisi[b] ?? 0,
+                                  },
+                                }
+                              : f,
+                          )
+                        }
+                        className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
+                          aktif
+                            ? "bg-emerald-600 text-white"
+                            : "border border-border/70 text-muted-foreground hover:bg-muted"
+                        }`}
                       >
-                        <Label
-                          htmlFor={`kom-${t}`}
-                          className="text-xs font-bold text-muted-foreground"
-                        >
-                          Tingkat {t}
-                        </Label>
-                        <Input
-                          id={`kom-${t}`}
-                          type="number"
-                          min={0}
-                          max={200}
-                          value={form.komposisi[t] ?? 0}
-                          onChange={(e) =>
-                            ubahKomposisi(t, Number(e.target.value))
-                          }
-                          className="h-8 w-20 text-center"
-                        />
-                      </div>
-                    )))}
-                  {tingkatList.length === 0 && (
-                    <p className="text-xs text-muted-foreground">
-                      Belum ada data siswa — komposisi tingkat muncul setelah
-                      Data Siswa diisi.
-                    </p>
-                  )}
+                        {pasangan}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  {(["X", "XI", "XII"] as const).map((t) => (
+                    <div
+                      key={t}
+                      className="flex items-center gap-2 rounded-xl border border-border/70 bg-card px-3 py-2"
+                    >
+                      <Label
+                        htmlFor={`kom-${t}`}
+                        className="text-xs font-bold text-muted-foreground"
+                      >
+                        Tingkat {t}
+                      </Label>
+                      <Input
+                        id={`kom-${t}`}
+                        type="number"
+                        min={0}
+                        max={200}
+                        value={form.komposisi[t] ?? 0}
+                        onChange={(e) =>
+                          ubahKomposisi(t, Number(e.target.value))
+                        }
+                        className="h-8 w-20 text-center"
+                      />
+                    </div>
+                  ))}
                 </div>
                 <p className="text-[11px] leading-5 text-muted-foreground">
-                  Total komposisi sekarang:{" "}
-                  <strong className={totalKomposisi === form.kapasitas ? "text-emerald-600" : totalKomposisi > 0 ? "text-red-600" : ""}>
+                  Tingkat terisi:{" "}
+                  <strong className={jumlahTingkatTerisi === 2 ? "text-emerald-600" : "text-red-600"}>
+                    {jumlahTingkatTerisi}
+                  </strong>{" "}
+                  dari 2 (harus tepat 2) · total komposisi:{" "}
+                  <strong className={totalKomposisi === form.kapasitas ? "text-emerald-600" : "text-red-600"}>
                     {totalKomposisi}
                   </strong>{" "}
-                  dari kapasitas {form.kapasitas}. Bila semua 0, ruang diisi
-                  otomatis dengan menggilir seluruh tingkat (1 siswa X dan 1
-                  siswa XI bergantian duduk bersebelahan).
+                  dari kapasitas {form.kapasitas}.
                 </p>
               </div>
 
@@ -711,7 +767,7 @@ export function PengaturanRuang() {
             </Button>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-3">
             <div className="grid gap-2">
               <Label htmlFor="jd-tgl">Tanggal mulai ujian *</Label>
               <Input
@@ -740,25 +796,36 @@ export function PengaturanRuang() {
                 min={1}
                 max={10}
                 value={sesiHari}
-                onChange={(e) => setSesiHari(Number(e.target.value))}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="jd-jam">Jam per sesi (opsional)</Label>
-              <Input
-                id="jd-jam"
-                value={jamSesi}
-                onChange={(e) => setJamSesi(e.target.value)}
-                placeholder="07.30, 13.00"
-                autoComplete="off"
+                onChange={(e) => ubahSesiHari(Number(e.target.value))}
               />
             </div>
           </div>
-          <p className="-mt-2 text-[11px] leading-5 text-muted-foreground">
-            Isi jam dengan tanda koma (mis. 07.30, 13.00); bila dikosongkan jam
-            dihitung otomatis. Setiap sesi, tiap ruang dijaga satu guru —
-            penugasan digilir merata ke seluruh guru pengawas.
-          </p>
+
+          <div>
+            <Label>Jam mulai tiap sesi</Label>
+            <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+              {Array.from({ length: sesiHari }, (_, i) => (
+                <div key={i} className="grid gap-1">
+                  <span className="text-[11px] font-medium text-muted-foreground">
+                    Sesi {i + 1}
+                  </span>
+                  <Input
+                    value={jamSesiList[i] ?? ""}
+                    onChange={(e) => ubahJamSesi(i, e.target.value)}
+                    placeholder="07.30"
+                    inputMode="numeric"
+                    aria-label={`Jam mulai sesi ${i + 1}`}
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">
+              Tepat {sesiHari} kolom jam untuk {sesiHari} sesi — bawaan otomatis
+              07.30, 10.00, 12.30, … (jeda 2,5 jam), bebas diubah (format
+              07.30). Setiap sesi, tiap ruang dijaga satu guru — penugasan
+              digilir merata ke seluruh guru pengawas.
+            </p>
+          </div>
 
           <div className="flex flex-wrap gap-2">
             <Button
@@ -924,8 +991,9 @@ export function PengaturanRuang() {
           <p className="text-[11px] leading-5 text-muted-foreground">
             Bagan tempat duduk menampilkan nomor kursi + nama peserta per ruang;
             daftar hadir menyediakan kolom tanda tangan. Setelah penempatan
-            dibuat, buka <strong>Kelola Ujian → Cetak kartu</strong> — nomor
-            ruang &amp; duduk otomatis ikut tercetak pada kartu ujian.
+            dibuat, klik <strong>Cetak kartu ujian</strong> di atas (atau buka{" "}
+            <strong>Kelola Ujian → Cetak kartu</strong>) — nomor ruang &amp;
+            duduk otomatis ikut tercetak pada kartu ujian.
           </p>
         </div>
       </Card>
