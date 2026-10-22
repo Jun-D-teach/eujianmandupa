@@ -150,6 +150,7 @@ function pastikanStruktur(): void
             opsi_huruf TINYINT(1) NOT NULL DEFAULT 0,
             kunci_jawaban VARCHAR(1) NOT NULL DEFAULT '',
             gambar MEDIUMTEXT NULL,
+            bacaan TEXT NULL,
             dibuat DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             KEY idx_soal_ujian (ujian_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
@@ -252,6 +253,12 @@ function pastikanStruktur(): void
     if ($st->fetch() === false) {
         db()->exec("ALTER TABLE soal ADD COLUMN opsi_huruf TINYINT(1) NOT NULL DEFAULT 0 AFTER opsi_e");
     }
+    // Teks bacaan bersama (naskah untuk rentang soal, mis. 21–40) — tampil
+    // di atas pertanyaan pada tiap soal yang memilikinya.
+    $st = db()->query("SHOW COLUMNS FROM soal LIKE 'bacaan'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE soal ADD COLUMN bacaan TEXT NULL AFTER gambar");
+    }
     // Kolom nilai pengaturan dinaikkan ke MEDIUMTEXT agar muat gambar logo &
     // tanda tangan (base64) untuk kartu ujian.
     $st = db()->query(
@@ -316,7 +323,7 @@ const AKSES = [
     'buatUjian' => 1, 'aturUjian' => 1,
     'setAktifUjian' => 1, 'setIzinUnduh' => 1, 'hapusUjian' => 1, 'konfirmasiUjian' => 1,
     'tambahSoal' => 1, 'ubahSoal' => 1, 'tambahSoalContoh' => 1, 'hapusSoal' => 1,
-    'imporSoal' => 1,
+    'imporSoal' => 1, 'terapkanBacaan' => 1,
     'getGuru' => 1, 'tambahGuru' => 1, 'ubahGuru' => 1, 'hapusGuru' => 1,
     'hapusGuruMassal' => 1, 'ubahPasswordGuru' => 1,
     'importGuru' => 1, 'buatAkunGuru' => 1,
@@ -505,6 +512,7 @@ function jalankan(string $action, array $d): array
         case 'hapusUjian': return a_hapusUjian($d);
         case 'tambahSoal': return a_tambahSoal($d);
         case 'ubahSoal': return a_ubahSoal($d);
+        case 'terapkanBacaan': return a_terapkanBacaan($d);
         case 'tambahSoalContoh': return a_tambahSoalContoh($d);
         case 'imporSoal': return a_imporSoal($d);
         case 'hapusSoal': return a_hapusSoal($d);
@@ -1446,8 +1454,8 @@ function sisipSoal(string $ujianId, array $s): string
 {
     $id = idBaru('s');
     jalan(
-        'INSERT INTO soal (id, ujian_id, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, opsi_e, opsi_huruf, kunci_jawaban, gambar)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO soal (id, ujian_id, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, opsi_e, opsi_huruf, kunci_jawaban, gambar, bacaan)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
         [
             $id,
             $ujianId,
@@ -1460,6 +1468,7 @@ function sisipSoal(string $ujianId, array $s): string
             (int) ($s['opsi_huruf'] ?? 0),
             $s['kunci_jawaban'],
             (string) ($s['gambar'] ?? ''),
+            (string) ($s['bacaan'] ?? ''),
         ]
     );
     return $id;
@@ -1478,6 +1487,7 @@ function barisSoal(array $r, bool $denganKunci): array
         'opsi_e' => (string) $r['opsi_e'],
         'opsi_huruf' => (int) ($r['opsi_huruf'] ?? 0),
         'gambar' => (string) ($r['gambar'] ?? ''),
+        'bacaan' => (string) ($r['bacaan'] ?? ''),
     ];
     if ($denganKunci) $out['kunci_jawaban'] = strtoupper(bersih($r['kunci_jawaban']));
     return $out;
@@ -1610,6 +1620,13 @@ function validasiIsiSoal(array $d): array
         }
     }
 
+    // Teks bacaan bersama (naskah untuk soal ini) — opsional, teks biasa
+    // dengan penanda format ringkas seperti pertanyaan.
+    $bacaan = bersih($d['bacaan'] ?? '');
+    if (panjangTeks($bacaan) > 20000) {
+        return ['error' => 'Teks bacaan terlalu panjang (maks 20.000 karakter).'];
+    }
+
     return [
         'pertanyaan' => $pertanyaan,
         'opsi_a' => $opsi['opsi_a'],
@@ -1619,6 +1636,7 @@ function validasiIsiSoal(array $d): array
         'opsi_e' => $opsiE,
         'kunci_jawaban' => $kunci,
         'gambar' => $gambar,
+        'bacaan' => $bacaan,
         'opsi_huruf' => $opsiHuruf,
     ];
 }/** Mode "belum berhuruf": buang penanda "A." / "B)" / "C -" di depan teks.
@@ -1678,7 +1696,7 @@ function a_ubahSoal(array $d): array
     if (!$lama) return galat('Soal tidak ditemukan.');
 
     jalan(
-        'UPDATE soal SET pertanyaan = ?, opsi_a = ?, opsi_b = ?, opsi_c = ?, opsi_d = ?, opsi_e = ?, opsi_huruf = ?, kunci_jawaban = ?, gambar = ? WHERE id = ?',
+        'UPDATE soal SET pertanyaan = ?, opsi_a = ?, opsi_b = ?, opsi_c = ?, opsi_d = ?, opsi_e = ?, opsi_huruf = ?, kunci_jawaban = ?, gambar = ?, bacaan = ? WHERE id = ?',
         [
             $v['pertanyaan'],
             $v['opsi_a'],
@@ -1689,6 +1707,7 @@ function a_ubahSoal(array $d): array
             $v['opsi_huruf'],
             $v['kunci_jawaban'],
             $v['gambar'],
+            $v['bacaan'],
             $id,
         ]
     );
@@ -1697,6 +1716,50 @@ function a_ubahSoal(array $d): array
         'success' => true,
         'message' => 'Soal diperbarui — siswa yang sudah mengunduh perlu sinkron ulang.',
     ];
+}
+
+/**
+ * Terapkan / bersihkan teks bacaan bersama pada rentang soal (kirim daftar
+ * id sesuai urutan tampil — nomor soal = indeks daftar admin/siswa).
+ * Bacaan kosong = bersihkan teks bacaan dari rentang itu. Menaikkan revisi
+ * agar siswa yang sudah mengunduh diminta sinkron ulang.
+ */
+function a_terapkanBacaan(array $d): array
+{
+    $ujianId = bersih($d['ujian_id'] ?? '');
+    if ($ujianId === '') return galat('Ujian tidak valid.');
+
+    $ids = [];
+    foreach ((array) ($d['ids'] ?? []) as $id) {
+        $id = bersih($id);
+        if ($id !== '') $ids[] = $id;
+    }
+    if (!$ids) return galat('Pilih dulu rentang soal yang akan diberi teks bacaan.');
+    if (count($ids) > 200) return galat('Maksimal 200 soal sekali terapkan.');
+
+    $bacaan = bersih($d['bacaan'] ?? '');
+    if (panjangTeks($bacaan) > 20000) {
+        return galat('Teks bacaan terlalu panjang (maks 20.000 karakter).');
+    }
+
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    $cocok = semua(
+        "SELECT id FROM soal WHERE ujian_id = ? AND id IN ($ph)",
+        array_merge([$ujianId], $ids)
+    );
+    if (!$cocok) return galat('Tidak ada soal yang cocok pada rentang itu.');
+
+    jalan(
+        "UPDATE soal SET bacaan = ? WHERE ujian_id = ? AND id IN ($ph)",
+        array_merge([$bacaan, $ujianId], $ids)
+    );
+    naikkanRevisi($ujianId);
+
+    $jumlah = count($cocok);
+    $pesan = $bacaan === ''
+        ? "Teks bacaan dibersihkan dari {$jumlah} soal."
+        : "Teks bacaan diterapkan ke {$jumlah} soal.";
+    return ['success' => true, 'jumlah' => $jumlah, 'message' => $pesan];
 }
 
 /** Impor massal hasil pemecah teks Word: soal = [ {pertanyaan, opsi_*, kunci_jawaban}, … ] */

@@ -23,6 +23,8 @@ export type SoalUjian = {
   gambar?: string;
   /** 1 = teks pilihan sudah menyertakan huruf A–E. */
   opsi_huruf?: number;
+  /** Teks bacaan bersama (naskah) — disimpan di HP agar tampil saat offline. */
+  bacaan?: string;
 };
 
 export type Pelanggaran = {

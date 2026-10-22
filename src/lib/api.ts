@@ -82,6 +82,9 @@ export type SoalGas = {
   gambar?: string;
   /** 1 = teks pilihan sudah menyertakan huruf A–E (tampil apa adanya). */
   opsi_huruf?: number;
+  /** Teks bacaan bersama (naskah untuk soal ini) — tampil di atas
+   *  pertanyaan saat ujian; dikosongkan bila tidak dipakai. */
+  bacaan?: string;
 };
 
 export type HasilGas = {

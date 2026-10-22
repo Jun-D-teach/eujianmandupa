@@ -54,6 +54,7 @@ import {
   AlignCenter,
   AlignJustify,
   AlignRight,
+  BookOpen,
   Bold,
   CalendarClock,
   ClipboardList,
@@ -92,6 +93,7 @@ const FORM_KOSONG = {
   opsi_d: "",
   opsi_e: "",
   gambar: "",
+  bacaan: "",
 };
 
 /** Batas data URL gambar soal — menjaga kuota penyimpanan offline HP siswa. */
@@ -387,7 +389,6 @@ export function KelolaUjian() {
 
   useEffect(() => {
     let hidup = true;
-    setUjian(null);
     gasCall<{ ujian: UjianGas[] }>("getUjian")
       .then((res) => {
         if (hidup) setUjian(res.ujian);
@@ -403,7 +404,12 @@ export function KelolaUjian() {
     };
   }, [versi]);
 
-  const segarkan = () => setVersi((v) => v + 1);
+  const segarkan = () => {
+    // Kosongkan daftar dulu (tampilkan kerangka) lalu ambil ulang — reset
+    // dilakukan di sini, bukan di dalam effect, agar efek muat tetap bersih.
+    setUjian(null);
+    setVersi((v) => v + 1);
+  };
 
   const buat = async () => {
     if (!judul.trim()) {
@@ -1030,6 +1036,57 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
   const [editId, setEditId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Teks bacaan bersama — tempel sekali, terapkan ke rentang nomor soal
+  // (mis. 21–40). Teks kosong = bersihkan bacaan dari rentang itu.
+  const [bacaanTeks, setBacaanTeks] = useState("");
+  const [bacaanDari, setBacaanDari] = useState("");
+  const [bacaanSampai, setBacaanSampai] = useState("");
+  const [bacaanBusy, setBacaanBusy] = useState(false);
+
+  /** Validasi rentang nomor → daftar id soal sesuai urutan tampil. */
+  const idRentangBacaan = (): { ids: string[]; pesan: string | null } => {
+    if (!soal) return { ids: [], pesan: "Daftar soal masih dimuat — coba lagi sebentar." };
+    const dari = Number.parseInt(bacaanDari, 10);
+    const sampai = Number.parseInt(bacaanSampai, 10);
+    if (!Number.isFinite(dari) || !Number.isFinite(sampai)) {
+      return { ids: [], pesan: "Isi nomor awal dan akhir rentang soal." };
+    }
+    if (dari < 1 || sampai < dari) {
+      return { ids: [], pesan: "Rentang tidak valid — nomor akhir harus ≥ nomor awal (mulai dari 1)." };
+    }
+    if (sampai > soal.length) {
+      return { ids: [], pesan: `Soal hanya ada ${soal.length} — nomor akhir melebihi jumlah soal.` };
+    }
+    return { ids: soal.slice(dari - 1, sampai).map((s) => s.id), pesan: null };
+  };
+
+  const terapkanBacaan = async (bersihkan = false) => {
+    const { ids, pesan } = idRentangBacaan();
+    if (pesan) {
+      toast.error(pesan);
+      return;
+    }
+    if (!bersihkan && !bacaanTeks.trim()) {
+      toast.error("Tempel atau tulis teks bacaan terlebih dahulu.");
+      return;
+    }
+    setBacaanBusy(true);
+    try {
+      const res = await gasCall<{ message?: string }>("terapkanBacaan", {
+        ujian_id: ujianId,
+        ids,
+        bacaan: bersihkan ? "" : bacaanTeks,
+      });
+      toast.success(res.message ?? "Teks bacaan diterapkan.");
+      if (bersihkan) setBacaanTeks("");
+      muat();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal menerapkan teks bacaan.");
+    } finally {
+      setBacaanBusy(false);
+    }
+  };
+
   // Dialog impor soal dari Word (.docx / tempel teks).
   const [imporBuka, setImporBuka] = useState(false);
   const [teksImpor, setTeksImpor] = useState("");
@@ -1063,6 +1120,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       opsi_d: s.opsi_d,
       opsi_e: s.opsi_e || "",
       gambar: s.gambar || "",
+      bacaan: s.bacaan || "",
     });
     setKunci(((s.kunci_jawaban || "A").toUpperCase() as Kunci) || "A");
     setTempel("");
@@ -1112,6 +1170,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
         opsi_e: form.opsi_e.trim(),
         kunci_jawaban: kunci,
         gambar: form.gambar,
+        bacaan: form.bacaan.trim(),
         // opsi_huruf tidak dikirim lagi — server mendeteksi sendiri apakah
         // guru menulis pilihan beserta hurufnya atau tidak.
       };
@@ -1457,6 +1516,17 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                   <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                     Soal {i + 1}
                   </p>
+                  {s.bacaan && (
+                    <div className="mt-1 rounded-xl border border-dashed border-border/70 bg-muted/40 px-3 py-2">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                        <BookOpen className="mr-1 inline size-3" /> Teks bacaan
+                      </p>
+                      <div
+                        className="mt-0.5 max-h-20 overflow-y-auto text-xs leading-5 text-muted-foreground"
+                        dangerouslySetInnerHTML={{ __html: soalHTML(s.bacaan) }}
+                      />
+                    </div>
+                  )}
                   <div
                     className="mt-1 text-sm font-semibold leading-6"
                     dangerouslySetInnerHTML={{ __html: soalHTML(s.pertanyaan) }}
@@ -1526,6 +1596,104 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
             </li>
           ))}
         </ol>
+      )}
+
+      {/* Teks bacaan bersama — satu naskah untuk rentang soal (mis. 21–40) */}
+      {soal.length > 0 && (
+        <div className="rounded-2xl border border-border/70 bg-background/60 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="flex size-8 items-center justify-center rounded-xl bg-foreground text-background">
+                <BookOpen className="size-4" />
+              </span>
+              <div>
+                <p className="text-sm font-bold">Teks bacaan bersama</p>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  Satu naskah untuk banyak soal — tampil di atas pertanyaan tiap
+                  soal pada rentang ini.
+                </p>
+              </div>
+            </div>
+            <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-bold text-muted-foreground">
+              {soal.filter((s) => s.bacaan).length} / {soal.length} soal punya teks
+            </span>
+          </div>
+          <div className="mt-3 space-y-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="bacaan-teks">Teks bacaan (naskah)</Label>
+              <Textarea
+                id="bacaan-teks"
+                rows={5}
+                value={bacaanTeks}
+                onChange={(e) => setBacaanTeks(e.target.value)}
+                placeholder="Tempel teks bacaan di sini — mis. naskah untuk soal 21–40 — lalu isi nomor rentang di bawah. Penanda **tebal** / *miring* berlaku seperti soal."
+              />
+              {adaFormat(bacaanTeks) && (
+                <div className="rounded-xl border border-border/70 bg-background/60 px-3 py-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Pratinjau tampilan ke siswa
+                  </p>
+                  <div
+                    className="mt-1 max-h-32 overflow-y-auto text-sm leading-6"
+                    dangerouslySetInnerHTML={{ __html: soalHTML(bacaanTeks) }}
+                  />
+                </div>
+              )}
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="bacaan-dari">Dari nomor</Label>
+                <Input
+                  id="bacaan-dari"
+                  type="number"
+                  min={1}
+                  max={soal.length}
+                  inputMode="numeric"
+                  value={bacaanDari}
+                  onChange={(e) => setBacaanDari(e.target.value)}
+                  placeholder="21"
+                  className="w-24"
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="bacaan-sampai">Sampai nomor</Label>
+                <Input
+                  id="bacaan-sampai"
+                  type="number"
+                  min={1}
+                  max={soal.length}
+                  inputMode="numeric"
+                  value={bacaanSampai}
+                  onChange={(e) => setBacaanSampai(e.target.value)}
+                  placeholder="40"
+                  className="w-24"
+                />
+              </div>
+              <Button
+                size="sm"
+                className="gap-1.5"
+                onClick={() => void terapkanBacaan()}
+                disabled={bacaanBusy || busy}
+              >
+                <BookOpen className="size-3.5" /> Terapkan ke rentang
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void terapkanBacaan(true)}
+                disabled={bacaanBusy || busy}
+              >
+                Kosongkan rentang
+              </Button>
+            </div>
+            <p className="text-[11px] leading-4 text-muted-foreground">
+              Nomor mengikuti urutan daftar (Soal 1, Soal 2, …). “Terapkan”
+              menimpa teks bacaan lama pada rentang yang sama; “Kosongkan
+              rentang” menghapusnya. Siswa yang sudah mengunduh diminta sinkron
+              ulang otomatis.
+            </p>
+          </div>
+        </div>
       )}
 
       {/* Tambah soal */}
@@ -1662,6 +1830,29 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                 <div
                   className="mt-1 text-sm leading-6"
                   dangerouslySetInnerHTML={{ __html: soalHTML(form.pertanyaan) }}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Teks bacaan untuk soal ini (opsional) — tampil di atas pertanyaan */}
+          <div className="grid gap-1.5">
+            <Label htmlFor="kolom-bacaan">Teks bacaan (opsional)</Label>
+            <Textarea
+              id="kolom-bacaan"
+              value={form.bacaan}
+              onChange={set("bacaan")}
+              rows={3}
+              placeholder="Naskah yang dibaca siswa sebelum menjawab soal ini — tampil di atas pertanyaan. Kosongkan bila tidak ada naskah; untuk naskah bersama banyak soal pakai alat “Teks bacaan bersama” di atas daftar."
+            />
+            {adaFormat(form.bacaan) && (
+              <div className="rounded-xl border border-border/70 bg-background/60 px-3 py-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Pratinjau tampilan ke siswa
+                </p>
+                <div
+                  className="mt-1 max-h-32 overflow-y-auto text-sm leading-6"
+                  dangerouslySetInnerHTML={{ __html: soalHTML(form.bacaan) }}
                 />
               </div>
             )}

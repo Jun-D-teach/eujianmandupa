@@ -357,6 +357,18 @@ export function UjianFase(props: {
             </span>
           </div>
 
+          {soal?.bacaan && (
+            <div className="mt-4 rounded-2xl border border-border/70 bg-muted/50 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Teks bacaan
+              </p>
+              <div
+                className="mt-1.5 text-sm leading-6"
+                dangerouslySetInnerHTML={{ __html: soalHTML(soal.bacaan) }}
+              />
+            </div>
+          )}
+
           <div
             className="mt-4 text-base font-semibold leading-7 sm:text-lg"
             dangerouslySetInnerHTML={{ __html: soalHTML(soal?.pertanyaan ?? "") }}
