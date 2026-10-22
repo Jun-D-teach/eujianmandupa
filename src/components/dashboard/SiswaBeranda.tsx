@@ -123,13 +123,23 @@ export function SiswaUjian() {
   const [sinkronBusy, setSinkronBusy] = useState<string | null>(null);
   const [unduhBusy, setUnduhBusy] = useState<string | null>(null);
 
-  useEffect(() => {
-    let hidup = true;
+  /**
+   * Muat ulang daftar ujian — reset tampilan lama di event handler
+   * (bukan di dalam effect) lalu picu pengambilan terbaru lewat `versi`.
+   */
+  const segarkan = () => {
     setUjian(null);
     setError(null);
+    setVersi((v) => v + 1);
+  };
+
+  useEffect(() => {
+    let hidup = true;
     gasCall<{ ujian: UjianGas[] }>("getUjianSiswa", { kelas: user?.kelas ?? "" })
       .then((res) => {
-        if (hidup) setUjian(res.ujian);
+        if (!hidup) return;
+        setUjian(res.ujian);
+        setError(null);
       })
       .catch((err) => {
         if (hidup)
@@ -194,7 +204,7 @@ export function SiswaUjian() {
       toast.success(
         `Soal diperbarui — ${baru.soal.length} soal terbaru tersimpan di HP.`,
       );
-      setVersi((v) => v + 1);
+      segarkan();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal sinkron ulang soal.");
     } finally {
@@ -237,7 +247,7 @@ export function SiswaUjian() {
       }
       simpanSesi(baruSesiUnduh(u.id, data, nama, kelas));
       toast.success(`${data.soal.length} soal tersimpan di HP — lampu hijau.`);
-      setVersi((v) => v + 1);
+      segarkan();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal mengunduh soal.");
     } finally {
@@ -256,7 +266,7 @@ export function SiswaUjian() {
               variant="outline"
               size="sm"
               className="mt-3"
-              onClick={() => setVersi((v) => v + 1)}
+              onClick={segarkan}
             >
               Coba lagi
             </Button>
@@ -296,7 +306,7 @@ export function SiswaUjian() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setVersi((v) => v + 1)}
+            onClick={segarkan}
           >
             Muat ulang
           </Button>
@@ -482,7 +492,7 @@ export function SiswaUjian() {
                           onClick={() => {
                             hapusSesi(u.id);
                             toast.success("Sesi dihapus, mulai dari awal.");
-                            setVersi((v) => v + 1);
+                            segarkan();
                           }}
                         >
                           <Pencil className="size-4" /> Mulai ulang
@@ -524,11 +534,11 @@ export function SiswaRiwayat() {
 
   useEffect(() => {
     let hidup = true;
-    setHasil(null);
-    setError(null);
     gasCall<{ hasil: HasilGas[] }>("getHasilSaya", { nama: user?.nama ?? "" })
       .then((res) => {
-        if (hidup) setHasil(res.hasil);
+        if (!hidup) return;
+        setHasil(res.hasil);
+        setError(null);
       })
       .catch((err) => {
         if (hidup)
