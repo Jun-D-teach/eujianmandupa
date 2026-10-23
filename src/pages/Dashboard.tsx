@@ -4,7 +4,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  ClipboardCheck,
   ClipboardList,
   GraduationCap,
   History,
@@ -21,7 +20,6 @@ import {
 } from "@/components/dashboard/SiswaBeranda";
 import { KelolaUjian } from "@/components/dashboard/KelolaUjian";
 import { HasilUjian } from "@/components/dashboard/HasilUjian";
-import { KoreksiNilai } from "@/components/dashboard/KoreksiNilai";
 import { Pengguna } from "@/components/dashboard/Pengguna";
 import { DataSiswa } from "@/components/dashboard/DataSiswa";
 import { DataGuru } from "@/components/dashboard/DataGuru";
@@ -34,7 +32,6 @@ type TabId =
   | "ujian"
   | "riwayat"
   | "kelola"
-  | "koreksi"
   | "hasil"
   | "siswa"
   | "guru"
@@ -51,7 +48,6 @@ const TABS: Record<TabId, { label: string; ikon: typeof Users }> = {
   ujian: { label: "Ujian Saya", ikon: ClipboardList },
   riwayat: { label: "Riwayat Nilai", ikon: History },
   kelola: { label: "Kelola Ujian", ikon: ClipboardList },
-  koreksi: { label: "Koreksi", ikon: ClipboardCheck },
   hasil: { label: "Hasil Ujian", ikon: ShieldCheck },
   siswa: { label: "Data Siswa", ikon: Users },
   guru: { label: "Data Guru", ikon: GraduationCap },
@@ -60,9 +56,8 @@ const TABS: Record<TabId, { label: string; ikon: typeof Users }> = {
 };
 
 function tabsUntuk(role: string | undefined): TabId[] {
-  if (role === "admin")
-    return ["kelola", "koreksi", "hasil", "siswa", "guru", "pengguna", "atur"];
-  if (role === "guru") return ["kelola", "koreksi", "hasil"];
+  if (role === "admin") return ["kelola", "hasil", "siswa", "guru", "pengguna", "atur"];
+  if (role === "guru") return ["kelola", "hasil"];
   return ["ujian", "riwayat"];
 }
 
@@ -168,7 +163,6 @@ export default function Dashboard() {
         {tabAktif === "ujian" && <SiswaUjian />}
         {tabAktif === "riwayat" && <SiswaRiwayat />}
         {tabAktif === "kelola" && <KelolaUjian />}
-        {tabAktif === "koreksi" && <KoreksiNilai />}
         {tabAktif === "hasil" && <HasilUjian />}
         {tabAktif === "siswa" && <DataSiswa />}
         {tabAktif === "guru" && <DataGuru />}

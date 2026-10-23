@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
+  getGuruRingkasGas,
   getJadwalHarianGas,
   getSetelJadwalGas,
   gasCall,
   setelJadwalGas,
   simpanJadwalHarianGas,
   type BarisJadwalHarianGas,
-  type JadwalPengawasGas,
+  type GuruRingkasGas,
   type KolomJadwalGas,
-  type RuangSetGas,
   type SetelJadwalGas,
 } from "@/lib/api";
 import { SET_KOSONG, type SetKartu } from "@/lib/kartu";
@@ -32,6 +32,7 @@ import {
   Plus,
   Printer,
   Save,
+  Search,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -64,12 +65,12 @@ function hariIniISO(): string {
 /**
  * Jadwal harian — admin.
  * Satu tanggal = N sesi (N = jumlah hari kerja kalender); tiap sesi diisi
- * mapel (pengawas diambil otomatis dari "Jadwal pengawas otomatis"), lalu
- * dicetak menjadi daftar peserta per sesi (A, B, C…).
+ * mapel + pengawas, lalu dicetak menjadi daftar peserta per sesi (A, B, C…).
  */
 export function PengaturanJadwal() {
   const [tab, setTab] = useState<TabId>("jadwal");
   const [setel, setSetel] = useState<SetelJadwalGas | null>(null);
+  const [guru, setGuru] = useState<GuruRingkasGas[]>([]);
   const [kartu, setKartu] = useState<SetKartu>({ ...SET_KOSONG });
   const [memuat, setMemuat] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,25 +92,29 @@ export function PengaturanJadwal() {
   const [totalSesi, setTotalSesi] = useState(3);
   const [jamSesi, setJamSesi] = useState<string[]>(jamMulaiOtomatis(3));
   const [mapelSesi, setMapelSesi] = useState<string[]>(["", "", ""]);
-  // Penugasan pengawas per tanggal — sumber kebenarannya "Jadwal pengawas
-  // otomatis" (Ruang ujian & pengawas); kolom pengawas dibaca dari sana.
-  const [jadwalPeng, setJadwalPeng] = useState<JadwalPengawasGas[]>([]);
+  const [pengawasSesi, setPengawasSesi] = useState<string[][]>([[], [], []]);
   const [baris, setBaris] = useState<BarisJadwalHarianGas[] | null>(null);
   // Mulai true: baris pertama dimuat begitu setelan siap; di-set "true" hanya
   // dari handler perubahan (tanggal/kolom) agar tidak ada setState sinkron di efek.
   const [memuatJadwal, setMemuatJadwal] = useState(true);
+  const [cariGuru, setCariGuru] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState(false);
 
-  // Muat setelan + setelan kop kartu (sekali).
+  // Muat setelan + daftar guru + setelan kop kartu (sekali).
   useEffect(() => {
     let hidup = true;
-    Promise.all([getSetelJadwalGas(), gasCall<SetKartu>("getKartuSet")])
-      .then(([s, k]) => {
+    Promise.all([
+      getSetelJadwalGas(),
+      getGuruRingkasGas(),
+      gasCall<SetKartu>("getKartuSet"),
+    ])
+      .then(([s, g, k]) => {
         if (!hidup) return;
         setSetel(s);
         setKolom(s.kolom);
         setHariKerja(s.hari_kerja);
         setLibur(s.libur);
+        setGuru(g.guru ?? []);
         setKartu({
           sekolah: k.sekolah ?? SET_KOSONG.sekolah,
           alamat: k.alamat ?? "",
@@ -134,19 +139,14 @@ export function PengaturanJadwal() {
     };
   }, []);
 
-  // Muat baris jadwal (mapel tersimpan) + penugasan pengawas terbaru dari
-  // "Jadwal pengawas otomatis" untuk tanggal terpilih.
+  // Muat baris jadwal untuk tanggal terpilih (sinkron mapel/pengawas tersimpan).
   useEffect(() => {
     if (setel === null) return;
     let hidup = true;
-    Promise.all([
-      getJadwalHarianGas(tanggal, kolom),
-      gasCall<RuangSetGas>("getRuangSet"),
-    ])
-      .then(([res, rs]) => {
+    getJadwalHarianGas(tanggal, kolom)
+      .then((res) => {
         if (!hidup) return;
         setBaris(res.baris);
-        setJadwalPeng(rs?.jadwal ?? []);
         setMapelSesi((m) => {
           const n = Array.from(
             { length: Math.max(m.length, res.total) },
@@ -154,6 +154,16 @@ export function PengaturanJadwal() {
           );
           res.baris.forEach((b) => {
             n[b.sesi - 1] = b.mapel;
+          });
+          return n;
+        });
+        setPengawasSesi((p) => {
+          const n = Array.from(
+            { length: Math.max(p.length, res.total) },
+            (_, i) => p[i] ?? [],
+          );
+          res.baris.forEach((b) => {
+            n[b.sesi - 1] = b.pengawas;
           });
           return n;
         });
@@ -179,29 +189,12 @@ export function PengaturanJadwal() {
     : { libur: true, alasan: null, sesi: [] as number[] };
   const sesiAktif = hitung.sesi;
 
-  // Pengawas per sesi (otomatis — tanpa pilih manual): nama unik per sesi
-  // pada tanggal ini, diambil dari tabel jadwal pengawas (Ruang ujian).
-  const pengawasSesi = useMemo(() => {
-    const barisTgl = jadwalPeng.filter((r) => r.tanggal === tanggal);
-    const n = Math.max(
-      totalSesi,
-      barisTgl.reduce((m, r) => Math.max(m, r.sesi), 0),
-    );
-    const out: string[][] = Array.from({ length: n }, () => []);
-    for (const r of barisTgl) {
-      if (r.sesi < 1) continue;
-      const arr = out[r.sesi - 1];
-      const nama = r.nama.trim();
-      if (arr && nama && !arr.includes(nama)) arr.push(nama);
-    }
-    return out;
-  }, [jadwalPeng, tanggal, totalSesi]);
-
   const ubahTotalSesi = (n: number) => {
     setTotalSesi(n);
     const auto = jamMulaiOtomatis(n);
     setJamSesi((j) => Array.from({ length: n }, (_, i) => j[i] || auto[i]));
     setMapelSesi((m) => Array.from({ length: n }, (_, i) => m[i] ?? ""));
+    setPengawasSesi((p) => Array.from({ length: n }, (_, i) => p[i] ?? []));
   };
 
   const ubahJam = (i: number, v: string) =>
@@ -215,6 +208,16 @@ export function PengaturanJadwal() {
     setMapelSesi((m) => {
       const n = [...m];
       n[s - 1] = v;
+      return n;
+    });
+
+  const togglePengawas = (s: number, nama: string) =>
+    setPengawasSesi((p) => {
+      const n = [...p];
+      const set = new Set(n[s - 1] ?? []);
+      if (set.has(nama)) set.delete(nama);
+      else set.add(nama);
+      n[s - 1] = Array.from(set);
       return n;
     });
 
@@ -265,10 +268,15 @@ export function PengaturanJadwal() {
       return false;
     }
     const kosongMapel = sesiAktif.filter((s) => !(mapelSesi[s - 1] ?? "").trim());
-    if (kosongMapel.length) {
-      toast.error(
-        `Lengkapi mapel sesi ${kosongMapel.join(", ")} terlebih dahulu.`,
-      );
+    const kosongPengawas = sesiAktif.filter(
+      (s) => !(pengawasSesi[s - 1] ?? []).length,
+    );
+    if (kosongMapel.length || kosongPengawas.length) {
+      const bagian: string[] = [];
+      if (kosongMapel.length) bagian.push(`mapel sesi ${kosongMapel.join(", ")}`);
+      if (kosongPengawas.length)
+        bagian.push(`pengawas sesi ${kosongPengawas.join(", ")}`);
+      toast.error(`Lengkapi ${bagian.join(" dan ")} terlebih dahulu.`);
       return false;
     }
     return true;
@@ -344,6 +352,14 @@ export function PengaturanJadwal() {
     );
   }
 
+  const guruTersaring = (cari: string) => {
+    const q = cari.trim().toLowerCase();
+    if (!q) return guru;
+    return guru.filter((g) =>
+      `${g.nama} ${g.nip} ${g.mapel}`.toLowerCase().includes(q),
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -352,9 +368,8 @@ export function PengaturanJadwal() {
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Satu tanggal memakai beberapa sesi (sesi 1, 2, 3, … berurutan dari
-          hari kerja pada kalender) — isi mapel per sesi; pengawas diambil
-          otomatis dari "Jadwal pengawas otomatis" (Ruang ujian &amp;
-          pengawas), lalu dicetak sebagai daftar peserta per tanggal.
+          hari kerja pada kalender) — tiap sesi diisi mapel &amp; pengawas, lalu
+          dicetak sebagai daftar peserta per tanggal.
         </p>
       </div>
 
@@ -462,6 +477,8 @@ export function PengaturanJadwal() {
             <>
               <div className="space-y-4">
                 {sesiAktif.map((s) => {
+                  const cari = cariGuru[s] ?? "";
+                  const daftar = guruTersaring(cari);
                   const dipilih = pengawasSesi[s - 1] ?? [];
                   return (
                     <Card key={s} className="border-border/70 p-5">
@@ -510,11 +527,51 @@ export function PengaturanJadwal() {
                           />
                         </div>
                         <div className="grid gap-2">
-                          <Label>Pengawas {s} (otomatis)</Label>
-                          <p className="rounded-md bg-muted px-3 py-2 text-xs leading-5">
-                            {dipilih.join(", ") ||
-                              "Belum ada penugasan — buat lewat Ruang ujian & pengawas → Jadwal pengawas otomatis."}
-                          </p>
+                          <Label>Pengawas {s}</Label>
+                          <div className="relative">
+                            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                            <Input
+                              value={cari}
+                              onChange={(e) =>
+                                setCariGuru((c) => ({ ...c, [s]: e.target.value }))
+                              }
+                              placeholder="Cari guru (nama / NIP / mapel)…"
+                              className="pl-9"
+                            />
+                          </div>
+                          <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-xl border border-border/70 bg-background/60 p-1.5">
+                            {daftar.map((g) => {
+                              const aktif = dipilih.includes(g.nama);
+                              return (
+                                <label
+                                  key={g.nip || g.nama}
+                                  className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 text-sm transition-colors ${
+                                    aktif ? "bg-emerald-50 font-medium" : "hover:bg-muted"
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={aktif}
+                                    onChange={() => togglePengawas(s, g.nama)}
+                                    className="size-4 accent-emerald-600"
+                                  />
+                                  <span className="min-w-0 truncate">
+                                    {g.nama}
+                                    {g.mapel ? (
+                                      <span className="text-muted-foreground">
+                                        {" "}· {g.mapel}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                            {!daftar.length && (
+                              <p className="px-2 py-1 text-xs text-muted-foreground">
+                                Tidak ada guru yang cocok.
+                              </p>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </Card>
@@ -543,8 +600,7 @@ export function PengaturanJadwal() {
                 </Button>
                 <p className="text-[11px] leading-5 text-muted-foreground">
                   Cetak A4 lanskap: kolom <strong>A, B, C…</strong> = sesi 1, 2,
-                  3… (kolom di luar hari ini dicetak tipis). Kolom pengawas
-                  mengikuti <strong>Jadwal pengawas otomatis</strong>.
+                  3… (kolom di luar hari ini dicetak tipis).
                 </p>
               </div>
             </>

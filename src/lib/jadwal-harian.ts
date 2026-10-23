@@ -138,7 +138,7 @@ export type OpsiCetakJadwalHarian = {
   totalSesi: number;
   /** Jam mulai tiap sesi global ("07.30"). */
   jamSesi: string[];
-  /** Mapel per sesi global (tersimpan) & pengawas per sesi (jadwal pengawas). */
+  /** Mapel/pengawas manual per sesi global (bila tersimpan). */
   mapelSesi: string[];
   pengawasSesi: string[][];
 };

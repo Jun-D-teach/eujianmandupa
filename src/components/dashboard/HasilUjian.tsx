@@ -7,12 +7,6 @@ import { Empty, EmptyContent, EmptyDescription, EmptyTitle } from "@/components/
 import { Skeleton } from "@/components/ui/skeleton";
 import { Lock, RefreshCw, ShieldAlert, Trophy } from "lucide-react";
 
-/** Tampilan poin (float) — buang desimal nol di belakang (8.0 → 8, 7.5 → 7.5). */
-function formatPoin(poin: number | undefined): string {
-  const n = Number(poin ?? 0);
-  return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/\.?0+$/, "");
-}
-
 /** Rekap hasil per ujian (guru & admin). */
 export function HasilUjian() {
   const [ujian, setUjian] = useState<UjianGas[] | null>(null);
@@ -140,7 +134,6 @@ export function HasilUjian() {
                       <th className="px-5 py-3">Kelas</th>
                       <th className="px-5 py-3">Token</th>
                       <th className="px-5 py-3">Benar</th>
-                      <th className="px-5 py-3 text-right">Poin</th>
                       <th className="px-5 py-3">Pelanggaran</th>
                       <th className="px-5 py-3 text-right">Nilai</th>
                       <th className="px-5 py-3 text-right">Dikirim</th>
@@ -164,9 +157,6 @@ export function HasilUjian() {
                         <td className="px-5 py-3.5 text-muted-foreground">
                           {h.benar}/{h.total_soal}
                         </td>
-                        <td className="px-5 py-3.5 text-right font-semibold tabular-nums">
-                          {formatPoin(h.poin)}
-                        </td>
                         <td className="px-5 py-3.5">
                           <Badge
                             variant={
@@ -189,17 +179,6 @@ export function HasilUjian() {
                             />
                             {h.nilai}
                           </span>
-                          {(h.menunggu ?? 0) > 0 && (
-                            <span className="mt-1 flex justify-end">
-                              <Badge
-                                variant="secondary"
-                                className="gap-1 bg-amber-500/15 text-amber-700"
-                              >
-                                <ShieldAlert className="size-3" />
-                                {h.menunggu} menunggu koreksi
-                              </Badge>
-                            </span>
-                          )}
                         </td>
                         <td className="px-5 py-3.5 text-right text-xs text-muted-foreground">
                           {h.timestamp
