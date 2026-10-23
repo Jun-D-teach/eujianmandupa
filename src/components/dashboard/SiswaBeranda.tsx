@@ -104,6 +104,7 @@ function baruSesiUnduh(
       gambar: s.gambar || undefined,
       opsi_huruf: s.opsi_huruf || undefined,
       bacaan: s.bacaan || undefined,
+      tipe: s.tipe || undefined,
     })),
     jawaban: {},
     indeks: 0,
@@ -177,9 +178,18 @@ export function SiswaUjian() {
         simpanPinTersimpan(data.pin_pengawas);
       }
       const idBaru = new Set(data.soal.map((s) => s.id));
+      const tipeBaru = new Map(
+        data.soal.map((s) => [s.id, s.tipe ?? "pg"] as const),
+      );
       const jawaban: SesiUjian["jawaban"] = {};
       for (const [k, v] of Object.entries(sesiLama.jawaban)) {
-        if (idBaru.has(k)) jawaban[k] = v;
+        if (!idBaru.has(k)) continue;
+        // Soal bisa berubah tipe setelah guru perbaiki (mis. pg → essay);
+        // buang jawaban lama yang tidak kompatibel dengan tipe barunya.
+        const huruf = /^[A-E]$/.test(v);
+        if ((tipeBaru.get(k) ?? "pg") === "pg" ? huruf : !huruf) {
+          jawaban[k] = v;
+        }
       }
       const baru: SesiUjian = {
         ...sesiLama,
@@ -196,6 +206,7 @@ export function SiswaUjian() {
           gambar: s.gambar || undefined,
           opsi_huruf: s.opsi_huruf || undefined,
           bacaan: s.bacaan || undefined,
+          tipe: s.tipe || undefined,
         })),
         jawaban,
         indeks: Math.max(0, Math.min(sesiLama.indeks, data.soal.length - 1)),

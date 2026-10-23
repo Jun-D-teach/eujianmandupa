@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { gasCall, tokenValid, type RuangSetGas, type SoalGas, type SiswaGas, type UjianGas } from "@/lib/api";
+import { gasCall, tokenValid, type RuangSetGas, type SoalGas, type SiswaGas, type TipeSoal, type UjianGas } from "@/lib/api";
 import {
   cetakKartu,
   cocokSasaran,
@@ -86,14 +86,23 @@ import { toast } from "sonner";
 const PILIHAN = ["A", "B", "C", "D", "E"] as const;
 const OPSI_WAJIB = ["A", "B", "C", "D"] as const;
 const FORM_KOSONG = {
+  tipe: "pg" as TipeSoal,
   pertanyaan: "",
   opsi_a: "",
   opsi_b: "",
   opsi_c: "",
   opsi_d: "",
   opsi_e: "",
+  kunci_teks: "",
   gambar: "",
   bacaan: "",
+};
+
+/** Label tipe soal untuk daftar/badge admin. */
+const LABEL_TIPE: Record<TipeSoal, string> = {
+  pg: "Pilihan ganda",
+  essay: "Essay",
+  uraian: "Uraian",
 };
 
 /** Batas data URL gambar soal — menjaga kuota penyimpanan offline HP siswa. */
@@ -1113,12 +1122,14 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
   const mulaiEdit = (s: SoalGas) => {
     setEditId(s.id);
     setForm({
+      tipe: s.tipe ?? "pg",
       pertanyaan: s.pertanyaan,
       opsi_a: s.opsi_a,
       opsi_b: s.opsi_b,
       opsi_c: s.opsi_c,
       opsi_d: s.opsi_d,
       opsi_e: s.opsi_e || "",
+      kunci_teks: s.kunci_teks || "",
       gambar: s.gambar || "",
       bacaan: s.bacaan || "",
     });
@@ -1138,37 +1149,41 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       toast.error("Pertanyaan wajib diisi.");
       return;
     }
-    // Validasi meniru backend (validasiIsiSoal): penanda "A." di depan teks
-    // dibuang oleh server — nilai yang hanya berisi huruf jadi kosong di sana.
-    // Tangkap di sini agar pesan menyebut opsi mana & cara mengisinya.
-    for (const p of OPSI_WAJIB) {
-      const nilai = form[fieldOpsi(p)].trim();
-      if (!nilai) {
-        toast.error(`Opsi ${p} wajib diisi (opsi E opsional).`);
+    // Pilihan ganda: validasi meniru backend (validasiIsiSoal) — penanda
+    // "A." di depan teks dibuang oleh server, jadi nilai yang hanya berisi
+    // huruf jadi kosong di sana. Tangkap di sini agar pesannya jelas.
+    if (form.tipe === "pg") {
+      for (const p of OPSI_WAJIB) {
+        const nilai = form[fieldOpsi(p)].trim();
+        if (!nilai) {
+          toast.error(`Opsi ${p} wajib diisi (opsi E opsional).`);
+          return;
+        }
+        if (nilai.replace(RE_HURUF_DEPAN, "").trim() === "") {
+          toast.error(
+            `Opsi ${p} hanya berisi huruf ("${nilai}") — tulis teks pilihannya, mis. "${p}. Jawaban".`,
+          );
+          return;
+        }
+      }
+      if (kunci === "E" && !form.opsi_e.trim()) {
+        toast.error("Opsi E kosong — pilih kunci A–D atau isi opsi E.");
         return;
       }
-      if (nilai.replace(RE_HURUF_DEPAN, "").trim() === "") {
-        toast.error(
-          `Opsi ${p} hanya berisi huruf ("${nilai}") — tulis teks pilihannya, mis. "${p}. Jawaban".`,
-        );
-        return;
-      }
-    }
-    if (kunci === "E" && !form.opsi_e.trim()) {
-      toast.error("Opsi E kosong — pilih kunci A–D atau isi opsi E.");
-      return;
     }
     setBusy(true);
     try {
       const muatan = {
         ujian_id: ujianId,
+        tipe: form.tipe,
         pertanyaan: form.pertanyaan.trim(),
-        opsi_a: form.opsi_a.trim(),
-        opsi_b: form.opsi_b.trim(),
-        opsi_c: form.opsi_c.trim(),
-        opsi_d: form.opsi_d.trim(),
-        opsi_e: form.opsi_e.trim(),
-        kunci_jawaban: kunci,
+        opsi_a: form.tipe === "pg" ? form.opsi_a.trim() : "",
+        opsi_b: form.tipe === "pg" ? form.opsi_b.trim() : "",
+        opsi_c: form.tipe === "pg" ? form.opsi_c.trim() : "",
+        opsi_d: form.tipe === "pg" ? form.opsi_d.trim() : "",
+        opsi_e: form.tipe === "pg" ? form.opsi_e.trim() : "",
+        kunci_jawaban: form.tipe === "pg" ? kunci : "",
+        kunci_teks: form.tipe === "pg" ? "" : form.kunci_teks.trim(),
         gambar: form.gambar,
         bacaan: form.bacaan.trim(),
         // opsi_huruf tidak dikirim lagi — server mendeteksi sendiri apakah
@@ -1179,7 +1194,11 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
         toast.success("Soal diperbarui — siswa yang sudah unduh diminta sinkron ulang.");
       } else {
         await gasCall("tambahSoal", muatan);
-        toast.success("Soal ditambahkan.");
+        toast.success(
+          form.tipe === "pg"
+            ? "Soal ditambahkan."
+            : `Soal ${LABEL_TIPE[form.tipe].toLowerCase()} ditambahkan — dinilai manual lewat menu Koreksi.`,
+        );
       }
       setForm(FORM_KOSONG);
       setKunci("A");
@@ -1513,8 +1532,17 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  <p className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
                     Soal {i + 1}
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] ${
+                        (s.tipe ?? "pg") === "pg"
+                          ? "bg-muted text-muted-foreground"
+                          : "bg-amber-500/15 text-amber-700"
+                      }`}
+                    >
+                      {LABEL_TIPE[s.tipe ?? "pg"]}
+                    </span>
                   </p>
                   {s.bacaan && (
                     <div className="mt-1 rounded-xl border border-dashed border-border/70 bg-muted/40 px-3 py-2">
@@ -1538,38 +1566,53 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                       className="mt-2 max-h-44 rounded-xl border border-border/70 object-contain"
                     />
                   )}
-                  <ul className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-                    <li
-                      dangerouslySetInnerHTML={{
-                        __html: labelOpsi("A", s.opsi_a, s.opsi_huruf),
-                      }}
-                    />
-                    <li
-                      dangerouslySetInnerHTML={{
-                        __html: labelOpsi("B", s.opsi_b, s.opsi_huruf),
-                      }}
-                    />
-                    <li
-                      dangerouslySetInnerHTML={{
-                        __html: labelOpsi("C", s.opsi_c, s.opsi_huruf),
-                      }}
-                    />
-                    <li
-                      dangerouslySetInnerHTML={{
-                        __html: labelOpsi("D", s.opsi_d, s.opsi_huruf),
-                      }}
-                    />
-                    {s.opsi_e && (
+                  {(s.tipe ?? "pg") === "pg" ? (
+                    <ul className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
                       <li
                         dangerouslySetInnerHTML={{
-                          __html: labelOpsi("E", s.opsi_e, s.opsi_huruf),
+                          __html: labelOpsi("A", s.opsi_a, s.opsi_huruf),
                         }}
                       />
-                    )}
-                  </ul>
-                  <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-bold text-emerald-700">
-                    <KeyRound className="size-3.5" /> Kunci: {s.kunci_jawaban}
-                  </span>
+                      <li
+                        dangerouslySetInnerHTML={{
+                          __html: labelOpsi("B", s.opsi_b, s.opsi_huruf),
+                        }}
+                      />
+                      <li
+                        dangerouslySetInnerHTML={{
+                          __html: labelOpsi("C", s.opsi_c, s.opsi_huruf),
+                        }}
+                      />
+                      <li
+                        dangerouslySetInnerHTML={{
+                          __html: labelOpsi("D", s.opsi_d, s.opsi_huruf),
+                        }}
+                      />
+                      {s.opsi_e && (
+                        <li
+                          dangerouslySetInnerHTML={{
+                            __html: labelOpsi("E", s.opsi_e, s.opsi_huruf),
+                          }}
+                        />
+                      )}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                      Dinilai manual guru — jawaban siswa berupa teks.
+                    </p>
+                  )}
+                  {(s.tipe ?? "pg") === "pg" ? (
+                    <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-bold text-emerald-700">
+                      <KeyRound className="size-3.5" /> Kunci: {s.kunci_jawaban}
+                    </span>
+                  ) : s.kunci_teks ? (
+                    <span className="mt-3 inline-flex items-start gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-bold text-amber-700">
+                      <KeyRound className="mt-0.5 size-3.5 shrink-0" /> Kunci:
+                      <span className="font-medium normal-case">
+                        {s.kunci_teks}
+                      </span>
+                    </span>
+                  ) : null}
                 </div>
                 <div className="flex shrink-0 gap-1">
                   <Button
@@ -1718,9 +1761,38 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
             diminta sinkron ulang (wajib online sesaat sebelum mengerjakan).
           </p>
         )}
+
+        {/* Pemilih tipe soal — menentukan opsi & cara penilaian. */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-muted-foreground">
+            Tipe soal:
+          </span>
+          {(Object.keys(LABEL_TIPE) as TipeSoal[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, tipe: t }))}
+              disabled={busy}
+              className={`rounded-xl border px-3 py-1.5 text-xs font-bold transition-colors ${
+                form.tipe === t
+                  ? "border-emerald-600 bg-emerald-600 text-white"
+                  : "border-border/70 bg-card text-muted-foreground hover:border-foreground/40"
+              }`}
+            >
+              {LABEL_TIPE[t]}
+            </button>
+          ))}
+          {form.tipe !== "pg" && (
+            <span className="text-[11px] leading-4 text-muted-foreground">
+              Jawaban teks — dinilai manual guru lewat menu Koreksi.
+            </span>
+          )}
+        </div>
+
         <div className="mt-3 space-y-3">
           {/* Kotak tulis utama — penampung soal; hasilnya dipecah ke kolom
-              soal + kolom A–E di bawah. */}
+              soal + kolom A–E di bawah. Hanya untuk pilihan ganda. */}
+          {form.tipe === "pg" && (
           <div className="rounded-2xl border border-dashed border-border/70 p-3">
             <div className="mb-2 flex flex-wrap items-center gap-1">
               <span className="mr-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -1811,6 +1883,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
               </p>
             </div>
           </div>
+          )}
 
           {/* Kolom soal — hasil pecah otomatis, bisa dikoreksi langsung */}
           <div className="grid gap-1.5">
@@ -1820,7 +1893,13 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
               value={form.pertanyaan}
               onChange={set("pertanyaan")}
               rows={3}
-              placeholder="Pertanyaan muncul di sini setelah klik “Pecah otomatis ke kolom A–E” — boleh dikoreksi langsung."
+              placeholder={
+                form.tipe === "pg"
+                  ? "Pertanyaan muncul di sini setelah klik “Pecah otomatis ke kolom A–E” — boleh dikoreksi langsung."
+                  : form.tipe === "essay"
+                    ? "Pertanyaan essay — jawaban singkat 1–3 kalimat, ditulis siswa di HP."
+                    : "Pertanyaan uraian — jawaban panjang (lelang/uraian langkah), ditulis siswa di HP."
+              }
             />
             {adaFormat(form.pertanyaan) && (
               <div className="rounded-xl border border-border/70 bg-background/60 px-3 py-2">
@@ -1858,21 +1937,43 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
             )}
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            {PILIHAN.map((p) => (
-              <Input
-                key={p}
-                value={form[fieldOpsi(p)]}
-                onChange={set(fieldOpsi(p))}
-                placeholder={p === "E" ? "Opsi E (opsional)" : `Opsi ${p}`}
+          {form.tipe === "pg" && (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {PILIHAN.map((p) => (
+                  <Input
+                    key={p}
+                    value={form[fieldOpsi(p)]}
+                    onChange={set(fieldOpsi(p))}
+                    placeholder={p === "E" ? "Opsi E (opsional)" : `Opsi ${p}`}
+                  />
+                ))}
+              </div>
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                Isi jawaban di tiap kolom — boleh ditulis beserta hurufnya
+                (mis. “A. Jakarta”) atau tanpa huruf (“Jakarta”); huruf A–E
+                otomatis dirapikan saat tampil ke siswa.
+              </p>
+            </>
+          )}
+          {form.tipe !== "pg" && (
+            <div className="grid gap-1.5">
+              <Label htmlFor="kunci-teks">
+                Jawaban contoh / kunci koreksi (opsional)
+              </Label>
+              <Textarea
+                id="kunci-teks"
+                value={form.kunci_teks}
+                onChange={set("kunci_teks")}
+                rows={3}
+                placeholder="Ketentuan jawaban benar — hanya dilihat guru saat mengoreksi, tidak dikirim ke siswa."
               />
-            ))}
-          </div>
-          <p className="text-[11px] leading-4 text-muted-foreground">
-            Isi jawaban di tiap kolom — boleh ditulis beserta hurufnya
-            (mis. “A. Jakarta”) atau tanpa huruf (“Jakarta”); huruf A–E otomatis
-            dirapikan saat tampil ke siswa.
-          </p>
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                Tidak perlu opsi A–E. Nilai ditentukan guru di menu
+                <strong> Koreksi Nilai</strong> setelah siswa mengirim jawaban.
+              </p>
+            </div>
+          )
 
           {/* Gambar soal (untuk soal bergambar) */}
           <div className="flex flex-wrap items-center gap-3">
@@ -1924,24 +2025,28 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-muted-foreground">
-              Kunci jawaban:
-            </span>
-            {PILIHAN.map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => setKunci(p)}
-                className={`size-9 rounded-xl border text-sm font-bold transition-colors ${
-                  kunci === p
-                    ? "border-emerald-600 bg-emerald-600 text-white"
-                    : "border-border/70 bg-card text-muted-foreground hover:border-foreground/40"
-                }`}
-                aria-label={`Kunci ${p}`}
-              >
-                {p}
-              </button>
-            ))}
+            {form.tipe === "pg" && (
+              <>
+                <span className="text-xs font-semibold text-muted-foreground">
+                  Kunci jawaban:
+                </span>
+                {PILIHAN.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setKunci(p)}
+                    className={`size-9 rounded-xl border text-sm font-bold transition-colors ${
+                      kunci === p
+                        ? "border-emerald-600 bg-emerald-600 text-white"
+                        : "border-border/70 bg-card text-muted-foreground hover:border-foreground/40"
+                    }`}
+                    aria-label={`Kunci ${p}`}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </>
+            )}
             {editId && (
               <Button
                 type="button"

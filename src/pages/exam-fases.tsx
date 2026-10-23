@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowLeft,
   ArrowRight,
@@ -314,13 +315,16 @@ export function InstruksiFase(props: {
 export function UjianFase(props: {
   sesi: SesiUjian;
   totalTerjawab: number;
-  onJawab: (p: Pilihan) => void;
+  /** Huruf pilihan (pg) ATAU teks jawaban (essay/uraian). */
+  onJawab: (p: string) => void;
   onPindah: (i: number) => void;
   onSelesai: () => void;
 }) {
   const { sesi } = props;
   const soal = sesi.soal[sesi.indeks];
   const terjawab = sesi.jawaban[soal?.id ?? ""];
+  /** Tipe soal — absen pada data lama = pilihan ganda. */
+  const tipe = soal?.tipe ?? "pg";
 
   /** Huruf di depan teks pilihan ("A. …") untuk deteksi teks berhuruf. */
   const RE_HURUF_DEPAN = /^[A-E][\s.)\-–—:]+/i;
@@ -382,6 +386,7 @@ export function UjianFase(props: {
             />
           )}
 
+          {tipe === "pg" ? (
           <div className="mt-5 space-y-2.5">
             {opsi.map(({ huruf, teks }) => {
               const aktif = terjawab === huruf;
@@ -418,6 +423,33 @@ export function UjianFase(props: {
               );
             })}
           </div>
+          ) : (
+          <div className="mt-5 space-y-2">
+            <Label
+              htmlFor={`jawaban-${soal?.id}`}
+              className="text-xs font-bold uppercase tracking-wider text-muted-foreground"
+            >
+              {tipe === "essay" ? "Jawaban (essay)" : "Jawaban (uraian)"}
+            </Label>
+            <Textarea
+              id={`jawaban-${soal?.id}`}
+              value={terjawab ?? ""}
+              onChange={(e) => props.onJawab(e.target.value)}
+              rows={tipe === "essay" ? 4 : 8}
+              maxLength={8000}
+              placeholder={
+                tipe === "essay"
+                  ? "Tulis jawaban singkatmu (1–3 kalimat)…"
+                  : "Tulis jawaban uraianmu di sini — langkah/pembahasan boleh panjang…"
+              }
+              className="resize-y bg-background"
+            />
+            <p className="text-[11px] leading-4 text-muted-foreground">
+              Jawaban tersimpan otomatis di HP — dinilai manual oleh guru
+              setelah ujian dikirim.
+            </p>
+          </div>
+          )}
         </CardContent>
       </Card>
 
@@ -572,12 +604,27 @@ export function SelesaiFase(props: {
           <p className="mt-4 text-xs font-bold uppercase tracking-[0.2em] text-white/50">
             Jawaban terkirim
           </p>
-          <p className="mt-2 text-6xl font-extrabold tracking-tight text-emerald-400">
-            {nilai}
-          </p>
-          <p className="mt-1 text-sm text-white/60">
-            {hasil?.benar ?? 0} benar dari {hasil?.total_soal ?? 0} soal
-          </p>
+          {(hasil?.menunggu ?? 0) > 0 ? (
+            <>
+              <p className="mt-2 text-5xl font-extrabold tracking-tight text-amber-300">
+                ≈{nilai}
+              </p>
+              <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-white/70">
+                Nilai sementara — {hasil!.menunggu} jawaban essay/uraian
+                menunggu koreksi guru. Nilai akhir bisa berubah setelah
+                dikoreksi.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="mt-2 text-6xl font-extrabold tracking-tight text-emerald-400">
+                {nilai}
+              </p>
+              <p className="mt-1 text-sm text-white/60">
+                {hasil?.benar ?? 0} benar dari {hasil?.total_soal ?? 0} soal
+              </p>
+            </>
+          )}
         </div>
         <CardContent className="divide-y divide-border/60 p-0">
           {[
