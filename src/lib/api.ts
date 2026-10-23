@@ -68,12 +68,6 @@ export type GuruGas = {
   mapel: string;
 };
 
-/**
- * Tipe soal — `pg` pilihan ganda (dinilai otomatis); `essay` & `uraian`
- * jawaban teks yang dinilai manual guru lewat menu Koreksi.
- */
-export type TipeSoal = "pg" | "essay" | "uraian";
-
 export type SoalGas = {
   id: string;
   ujian_id: string;
@@ -84,17 +78,10 @@ export type SoalGas = {
   opsi_d: string;
   opsi_e: string;
   kunci_jawaban?: string;
-  /** Tipe soal; absen = pg (soal lama). */
-  tipe?: TipeSoal;
-  /** Jawaban contoh untuk essay/uraian — hanya untuk petugas (koreksi). */
-  kunci_teks?: string;
   /** Gambar soal (data URL JPEG) — opsional, untuk soal bergambar. */
   gambar?: string;
   /** 1 = teks pilihan sudah menyertakan huruf A–E (tampil apa adanya). */
   opsi_huruf?: number;
-  /** Teks bacaan bersama (naskah untuk soal ini) — tampil di atas
-   *  pertanyaan saat ujian; dikosongkan bila tidak dipakai. */
-  bacaan?: string;
 };
 
 export type HasilGas = {
@@ -107,29 +94,8 @@ export type HasilGas = {
   benar: number;
   total_soal: number;
   nilai: number;
-  /** Poin gabungan (PG otomatis + koreksi manual) — 0 bila ujian lama. */
-  poin?: number;
-  /** Jumlah jawaban essay/uraian yang masih menunggu koreksi guru. */
-  menunggu?: number;
   total_pelanggaran: number;
   timestamp: string;
-};
-
-/** Soal essay/uraian beserta acuan koreksi (layar Koreksi Nilai). */
-export type KoreksiSoalGas = {
-  id: string;
-  nomor: number;
-  tipe: Exclude<TipeSoal, "pg">;
-  pertanyaan: string;
-  kunci_teks: string;
-  bacaan: string;
-};
-
-/** Jawaban teks satu siswa untuk satu soal essay/uraian. */
-export type KoreksiJawabanGas = {
-  id_soal: string;
-  teks: string;
-  skor: number | null;
 };
 
 export type PenggunaGas = {
