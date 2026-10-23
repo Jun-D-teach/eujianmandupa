@@ -538,6 +538,12 @@ export function SiswaUjian() {
 }
 
 /** Riwayat nilai milik siswa (dicocokkan dari nama di sheet Hasil). */
+/** Tampilan poin (float) — buang desimal nol di belakang (8.0 → 8, 7.5 → 7.5). */
+function formatPoin(poin: number | undefined): string {
+  const n = Number(poin ?? 0);
+  return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/\.?0+$/, "");
+}
+
 export function SiswaRiwayat() {
   const { user } = useAuth();
   const [hasil, setHasil] = useState<HasilGas[] | null>(null);
@@ -607,6 +613,7 @@ export function SiswaRiwayat() {
                   <th className="px-5 py-3">Ujian</th>
                   <th className="px-5 py-3">Kelas</th>
                   <th className="px-5 py-3">Benar</th>
+                  <th className="px-5 py-3 text-right">Poin</th>
                   <th className="px-5 py-3">Pelanggaran</th>
                   <th className="px-5 py-3 text-right">Nilai</th>
                   <th className="px-5 py-3 text-right">Waktu</th>
@@ -619,6 +626,9 @@ export function SiswaRiwayat() {
                     <td className="px-5 py-3.5 text-muted-foreground">{h.kelas}</td>
                     <td className="px-5 py-3.5 text-muted-foreground">
                       {h.benar}/{h.total_soal}
+                    </td>
+                    <td className="px-5 py-3.5 text-right font-semibold tabular-nums">
+                      {formatPoin(h.poin)}
                     </td>
                     <td className="px-5 py-3.5">
                       <span
@@ -637,6 +647,13 @@ export function SiswaRiwayat() {
                         <Trophy className="size-4 text-emerald-600" />
                         {h.nilai}
                       </span>
+                      {(h.menunggu ?? 0) > 0 && (
+                        <span className="mt-1 block">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                            {h.menunggu} menunggu koreksi
+                          </span>
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-3.5 text-right text-xs text-muted-foreground">
                       {h.timestamp

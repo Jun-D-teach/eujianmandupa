@@ -1973,7 +1973,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                 <strong> Koreksi Nilai</strong> setelah siswa mengirim jawaban.
               </p>
             </div>
-          )
+          )}
 
           {/* Gambar soal (untuk soal bergambar) */}
           <div className="flex flex-wrap items-center gap-3">
