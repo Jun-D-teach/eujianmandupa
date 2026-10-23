@@ -6,9 +6,12 @@
  * tetap berjalan penuh saat internet dimatikan.
  */
 
+import type { TipeSoal } from "./api";
+
 export type Fase = "setup" | "instruksi" | "ujian" | "kirim" | "selesai";
 
-/** Huruf pilihan jawaban — hanya huruf inilah yang disimpan saat siswa menjawab. */
+/** Huruf pilihan jawaban — hanya huruf inilah yang disimpan saat siswa
+ *  menjawab soal pilihan ganda. */
 export type Pilihan = "A" | "B" | "C" | "D" | "E";
 
 export type SoalUjian = {
@@ -23,6 +26,11 @@ export type SoalUjian = {
   gambar?: string;
   /** 1 = teks pilihan sudah menyertakan huruf A–E. */
   opsi_huruf?: number;
+  /** Teks bacaan bersama (naskah) — disimpan di HP agar tampil saat offline. */
+  bacaan?: string;
+  /** Tipe soal — absen = pg (data lama). Essay/uraian dijawab lewat teks
+   *  bebas dan dinilai manual guru. */
+  tipe?: TipeSoal;
 };
 
 export type Pelanggaran = {
@@ -39,6 +47,8 @@ export type HasilAkhir = {
   nilai: number;
   benar: number;
   total_soal: number;
+  /** Jawaban essay/uraian yang masih menunggu koreksi guru (0 = final). */
+  menunggu?: number;
   total_pelanggaran: number;
 };
 
@@ -69,7 +79,8 @@ export type SesiUjian = {
   mulaiPada?: number;
   kirimPada?: number;
   soal: SoalUjian[];
-  jawaban: Record<string, Pilihan>;
+  /** Per id soal: huruf pilihan (pg) ATAU teks jawaban (essay/uraian). */
+  jawaban: Record<string, string>;
   indeks: number;
   /** Hitungan strike menuju kunci layar (direset saat PIN pengawas dibuka). */
   strike: number;

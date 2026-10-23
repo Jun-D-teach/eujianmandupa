@@ -505,9 +505,18 @@ export default function ExamPage() {
           simpanPinTersimpan(data.pin_pengawas);
         }
         const idBaru = new Set(data.soal.map((s) => s.id));
+        const tipeBaru = new Map(
+          data.soal.map((s) => [s.id, s.tipe ?? "pg"] as const),
+        );
         const jawaban: SesiUjian["jawaban"] = {};
         for (const [k, v] of Object.entries(sesi.jawaban)) {
-          if (idBaru.has(k)) jawaban[k] = v;
+          if (!idBaru.has(k)) continue;
+          // Soal bisa berubah tipe setelah guru perbaiki (mis. pg → essay);
+          // buang jawaban lama yang tidak kompatibel dengan tipe barunya.
+          const huruf = /^[A-E]$/.test(v);
+          if ((tipeBaru.get(k) ?? "pg") === "pg" ? huruf : !huruf) {
+            jawaban[k] = v;
+          }
         }
         const baru: SesiUjian = {
           ...sesi,
@@ -523,6 +532,8 @@ export default function ExamPage() {
             opsi_e: s.opsi_e || undefined,
             gambar: s.gambar || undefined,
             opsi_huruf: s.opsi_huruf || undefined,
+            bacaan: s.bacaan || undefined,
+            tipe: s.tipe || undefined,
           })),
           jawaban,
           indeks: Math.max(0, Math.min(sesi.indeks, data.soal.length - 1)),
@@ -590,6 +601,8 @@ export default function ExamPage() {
           opsi_e: s.opsi_e || undefined,
           gambar: s.gambar || undefined,
           opsi_huruf: s.opsi_huruf || undefined,
+          bacaan: s.bacaan || undefined,
+          tipe: s.tipe || undefined,
         })),
         jawaban: {},
         indeks: 0,
@@ -741,11 +754,11 @@ export default function ExamPage() {
   const kirimJawaban = async () => {
     if (!sesi || !ujianId) return;
     setBusy(true);
-    try {
-      const res = await gasCall<{
+    try {      const res = await gasCall<{
         nilai: number;
         benar: number;
         total_soal: number;
+        menunggu_koreksi: number;
         total_pelanggaran: number;
       }>("submitJawaban", {
         ujian_id: ujianId,
@@ -755,7 +768,11 @@ export default function ExamPage() {
         total_pelanggaran: sesi.pelanggaran.length,
         jawaban: sesi.soal.map((s) => ({
           id_soal: s.id,
-          pilihan: sesi.jawaban[s.id],
+          // pg → huruf pilihan; essay/uraian → teks jawaban bebas.
+          pilihan:
+            (s.tipe ?? "pg") === "pg" ? (sesi.jawaban[s.id] ?? "") : "",
+          teks:
+            (s.tipe ?? "pg") === "pg" ? "" : (sesi.jawaban[s.id] ?? ""),
         })),
       });
       setSesi((prev) =>
@@ -763,12 +780,13 @@ export default function ExamPage() {
           ? {
               ...prev,
               fase: "selesai",
-            kirimPada: Date.now(),
-            sirene: false,
-            hasil: {
+              kirimPada: Date.now(),
+              sirene: false,
+              hasil: {
                 nilai: res.nilai,
                 benar: res.benar,
                 total_soal: res.total_soal,
+                menunggu: res.menunggu_koreksi,
                 total_pelanggaran: res.total_pelanggaran,
               },
             }
@@ -776,7 +794,11 @@ export default function ExamPage() {
       );
       hentikanSirene();
       setSireneNyala(false);
-      toast.success("Jawaban berhasil dikirim.");
+      toast.success(
+        res.menunggu_koreksi > 0
+          ? `Jawaban terkirim — ${res.menunggu_koreksi} jawaban menunggu koreksi guru.`
+          : "Jawaban berhasil dikirim.",
+      );
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Gagal mengirim. Coba lagi.",

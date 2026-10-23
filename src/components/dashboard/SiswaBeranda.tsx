@@ -103,6 +103,8 @@ function baruSesiUnduh(
       opsi_e: s.opsi_e || undefined,
       gambar: s.gambar || undefined,
       opsi_huruf: s.opsi_huruf || undefined,
+      bacaan: s.bacaan || undefined,
+      tipe: s.tipe || undefined,
     })),
     jawaban: {},
     indeks: 0,
@@ -122,13 +124,23 @@ export function SiswaUjian() {
   const [sinkronBusy, setSinkronBusy] = useState<string | null>(null);
   const [unduhBusy, setUnduhBusy] = useState<string | null>(null);
 
-  useEffect(() => {
-    let hidup = true;
+  /**
+   * Muat ulang daftar ujian — reset tampilan lama di event handler
+   * (bukan di dalam effect) lalu picu pengambilan terbaru lewat `versi`.
+   */
+  const segarkan = () => {
     setUjian(null);
     setError(null);
+    setVersi((v) => v + 1);
+  };
+
+  useEffect(() => {
+    let hidup = true;
     gasCall<{ ujian: UjianGas[] }>("getUjianSiswa", { kelas: user?.kelas ?? "" })
       .then((res) => {
-        if (hidup) setUjian(res.ujian);
+        if (!hidup) return;
+        setUjian(res.ujian);
+        setError(null);
       })
       .catch((err) => {
         if (hidup)
@@ -166,9 +178,18 @@ export function SiswaUjian() {
         simpanPinTersimpan(data.pin_pengawas);
       }
       const idBaru = new Set(data.soal.map((s) => s.id));
+      const tipeBaru = new Map(
+        data.soal.map((s) => [s.id, s.tipe ?? "pg"] as const),
+      );
       const jawaban: SesiUjian["jawaban"] = {};
       for (const [k, v] of Object.entries(sesiLama.jawaban)) {
-        if (idBaru.has(k)) jawaban[k] = v;
+        if (!idBaru.has(k)) continue;
+        // Soal bisa berubah tipe setelah guru perbaiki (mis. pg → essay);
+        // buang jawaban lama yang tidak kompatibel dengan tipe barunya.
+        const huruf = /^[A-E]$/.test(v);
+        if ((tipeBaru.get(k) ?? "pg") === "pg" ? huruf : !huruf) {
+          jawaban[k] = v;
+        }
       }
       const baru: SesiUjian = {
         ...sesiLama,
@@ -184,6 +205,8 @@ export function SiswaUjian() {
           opsi_e: s.opsi_e || undefined,
           gambar: s.gambar || undefined,
           opsi_huruf: s.opsi_huruf || undefined,
+          bacaan: s.bacaan || undefined,
+          tipe: s.tipe || undefined,
         })),
         jawaban,
         indeks: Math.max(0, Math.min(sesiLama.indeks, data.soal.length - 1)),
@@ -192,7 +215,7 @@ export function SiswaUjian() {
       toast.success(
         `Soal diperbarui — ${baru.soal.length} soal terbaru tersimpan di HP.`,
       );
-      setVersi((v) => v + 1);
+      segarkan();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal sinkron ulang soal.");
     } finally {
@@ -235,7 +258,7 @@ export function SiswaUjian() {
       }
       simpanSesi(baruSesiUnduh(u.id, data, nama, kelas));
       toast.success(`${data.soal.length} soal tersimpan di HP — lampu hijau.`);
-      setVersi((v) => v + 1);
+      segarkan();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal mengunduh soal.");
     } finally {
@@ -254,7 +277,7 @@ export function SiswaUjian() {
               variant="outline"
               size="sm"
               className="mt-3"
-              onClick={() => setVersi((v) => v + 1)}
+              onClick={segarkan}
             >
               Coba lagi
             </Button>
@@ -294,7 +317,7 @@ export function SiswaUjian() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setVersi((v) => v + 1)}
+            onClick={segarkan}
           >
             Muat ulang
           </Button>
@@ -480,7 +503,7 @@ export function SiswaUjian() {
                           onClick={() => {
                             hapusSesi(u.id);
                             toast.success("Sesi dihapus, mulai dari awal.");
-                            setVersi((v) => v + 1);
+                            segarkan();
                           }}
                         >
                           <Pencil className="size-4" /> Mulai ulang
@@ -515,6 +538,12 @@ export function SiswaUjian() {
 }
 
 /** Riwayat nilai milik siswa (dicocokkan dari nama di sheet Hasil). */
+/** Tampilan poin (float) — buang desimal nol di belakang (8.0 → 8, 7.5 → 7.5). */
+function formatPoin(poin: number | undefined): string {
+  const n = Number(poin ?? 0);
+  return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/\.?0+$/, "");
+}
+
 export function SiswaRiwayat() {
   const { user } = useAuth();
   const [hasil, setHasil] = useState<HasilGas[] | null>(null);
@@ -522,11 +551,11 @@ export function SiswaRiwayat() {
 
   useEffect(() => {
     let hidup = true;
-    setHasil(null);
-    setError(null);
     gasCall<{ hasil: HasilGas[] }>("getHasilSaya", { nama: user?.nama ?? "" })
       .then((res) => {
-        if (hidup) setHasil(res.hasil);
+        if (!hidup) return;
+        setHasil(res.hasil);
+        setError(null);
       })
       .catch((err) => {
         if (hidup)
@@ -584,6 +613,7 @@ export function SiswaRiwayat() {
                   <th className="px-5 py-3">Ujian</th>
                   <th className="px-5 py-3">Kelas</th>
                   <th className="px-5 py-3">Benar</th>
+                  <th className="px-5 py-3 text-right">Poin</th>
                   <th className="px-5 py-3">Pelanggaran</th>
                   <th className="px-5 py-3 text-right">Nilai</th>
                   <th className="px-5 py-3 text-right">Waktu</th>
@@ -596,6 +626,9 @@ export function SiswaRiwayat() {
                     <td className="px-5 py-3.5 text-muted-foreground">{h.kelas}</td>
                     <td className="px-5 py-3.5 text-muted-foreground">
                       {h.benar}/{h.total_soal}
+                    </td>
+                    <td className="px-5 py-3.5 text-right font-semibold tabular-nums">
+                      {formatPoin(h.poin)}
                     </td>
                     <td className="px-5 py-3.5">
                       <span
@@ -614,6 +647,13 @@ export function SiswaRiwayat() {
                         <Trophy className="size-4 text-emerald-600" />
                         {h.nilai}
                       </span>
+                      {(h.menunggu ?? 0) > 0 && (
+                        <span className="mt-1 block">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                            {h.menunggu} menunggu koreksi
+                          </span>
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-3.5 text-right text-xs text-muted-foreground">
                       {h.timestamp
