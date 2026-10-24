@@ -89,10 +89,24 @@ export function PengaturanRuang({
   const [hapusRuang, setHapusRuang] = useState<RuangGas | null>(null);
 
   const [tglMulai, setTglMulai] = useState("");
-  const [totalHari, setTotalHari] = useState(3);
-  const [sesiHari, setSesiHari] = useState(2);
+  // Teks bebas supaya angka bisa dihapus/ditulis ulang bebas (bukan angka yang
+  // langsung di-clamp tiap ketikan); angka final diambil saat dibaca:
+  // total hari 1–60, sesi per hari 1–10.
+  const [totalHariTeks, setTotalHariTeks] = useState("3");
+  const [sesiHariTeks, setSesiHariTeks] = useState("2");
+  const totalHari = Math.max(1, Math.min(60, parseInt(totalHariTeks, 10) || 1));
+  const sesiHari = Math.max(1, Math.min(10, parseInt(sesiHariTeks, 10) || 1));
   // Tepat N jam untuk N sesi — bawaan 07.30, 10.00, 12.30, … (jeda 150 menit).
   const [jamSesiList, setJamSesiList] = useState<string[]>(jamMulaiOtomatis(2));
+
+  // Jumlah kolom jam selalu mengikuti jumlah sesi (isi bawaan untuk sesi baru).
+  useEffect(() => {
+    setJamSesiList((j) => {
+      if (j.length === sesiHari) return j;
+      const auto = jamMulaiOtomatis(sesiHari);
+      return Array.from({ length: sesiHari }, (_, i) => j[i] || auto[i]);
+    });
+  }, [sesiHari]);
   const [busyJadwal, setBusyJadwal] = useState(false);
 
   const [busyTempat, setBusyTempat] = useState(false);
@@ -263,14 +277,6 @@ export function PengaturanRuang({
   };
 
   /* ---------------- c. jadwal pengawas ---------------- */
-  /** Ubah jumlah sesi/hari → jumlah kolom jam ikut serta (auto terisi bawaan). */
-  const ubahSesiHari = (n: number) => {
-    const v = Math.max(1, Math.min(10, n));
-    setSesiHari(v);
-    const auto = jamMulaiOtomatis(v);
-    setJamSesiList((j) => Array.from({ length: v }, (_, i) => j[i] || auto[i]));
-  };
-
   const ubahJamSesi = (i: number, v: string) =>
     setJamSesiList((j) => {
       const n = [...j];
@@ -781,22 +787,22 @@ export function PengaturanRuang({
               <Label htmlFor="jd-hari">Total hari ujian</Label>
               <Input
                 id="jd-hari"
-                type="number"
-                min={1}
-                max={60}
-                value={totalHari}
-                onChange={(e) => setTotalHari(Number(e.target.value))}
+                type="text"
+                inputMode="numeric"
+                value={totalHariTeks}
+                onChange={(e) => setTotalHariTeks(e.target.value)}
+                onBlur={() => setTotalHariTeks(String(totalHari))}
               />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="jd-sesi">Sesi per hari</Label>
               <Input
                 id="jd-sesi"
-                type="number"
-                min={1}
-                max={10}
-                value={sesiHari}
-                onChange={(e) => ubahSesiHari(Number(e.target.value))}
+                type="text"
+                inputMode="numeric"
+                value={sesiHariTeks}
+                onChange={(e) => setSesiHariTeks(e.target.value)}
+                onBlur={() => setSesiHariTeks(String(sesiHari))}
               />
             </div>
           </div>

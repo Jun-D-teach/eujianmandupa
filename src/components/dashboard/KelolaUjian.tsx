@@ -707,7 +707,7 @@ export function KelolaUjian() {
             <div className="grid gap-4 rounded-2xl border border-border/70 bg-background/60 p-4 sm:grid-cols-2">
               <div className="flex items-center gap-2 sm:col-span-2">
                 <GraduationCap className="size-4 text-muted-foreground" />
-                <p className="text-sm font-bold">Penugasan ujian</p>
+                <p className="text-sm font-bold">Penugasan ujian — guru pembuat soal</p>
                 <Badge variant="outline" className="ml-auto text-[10px] uppercase tracking-wider">
                   Admin
                 </Badge>
@@ -722,7 +722,7 @@ export function KelolaUjian() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="guru-baru">Guru penanggung jawab</Label>
+                <Label htmlFor="guru-baru">Guru pembuat soal</Label>
                 <select
                   id="guru-baru"
                   value={guruNip}
@@ -2330,7 +2330,7 @@ function PanelPengaturan(props: {
           />
         </div>
         <div className="grid gap-2">
-          <Label htmlFor={`guru-${props.ujianId}`}>Guru penugasan</Label>
+          <Label htmlFor={`guru-${props.ujianId}`}>Guru pembuat soal</Label>
           <select
             id={`guru-${props.ujianId}`}
             value={guruNip}
