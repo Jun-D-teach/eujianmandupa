@@ -9,9 +9,7 @@
 export type Fase = "setup" | "instruksi" | "ujian" | "kirim" | "selesai";
 
 /** Huruf pilihan jawaban — hanya huruf inilah yang disimpan saat siswa menjawab. */
-export type Pilihan = "A" | "B" | "C" | "D" | "E";
-
-export type SoalUjian = {
+export type Pilihan = "A" | "B" | "C" | "D" | "E";export type SoalUjian = {
   id: string;
   pertanyaan: string;
   opsi_a: string;
@@ -23,6 +21,11 @@ export type SoalUjian = {
   gambar?: string;
   /** 1 = teks pilihan sudah menyertakan huruf A–E. */
   opsi_huruf?: number;
+  /** "pg" (default) | "essay" | "uraian" — dua terakhir dijawab teks
+   *  bebas dan dikoreksi manual guru. */
+  tipe?: "pg" | "essay" | "uraian";
+  /** Teks bacaan bersama (dari server) — tampil di HP walau offline. */
+  bacaan?: string;
 };
 
 export type Pelanggaran = {
@@ -70,6 +73,8 @@ export type SesiUjian = {
   kirimPada?: number;
   soal: SoalUjian[];
   jawaban: Record<string, Pilihan>;
+  /** Jawaban teks soal essay/uraian: id soal → teks jawaban siswa. */
+  jawabanTeks?: Record<string, string>;
   indeks: number;
   /** Hitungan strike menuju kunci layar (direset saat PIN pengawas dibuka). */
   strike: number;

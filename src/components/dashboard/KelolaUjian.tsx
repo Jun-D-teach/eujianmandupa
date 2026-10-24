@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { gasCall, tokenValid, type RuangSetGas, type SoalGas, type SiswaGas, type UjianGas } from "@/lib/api";
+import { gasCall, tokenValid, type BacaanGas, type GuruGas, type RuangSetGas, type SoalGas, type SiswaGas, type UjianGas } from "@/lib/api";
 import {
   cetakKartu,
   cocokSasaran,
@@ -55,14 +55,17 @@ import {
   AlignJustify,
   AlignRight,
   Bold,
+  BookOpen,
   CalendarClock,
   ClipboardList,
   Download,
   FileText,
+  GraduationCap,
   ImagePlus,
   Italic,
   KeyRound,
   ListOrdered,
+  PenLine,
   Pencil,
   Pilcrow,
   Plus,
@@ -84,6 +87,15 @@ import { toast } from "sonner";
 
 const PILIHAN = ["A", "B", "C", "D", "E"] as const;
 const OPSI_WAJIB = ["A", "B", "C", "D"] as const;
+/** Pilihan tipe soal — pg dinilai otomatis, lainnya dikoreksi manual. */
+const TIPE_SOAL = [
+  { nilai: "pg", label: "Pilihan ganda", keterangan: "Dinilai otomatis" },
+  { nilai: "essay", label: "Essay", keterangan: "Koreksi manual guru" },
+  { nilai: "uraian", label: "Uraian", keterangan: "Koreksi manual guru" },
+] as const;
+type TipeSoal = (typeof TIPE_SOAL)[number]["nilai"];
+/** Penanda value <select> bacaan untuk menambah teks bacaan baru. */
+const BACAAN_BARU = "__baru__";
 const FORM_KOSONG = {
   pertanyaan: "",
   opsi_a: "",
@@ -373,6 +385,10 @@ export function KelolaUjian() {
   const [tglMulai, setTglMulai] = useState("");
   const [sasarJenis, setSasarJenis] = useState<SasarJenis>("");
   const [sasarNilai, setSasarNilai] = useState("");
+  /** Penugasan per ujian (admin): mata pelajaran & guru penanggung jawab. */
+  const [mapel, setMapel] = useState("");
+  const [guruNip, setGuruNip] = useState("");
+  const [daftarGuru, setDaftarGuru] = useState<GuruGas[]>([]);
   const [busy, setBusy] = useState(false);
   const [hapusTarget, setHapusTarget] = useState<{ id: string; judul: string } | null>(null);
   const [cetakTarget, setCetakTarget] = useState<UjianGas | null>(null);
@@ -405,6 +421,20 @@ export function KelolaUjian() {
 
   const segarkan = () => setVersi((v) => v + 1);
 
+  // Daftar guru untuk penugasan per ujian (admin).
+  useEffect(() => {
+    if (!isAdmin) return;
+    let hidup = true;
+    gasCall<{ guru: GuruGas[] }>("getGuru")
+      .then((res) => {
+        if (hidup) setDaftarGuru(res.guru);
+      })
+      .catch(() => {});
+    return () => {
+      hidup = false;
+    };
+  }, [isAdmin]);
+
   const buat = async () => {
     if (!judul.trim()) {
       toast.error("Judul ujian wajib diisi.");
@@ -418,6 +448,7 @@ export function KelolaUjian() {
       toast.error("Centang minimal satu kelas.");
       return;
     }
+    const guru = daftarGuru.find((g) => g.nip === guruNip);
     setBusy(true);
     try {
       await gasCall("buatUjian", {
@@ -428,6 +459,9 @@ export function KelolaUjian() {
         tgl_mulai: tglMulai,
         sasar_jenis: sasarJenis,
         sasar_nilai: sasarNilai,
+        mapel: mapel.trim(),
+        guru_nip: guru?.nip ?? "",
+        guru_nama: guru?.nama ?? "",
       });
       setJudul("");
       setDeskripsi("");
@@ -436,6 +470,8 @@ export function KelolaUjian() {
       setTglMulai("");
       setSasarJenis("");
       setSasarNilai("");
+      setMapel("");
+      setGuruNip("");
       segarkan();
       toast.success("Ujian dibuat (draft). Susun soal lalu aktifkan.");
     } catch (err) {
@@ -667,6 +703,50 @@ export function KelolaUjian() {
               tingkatList={tingkatList}
             />
 
+            {/* Penugasan: mapel + guru yang menyiapkan soal ujian ini */}
+            <div className="grid gap-4 rounded-2xl border border-border/70 bg-background/60 p-4 sm:grid-cols-2">
+              <div className="flex items-center gap-2 sm:col-span-2">
+                <GraduationCap className="size-4 text-muted-foreground" />
+                <p className="text-sm font-bold">Penugasan ujian</p>
+                <Badge variant="outline" className="ml-auto text-[10px] uppercase tracking-wider">
+                  Admin
+                </Badge>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="mapel-baru">Mata pelajaran</Label>
+                <Input
+                  id="mapel-baru"
+                  value={mapel}
+                  onChange={(e) => setMapel(e.target.value)}
+                  placeholder="cth. Matematika"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="guru-baru">Guru penanggung jawab</Label>
+                <select
+                  id="guru-baru"
+                  value={guruNip}
+                  onChange={(e) => {
+                    setGuruNip(e.target.value);
+                    const g = daftarGuru.find((x) => x.nip === e.target.value);
+                    if (g?.mapel && !mapel.trim()) setMapel(g.mapel);
+                  }}
+                  className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm outline-none transition-[color,box-shadow] focus:border-ring focus:ring-ring/50"
+                >
+                  <option value="">— belum ditugaskan —</option>
+                  {daftarGuru.map((g) => (
+                    <option key={g.nip} value={g.nip}>
+                      {g.nama} ({g.nip}){g.mapel ? ` · ${g.mapel}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-xs leading-5 text-muted-foreground sm:col-span-2">
+                Guru yang ditugaskan hanya melihat & mengelola ujian ini —
+                daftar ujian guru otomatis terfilter sesuai penugasan.
+              </p>
+            </div>
+
             <Button onClick={buat} disabled={busy} className="gap-2">
               <Plus className="size-4" /> Buat ujian
             </Button>
@@ -707,12 +787,19 @@ export function KelolaUjian() {
                       {u.judul}
                     </span>
                     <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {u.mapel ? `${u.mapel} · ` : ""}
                       {u.jumlah_soal} soal · {u.durasi_menit} menit
                       {u.tgl_mulai
                         ? ` · Jadwal ${jadwalLabel(u.tgl_mulai)}`
                         : " · Tanpa jadwal (langsung dibuka)"}
                       {isAdmin && u.token ? ` · Token ${u.token}` : ""}
                     </span>
+                    {u.guru_nama && (
+                      <span className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-muted-foreground">
+                        <GraduationCap className="size-3" /> {u.guru_nama}
+                        {u.guru_nip ? ` (${u.guru_nip})` : ""}
+                      </span>
+                    )}
                   </span>
                   <span className="ml-auto flex items-center gap-2">
                     <Badge variant="outline" className="gap-1 text-[11px]">
@@ -866,6 +953,9 @@ export function KelolaUjian() {
                       tglMulai={u.tgl_mulai ?? ""}
                       sasarJenis={(u.sasar_jenis ?? "") as SasarJenis}
                       sasarNilai={u.sasar_nilai ?? ""}
+                      mapel={u.mapel ?? ""}
+                      guruNip={u.guru_nip ?? ""}
+                      daftarGuru={daftarGuru}
                       kelasList={kelasList}
                       tingkatList={tingkatList}
                     />
@@ -1018,8 +1108,17 @@ export function KelolaUjian() {
 /** Daftar soal + form tambah soal untuk satu ujian (dengan kunci jawaban). */
 function PanelSoal({ ujianId }: { ujianId: string }) {
   const [soal, setSoal] = useState<SoalGas[] | null>(null);
+  const [daftarBacaan, setDaftarBacaan] = useState<BacaanGas[]>([]);
   const [form, setForm] = useState(FORM_KOSONG);
   const [kunci, setKunci] = useState<Kunci>("A");
+  /** Tipe soal form: pg dinilai otomatis, essay/uraian dikoreksi manual. */
+  const [tipe, setTipe] = useState<TipeSoal>("pg");
+  /** Kunci/rubrik jawaban teks (untuk koreksi manual non-PG). */
+  const [kunciTeks, setKunciTeks] = useState("");
+  /** id bacaan terpilih ("" = tanpa bacaan, BACAAN_BARU = buat baru). */
+  const [bacaanId, setBacaanId] = useState("");
+  const [bacaanJudul, setBacaanJudul] = useState("");
+  const [bacaanTeks, setBacaanTeks] = useState("");
   /** Kotak tempel: satu soal lengkap dipecah otomatis ke kolom A–E. */
   const [tempel, setTempel] = useState("");
   const [prosesGambar, setProsesGambar] = useState(false);
@@ -1040,8 +1139,11 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
 
   const muat = () => {
     setSoal(null);
-    gasCall<{ soal: SoalGas[] }>("getSoalAdmin", { ujian_id: ujianId })
-      .then((res) => setSoal(res.soal))
+    gasCall<{ soal: SoalGas[]; bacaan?: BacaanGas[] }>("getSoalAdmin", { ujian_id: ujianId })
+      .then((res) => {
+        setSoal(res.soal);
+        setDaftarBacaan(res.bacaan ?? []);
+      })
       .catch(() => setSoal([]));
   };
 
@@ -1065,6 +1167,11 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       gambar: s.gambar || "",
     });
     setKunci(((s.kunci_jawaban || "A").toUpperCase() as Kunci) || "A");
+    setTipe(s.tipe ?? "pg");
+    setKunciTeks(s.kunci_teks || "");
+    setBacaanId(s.bacaan_id || "");
+    setBacaanJudul("");
+    setBacaanTeks("");
     setTempel("");
   };
 
@@ -1072,6 +1179,11 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
     setEditId(null);
     setForm(FORM_KOSONG);
     setKunci("A");
+    setTipe("pg");
+    setKunciTeks("");
+    setBacaanId("");
+    setBacaanJudul("");
+    setBacaanTeks("");
     setTempel("");
   };
 
@@ -1083,35 +1195,56 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
     // Validasi meniru backend (validasiIsiSoal): penanda "A." di depan teks
     // dibuang oleh server — nilai yang hanya berisi huruf jadi kosong di sana.
     // Tangkap di sini agar pesan menyebut opsi mana & cara mengisinya.
-    for (const p of OPSI_WAJIB) {
-      const nilai = form[fieldOpsi(p)].trim();
-      if (!nilai) {
-        toast.error(`Opsi ${p} wajib diisi (opsi E opsional).`);
+    // Hanya untuk pilihan ganda — essay/uraian tanpa opsi & kunci huruf.
+    if (tipe === "pg") {
+      for (const p of OPSI_WAJIB) {
+        const nilai = form[fieldOpsi(p)].trim();
+        if (!nilai) {
+          toast.error(`Opsi ${p} wajib diisi (opsi E opsional).`);
+          return;
+        }
+        if (nilai.replace(RE_HURUF_DEPAN, "").trim() === "") {
+          toast.error(
+            `Opsi ${p} hanya berisi huruf ("${nilai}") — tulis teks pilihannya, mis. "${p}. Jawaban".`,
+          );
+          return;
+        }
+      }
+      if (kunci === "E" && !form.opsi_e.trim()) {
+        toast.error("Opsi E kosong — pilih kunci A–D atau isi opsi E.");
         return;
       }
-      if (nilai.replace(RE_HURUF_DEPAN, "").trim() === "") {
-        toast.error(
-          `Opsi ${p} hanya berisi huruf ("${nilai}") — tulis teks pilihannya, mis. "${p}. Jawaban".`,
-        );
-        return;
-      }
-    }
-    if (kunci === "E" && !form.opsi_e.trim()) {
-      toast.error("Opsi E kosong — pilih kunci A–D atau isi opsi E.");
-      return;
     }
     setBusy(true);
     try {
+      // Teks bacaan baru disimpan dulu supaya soal bisa menempel padanya.
+      let idBacaan = bacaanId === BACAAN_BARU ? "" : bacaanId;
+      if (bacaanId === BACAAN_BARU) {
+        if (!bacaanTeks.trim()) {
+          toast.error("Isi teks bacaan atau pilih bacaan yang sudah ada.");
+          setBusy(false);
+          return;
+        }
+        const res = await gasCall<{ id: string }>("simpanBacaan", {
+          ujian_id: ujianId,
+          judul: bacaanJudul.trim(),
+          teks: bacaanTeks,
+        });
+        idBacaan = res.id;
+      }
       const muatan = {
         ujian_id: ujianId,
         pertanyaan: form.pertanyaan.trim(),
-        opsi_a: form.opsi_a.trim(),
-        opsi_b: form.opsi_b.trim(),
-        opsi_c: form.opsi_c.trim(),
-        opsi_d: form.opsi_d.trim(),
-        opsi_e: form.opsi_e.trim(),
-        kunci_jawaban: kunci,
+        opsi_a: tipe === "pg" ? form.opsi_a.trim() : "",
+        opsi_b: tipe === "pg" ? form.opsi_b.trim() : "",
+        opsi_c: tipe === "pg" ? form.opsi_c.trim() : "",
+        opsi_d: tipe === "pg" ? form.opsi_d.trim() : "",
+        opsi_e: tipe === "pg" ? form.opsi_e.trim() : "",
+        kunci_jawaban: tipe === "pg" ? kunci : "",
         gambar: form.gambar,
+        tipe,
+        kunci_teks: tipe === "pg" ? "" : kunciTeks,
+        bacaan_id: idBacaan,
         // opsi_huruf tidak dikirim lagi — server mendeteksi sendiri apakah
         // guru menulis pilihan beserta hurufnya atau tidak.
       };
@@ -1126,6 +1259,10 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       setKunci("A");
       setEditId(null);
       setTempel("");
+      setKunciTeks("");
+      setBacaanId("");
+      setBacaanJudul("");
+      setBacaanTeks("");
       muat();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal menyimpan soal.");
@@ -1454,8 +1591,15 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  <p className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
                     Soal {i + 1}
+                    <Badge variant="outline" className="text-[10px] normal-case">
+                      {(s.tipe ?? "pg") === "pg"
+                        ? "Pilihan ganda"
+                        : (s.tipe ?? "") === "essay"
+                          ? "Essay · koreksi manual"
+                          : "Uraian · koreksi manual"}
+                    </Badge>
                   </p>
                   <div
                     className="mt-1 text-sm font-semibold leading-6"
@@ -1468,38 +1612,58 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                       className="mt-2 max-h-44 rounded-xl border border-border/70 object-contain"
                     />
                   )}
-                  <ul className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-                    <li
-                      dangerouslySetInnerHTML={{
-                        __html: labelOpsi("A", s.opsi_a, s.opsi_huruf),
-                      }}
-                    />
-                    <li
-                      dangerouslySetInnerHTML={{
-                        __html: labelOpsi("B", s.opsi_b, s.opsi_huruf),
-                      }}
-                    />
-                    <li
-                      dangerouslySetInnerHTML={{
-                        __html: labelOpsi("C", s.opsi_c, s.opsi_huruf),
-                      }}
-                    />
-                    <li
-                      dangerouslySetInnerHTML={{
-                        __html: labelOpsi("D", s.opsi_d, s.opsi_huruf),
-                      }}
-                    />
-                    {s.opsi_e && (
+                  {(s.tipe ?? "pg") === "pg" ? (
+                    <ul className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
                       <li
                         dangerouslySetInnerHTML={{
-                          __html: labelOpsi("E", s.opsi_e, s.opsi_huruf),
+                          __html: labelOpsi("A", s.opsi_a, s.opsi_huruf),
                         }}
                       />
+                      <li
+                        dangerouslySetInnerHTML={{
+                          __html: labelOpsi("B", s.opsi_b, s.opsi_huruf),
+                        }}
+                      />
+                      <li
+                        dangerouslySetInnerHTML={{
+                          __html: labelOpsi("C", s.opsi_c, s.opsi_huruf),
+                        }}
+                      />
+                      <li
+                        dangerouslySetInnerHTML={{
+                          __html: labelOpsi("D", s.opsi_d, s.opsi_huruf),
+                        }}
+                      />
+                      {s.opsi_e && (
+                        <li
+                          dangerouslySetInnerHTML={{
+                            __html: labelOpsi("E", s.opsi_e, s.opsi_huruf),
+                          }}
+                        />
+                      )}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                      Diisi dengan teks bebas oleh siswa; dinilai manual lewat
+                      menu <strong className="text-foreground">Hasil Ujian → Koreksi</strong>.
+                    </p>
+                  )}
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {(s.tipe ?? "pg") === "pg" ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-bold text-emerald-700">
+                        <KeyRound className="size-3.5" /> Kunci: {s.kunci_jawaban}
+                      </span>
+                    ) : s.kunci_teks ? (
+                      <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-bold text-amber-700">
+                        <PenLine className="size-3.5" /> Rubrik koreksi tersedia
+                      </span>
+                    ) : null}
+                    {s.bacaan && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-500/10 px-2.5 py-1 text-xs font-bold text-sky-700">
+                        <BookOpen className="size-3.5" /> Ada teks bacaan
+                      </span>
                     )}
-                  </ul>
-                  <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-bold text-emerald-700">
-                    <KeyRound className="size-3.5" /> Kunci: {s.kunci_jawaban}
-                  </span>
+                  </div>
                 </div>
                 <div className="flex shrink-0 gap-1">
                   <Button
@@ -1551,6 +1715,32 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
           </p>
         )}
         <div className="mt-3 space-y-3">
+          {/* Tipe soal — pg dinilai otomatis; essay/uraian dikoreksi manual. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-muted-foreground">
+              Tipe soal:
+            </span>
+            {TIPE_SOAL.map((t) => (
+              <button
+                key={t.nilai}
+                type="button"
+                onClick={() => setTipe(t.nilai)}
+                title={t.keterangan}
+                className={`rounded-xl border px-3 py-1.5 text-xs font-bold transition-colors ${
+                  tipe === t.nilai
+                    ? "border-emerald-600 bg-emerald-600 text-white"
+                    : "border-border/70 bg-card text-muted-foreground hover:border-foreground/40"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+            {tipe !== "pg" && (
+              <span className="rounded-full bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-bold text-amber-700">
+                Dinilai manual lewat menu Koreksi
+              </span>
+            )}
+          </div>
           {/* Kotak tulis utama — penampung soal; hasilnya dipecah ke kolom
               soal + kolom A–E di bawah. */}
           <div className="rounded-2xl border border-dashed border-border/70 p-3">
@@ -1667,21 +1857,25 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
             )}
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            {PILIHAN.map((p) => (
-              <Input
-                key={p}
-                value={form[fieldOpsi(p)]}
-                onChange={set(fieldOpsi(p))}
-                placeholder={p === "E" ? "Opsi E (opsional)" : `Opsi ${p}`}
-              />
-            ))}
-          </div>
-          <p className="text-[11px] leading-4 text-muted-foreground">
-            Isi jawaban di tiap kolom — boleh ditulis beserta hurufnya
-            (mis. “A. Jakarta”) atau tanpa huruf (“Jakarta”); huruf A–E otomatis
-            dirapikan saat tampil ke siswa.
-          </p>
+          {tipe === "pg" && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {PILIHAN.map((p) => (
+                <Input
+                  key={p}
+                  value={form[fieldOpsi(p)]}
+                  onChange={set(fieldOpsi(p))}
+                  placeholder={p === "E" ? "Opsi E (opsional)" : `Opsi ${p}`}
+                />
+              ))}
+            </div>
+          )}
+          {tipe === "pg" && (
+            <p className="text-[11px] leading-4 text-muted-foreground">
+              Isi jawaban di tiap kolom — boleh ditulis beserta hurufnya
+              (mis. “A. Jakarta”) atau tanpa huruf (“Jakarta”); huruf A–E otomatis
+              dirapikan saat tampil ke siswa.
+            </p>
+          )}
 
           {/* Gambar soal (untuk soal bergambar) */}
           <div className="flex flex-wrap items-center gap-3">
@@ -1732,25 +1926,86 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
             )}
           </div>
 
+          {tipe === "pg" ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-muted-foreground">
+                Kunci jawaban:
+              </span>
+              {PILIHAN.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setKunci(p)}
+                  className={`size-9 rounded-xl border text-sm font-bold transition-colors ${
+                    kunci === p
+                      ? "border-emerald-600 bg-emerald-600 text-white"
+                      : "border-border/70 bg-card text-muted-foreground hover:border-foreground/40"
+                  }`}
+                  aria-label={`Kunci ${p}`}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-1.5">
+              <Label htmlFor="kunci-teks">
+                Kunci / rubrik jawaban (untuk koreksi manual)
+              </Label>
+              <Textarea
+                id="kunci-teks"
+                value={kunciTeks}
+                onChange={(e) => setKunciTeks(e.target.value)}
+                rows={3}
+                placeholder="cth. Memuat minimal 3 poin: definisi, langkah penyelesaian, dan hasil akhir."
+              />
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                Rubrik ini hanya tampil di layar koreksi guru — tidak pernah
+                dikirim ke HP siswa.
+              </p>
+            </div>
+          )}
+
+          {/* Teks bacaan bersama (opsional) — tampil di HP siswa walau offline. */}
+          <div className="grid gap-1.5">
+            <Label htmlFor="pilih-bacaan" className="gap-1.5">
+              <BookOpen className="size-3.5" /> Teks bacaan (opsional)
+            </Label>
+            <select
+              id="pilih-bacaan"
+              value={bacaanId}
+              onChange={(e) => setBacaanId(e.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm outline-none transition-[color,box-shadow] focus:border-ring focus:ring-ring/50"
+            >
+              <option value="">— tanpa bacaan —</option>
+              {daftarBacaan.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.judul || b.teks.slice(0, 40)}
+                </option>
+              ))}
+              <option value={BACAAN_BARU}>＋ Teks bacaan baru…</option>
+            </select>
+            {bacaanId === BACAAN_BARU && (
+              <div className="grid gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3">
+                <Input
+                  value={bacaanJudul}
+                  onChange={(e) => setBacaanJudul(e.target.value)}
+                  placeholder="Judul bacaan (cth. Naskah ekonomi)"
+                />
+                <Textarea
+                  value={bacaanTeks}
+                  onChange={(e) => setBacaanTeks(e.target.value)}
+                  rows={5}
+                  placeholder="Tempel isi teks bacaan di sini — bisa dipakai bersama beberapa soal."
+                />
+                <p className="text-[11px] leading-4 text-muted-foreground">
+                  Bisa dipilih lagi pada soal berikutnya tanpa menulis ulang.
+                </p>
+              </div>
+            )}
+          </div>
+
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-muted-foreground">
-              Kunci jawaban:
-            </span>
-            {PILIHAN.map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => setKunci(p)}
-                className={`size-9 rounded-xl border text-sm font-bold transition-colors ${
-                  kunci === p
-                    ? "border-emerald-600 bg-emerald-600 text-white"
-                    : "border-border/70 bg-card text-muted-foreground hover:border-foreground/40"
-                }`}
-                aria-label={`Kunci ${p}`}
-              >
-                {p}
-              </button>
-            ))}
             {editId && (
               <Button
                 type="button"
@@ -1964,6 +2219,9 @@ function PanelPengaturan(props: {
   tglMulai: string;
   sasarJenis: SasarJenis;
   sasarNilai: string;
+  mapel: string;
+  guruNip: string;
+  daftarGuru: GuruGas[];
   kelasList: string[];
   tingkatList: string[];
 }) {
@@ -1972,6 +2230,8 @@ function PanelPengaturan(props: {
   const [tgl, setTgl] = useState(props.tglMulai);
   const [jenis, setJenis] = useState<SasarJenis>(props.sasarJenis);
   const [nilai, setNilai] = useState(props.sasarNilai);
+  const [mapel, setMapel] = useState(props.mapel);
+  const [guruNip, setGuruNip] = useState(props.guruNip);
   const [busy, setBusy] = useState(false);
 
   const simpan = async () => {
@@ -1990,6 +2250,7 @@ function PanelPengaturan(props: {
     }
     setBusy(true);
     try {
+      const guru = props.daftarGuru.find((g) => g.nip === guruNip);
       await gasCall("aturUjian", {
         id: props.ujianId,
         token: nilaiToken.trim().toUpperCase(),
@@ -1997,6 +2258,10 @@ function PanelPengaturan(props: {
         tgl_mulai: tgl,
         sasar_jenis: jenis,
         sasar_nilai: nilai,
+        // Penugasan — kunci kehadiran field "mapel" memicu update di server.
+        mapel: mapel.trim(),
+        guru_nip: guru?.nip ?? "",
+        guru_nama: guru?.nama ?? "",
       });
       toast.success("Pengaturan ujian disimpan.");
     } catch (err) {
@@ -2052,6 +2317,36 @@ function PanelPengaturan(props: {
             value={nilaiDurasi}
             onChange={(e) => setNilaiDurasi(e.target.value)}
           />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor={`mapel-${props.ujianId}`} className="gap-1.5">
+            <GraduationCap className="size-3.5" /> Mata pelajaran
+          </Label>
+          <Input
+            id={`mapel-${props.ujianId}`}
+            value={mapel}
+            onChange={(e) => setMapel(e.target.value)}
+            placeholder="cth. Matematika"
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor={`guru-${props.ujianId}`}>Guru penugasan</Label>
+          <select
+            id={`guru-${props.ujianId}`}
+            value={guruNip}
+            onChange={(e) => setGuruNip(e.target.value)}
+            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm outline-none transition-[color,box-shadow] focus:border-ring focus:ring-ring/50"
+          >
+            <option value="">— belum ditugaskan —</option>
+            {props.daftarGuru.map((g) => (
+              <option key={g.nip} value={g.nip}>
+                {g.nama} ({g.nip}){g.mapel ? ` · ${g.mapel}` : ""}
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] leading-4 text-muted-foreground">
+            Hanya guru terpilih yang bisa mengelola ujian ini.
+          </p>
         </div>
         <div className="grid gap-2 sm:col-span-2">
           <Label htmlFor={`tgl-${props.ujianId}`} className="gap-1.5">

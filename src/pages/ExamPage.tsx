@@ -509,6 +509,10 @@ export default function ExamPage() {
         for (const [k, v] of Object.entries(sesi.jawaban)) {
           if (idBaru.has(k)) jawaban[k] = v;
         }
+        const jawabanTeks: NonNullable<SesiUjian["jawabanTeks"]> = {};
+        for (const [k, v] of Object.entries(sesi.jawabanTeks ?? {})) {
+          if (idBaru.has(k)) jawabanTeks[k] = v;
+        }
         const baru: SesiUjian = {
           ...sesi,
           revisi: data.ujian.revisi,
@@ -523,8 +527,11 @@ export default function ExamPage() {
             opsi_e: s.opsi_e || undefined,
             gambar: s.gambar || undefined,
             opsi_huruf: s.opsi_huruf || undefined,
+            tipe: s.tipe || "pg",
+            bacaan: s.bacaan || undefined,
           })),
           jawaban,
+          jawabanTeks,
           indeks: Math.max(0, Math.min(sesi.indeks, data.soal.length - 1)),
         };
         setSesi(baru);
@@ -590,6 +597,8 @@ export default function ExamPage() {
           opsi_e: s.opsi_e || undefined,
           gambar: s.gambar || undefined,
           opsi_huruf: s.opsi_huruf || undefined,
+          tipe: s.tipe || "pg",
+          bacaan: s.bacaan || undefined,
         })),
         jawaban: {},
         indeks: 0,
@@ -694,6 +703,17 @@ export default function ExamPage() {
     });
   };
 
+  /** Jawaban teks soal essay/uraian — disimpan lokal di HP. */
+  const jawabTeks = (teks: string) => {
+    if (!sesi) return;
+    const soal = sesi.soal[sesi.indeks];
+    if (!soal) return;
+    setSesi({
+      ...sesi,
+      jawabanTeks: { ...(sesi.jawabanTeks ?? {}), [soal.id]: teks },
+    });
+  };
+
   const pindahSoal = (i: number) => {
     if (!sesi) return;
     if (i < 0 || i >= sesi.soal.length) return;
@@ -756,6 +776,11 @@ export default function ExamPage() {
         jawaban: sesi.soal.map((s) => ({
           id_soal: s.id,
           pilihan: sesi.jawaban[s.id],
+          // Jawaban teks essay/uraian — dikoreksi manual guru.
+          teks:
+            (s.tipe ?? "pg") === "pg"
+              ? undefined
+              : sesi.jawabanTeks?.[s.id] ?? "",
         })),
       });
       setSesi((prev) =>
@@ -821,7 +846,11 @@ export default function ExamPage() {
   }
 
   const totalTerjawab = sesi
-    ? sesi.soal.filter((s) => sesi.jawaban[s.id]).length
+    ? sesi.soal.filter((s) =>
+        (s.tipe ?? "pg") === "pg"
+          ? sesi.jawaban[s.id]
+          : (sesi.jawabanTeks?.[s.id] ?? "").trim() !== "",
+      ).length
     : 0;
 
   return (
@@ -909,7 +938,10 @@ export default function ExamPage() {
                 className="scrollbar-none mx-auto flex w-full max-w-2xl items-center gap-2 overflow-x-auto px-4 py-2"
               >
                 {sesi.soal.map((s, i) => {
-                  const dijawab = Boolean(sesi.jawaban[s.id]);
+                  const dijawab =
+                    (s.tipe ?? "pg") === "pg"
+                      ? Boolean(sesi.jawaban[s.id])
+                      : (sesi.jawabanTeks?.[s.id] ?? "").trim() !== "";
                   const aktif = i === sesi.indeks;
                   return (
                     <button
@@ -983,6 +1015,7 @@ export default function ExamPage() {
             sesi={sesi}
             totalTerjawab={totalTerjawab}
             onJawab={jawab}
+            onJawabTeks={jawabTeks}
             onPindah={pindahSoal}
             onSelesai={() => setTanyaSelesai(true)}
           />

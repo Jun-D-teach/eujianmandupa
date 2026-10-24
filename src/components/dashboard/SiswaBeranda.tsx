@@ -103,6 +103,8 @@ function baruSesiUnduh(
       opsi_e: s.opsi_e || undefined,
       gambar: s.gambar || undefined,
       opsi_huruf: s.opsi_huruf || undefined,
+      tipe: s.tipe || "pg",
+      bacaan: s.bacaan || undefined,
     })),
     jawaban: {},
     indeks: 0,
@@ -170,6 +172,10 @@ export function SiswaUjian() {
       for (const [k, v] of Object.entries(sesiLama.jawaban)) {
         if (idBaru.has(k)) jawaban[k] = v;
       }
+      const jawabanTeks: NonNullable<SesiUjian["jawabanTeks"]> = {};
+      for (const [k, v] of Object.entries(sesiLama.jawabanTeks ?? {})) {
+        if (idBaru.has(k)) jawabanTeks[k] = v;
+      }
       const baru: SesiUjian = {
         ...sesiLama,
         revisi: data.ujian.revisi,
@@ -184,8 +190,11 @@ export function SiswaUjian() {
           opsi_e: s.opsi_e || undefined,
           gambar: s.gambar || undefined,
           opsi_huruf: s.opsi_huruf || undefined,
+          tipe: s.tipe || "pg",
+          bacaan: s.bacaan || undefined,
         })),
         jawaban,
+        jawabanTeks,
         indeks: Math.max(0, Math.min(sesiLama.indeks, data.soal.length - 1)),
       };
       simpanSesi(baru);
@@ -562,7 +571,9 @@ export function SiswaRiwayat() {
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Riwayat nilai</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Nilai dihitung otomatis di server saat jawaban terkirim.
+          Nilai dihitung otomatis di server saat jawaban terkirim. Jawaban
+          essay/uraian menunggu koreksi manual guru — nilai bisa berubah
+          setelah dikoreksi.
         </p>
       </div>
 
@@ -614,6 +625,11 @@ export function SiswaRiwayat() {
                         <Trophy className="size-4 text-emerald-600" />
                         {h.nilai}
                       </span>
+                      {(h.menunggu ?? 0) > 0 && (
+                        <span className="mt-1 block rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                          {h.menunggu} menunggu koreksi
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-3.5 text-right text-xs text-muted-foreground">
                       {h.timestamp

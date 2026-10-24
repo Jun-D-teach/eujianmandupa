@@ -49,6 +49,12 @@ export type UjianGas = {
   konfirmasi_guru?: boolean;
   /** Waktu konfirmasi dari server ("YYYY-MM-DD HH:MM:SS") atau "". */
   konfirmasi_pada?: string;
+  /** Mata pelajaran ujian (penugasan guru per ujian). */
+  mapel?: string;
+  /** NIP guru yang ditugaskan menyiapkan soal ujian ini (login guru = NIP). */
+  guru_nip?: string;
+  /** Nama guru penugasan — hanya pada daftar petugas (ikut token). */
+  guru_nama?: string;
   /** Hanya ada pada daftar admin/petugas — TIDAK PERNAH dikirim ke siswa. */
   token?: string;
 };
@@ -68,6 +74,10 @@ export type GuruGas = {
   mapel: string;
 };
 
+/** Tipe soal: pg = pilihan ganda (dinilai otomatis); essay & uraian
+ *  dinilai manual guru lewat menu Koreksi. */
+export type TipeSoalGas = "pg" | "essay" | "uraian";
+
 export type SoalGas = {
   id: string;
   ujian_id: string;
@@ -82,6 +92,22 @@ export type SoalGas = {
   gambar?: string;
   /** 1 = teks pilihan sudah menyertakan huruf A–E (tampil apa adanya). */
   opsi_huruf?: number;
+  /** Default "pg". Essay/uraian: opsi & kunci huruf tidak dipakai. */
+  tipe?: TipeSoalGas;
+  /** Kunci/rubrik jawaban untuk koreksi manual (hanya non-PG). */
+  kunci_teks?: string;
+  /** id teks bacaan bersama yang menempel pada soal ini. */
+  bacaan_id?: string;
+  /** Isi teks bacaan (disertakan server agar tersimpan di HP siswa). */
+  bacaan?: string;
+};
+
+/** Teks bacaan bersama satu ujian (dipakai beberapa soal). */
+export type BacaanGas = {
+  id: string;
+  ujian_id: string;
+  judul: string;
+  teks: string;
 };
 
 export type HasilGas = {
@@ -94,6 +120,10 @@ export type HasilGas = {
   benar: number;
   total_soal: number;
   nilai: number;
+  /** Total poin (PG benar = 100 + skor koreksi essay/uraian). */
+  poin?: number;
+  /** Jumlah jawaban essay/uraian yang belum dikoreksi guru. */
+  menunggu?: number;
   total_pelanggaran: number;
   timestamp: string;
 };

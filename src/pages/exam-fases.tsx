@@ -6,9 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import {
   ArrowLeft,
   ArrowRight,
+  BookOpen,
   CheckCircle2,
   Download,
   KeyRound,
+  PenLine,
   Send,
   Trophy,
   Wifi,
@@ -315,12 +317,15 @@ export function UjianFase(props: {
   sesi: SesiUjian;
   totalTerjawab: number;
   onJawab: (p: Pilihan) => void;
+  onJawabTeks: (teks: string) => void;
   onPindah: (i: number) => void;
   onSelesai: () => void;
 }) {
   const { sesi } = props;
   const soal = sesi.soal[sesi.indeks];
   const terjawab = sesi.jawaban[soal?.id ?? ""];
+  const tipeSoal = soal?.tipe ?? "pg";
+  const teksJawaban = (soal && sesi.jawabanTeks?.[soal.id]) || "";
 
   /** Huruf di depan teks pilihan ("A. …") untuk deteksi teks berhuruf. */
   const RE_HURUF_DEPAN = /^[A-E][\s.)\-–—:]+/i;
@@ -370,6 +375,42 @@ export function UjianFase(props: {
             />
           )}
 
+          {/* Teks bacaan bersama — ikut tersimpan di HP saat unduh. */}
+          {soal?.bacaan && (
+            <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+              <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-amber-700">
+                <BookOpen className="size-3.5" /> Bacaan
+              </p>
+              <div
+                className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground"
+              >
+                {soal.bacaan}
+              </div>
+            </div>
+          )}
+
+          {/* Soal essay/uraian — jawaban berupa teks bebas, dikoreksi manual. */}
+          {tipeSoal !== "pg" ? (
+            <div className="mt-5 grid gap-2">
+              <Label htmlFor="jawaban-teks" className="gap-1.5">
+                <PenLine className="size-3.5" />
+                {tipeSoal === "essay" ? "Jawaban essay" : "Jawaban uraian"}
+              </Label>
+              <textarea
+                id="jawaban-teks"
+                value={teksJawaban}
+                onChange={(e) => props.onJawabTeks(e.target.value)}
+                rows={8}
+                maxLength={20000}
+                placeholder="Tulis jawabanmu di sini…"
+                className="w-full rounded-2xl border border-border/70 bg-card px-4 py-3 text-sm leading-6 outline-none transition-colors focus:border-emerald-600"
+              />
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                {teksJawaban.length} karakter · jawaban dinilai manual oleh guru
+                setelah ujian selesai.
+              </p>
+            </div>
+          ) : (
           <div className="mt-5 space-y-2.5">
             {opsi.map(({ huruf, teks }) => {
               const aktif = terjawab === huruf;
@@ -406,6 +447,7 @@ export function UjianFase(props: {
               );
             })}
           </div>
+          )}
         </CardContent>
       </Card>
 
