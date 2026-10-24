@@ -2903,7 +2903,7 @@ function a_jadwalHarianHarianGas(array $d): array
     $tNis = bersih($k['nis'] ?? '');
     $tAbsen = bersih($k['absen'] ?? '');
     if ($tTingkat === '' && $tKelas === '') {
-        return galat('Pilih dulu kolom Tingkat atau Kelas di tab "Pengaturan kolom".');
+        return galat('Kolom tingkat/kelas belum terpetakan — periksa kolom pada tabel data siswa.');
     }
     $valid = kolomSiswa();
     foreach ([$tTingkat, $tKelas, $tNis, $tAbsen] as $c) {
@@ -2984,6 +2984,27 @@ function a_jadwalHarianHarianGas(array $d): array
         ];
     }
 
+    // Setelan per hari (jumlah sesi + jam) — disimpan di tabel pengaturan.
+    $jumlahSesi = 0;
+    $jamTersimpan = [];
+    $setJson = bacaPengaturan('jadwal_set:' . $tanggal, '');
+    if ($setJson !== '') {
+        $sj = json_decode($setJson, true);
+        if (is_array($sj)) {
+            $jumlahSesi = max(0, (int) ($sj['jumlah_sesi'] ?? 0));
+            foreach ((array) ($sj['jam'] ?? []) as $j) {
+                $j = bersih($j);
+                if ($j !== '') $jamTersimpan[] = $j;
+            }
+        }
+    }
+    // Data lama yang belum punya setelan: jumlah sesi = sesi terbesar tersimpan.
+    if ($jumlahSesi < 1 && $simpanan) $jumlahSesi = max(array_keys($simpanan));
+    $mapelTersimpan = [];
+    for ($i = 1; $i <= $jumlahSesi; $i++) {
+        $mapelTersimpan[] = $simpanan[$i]['mapel'] ?? '';
+    }
+
     $out = [];
     foreach ($gilir as $idx => $b) {
         $sesi = $idx + 1;
@@ -3002,31 +3023,67 @@ function a_jadwalHarianHarianGas(array $d): array
         'tanggal' => $tanggal,
         'hari' => namaHari($tanggal),
         'total' => count($out),
+        'set' => [
+            'jumlah_sesi' => $jumlahSesi,
+            'jam' => $jamTersimpan,
+            'mapel' => $mapelTersimpan,
+        ],
         'baris' => $out,
     ];
 }
 
-/** Simpan (atau kosongkan) mapel + pengawas manual untuk tanggal + sesi. */
+/**
+ * Simpan jadwal SATU tanggal sekaligus: jumlah sesi + jam + mapel per sesi.
+ * Pengawas TIDAK disimpan di sini — diambil otomatis dari "Jadwal pengawas
+ * otomatis" (Ruang ujian) saat jadwal dicetak.
+ */
 function a_jadwalHarianSimpanGas(array $d): array
 {
     $tanggal = bersih($d['tanggal'] ?? '');
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal)) {
         return galat('Tanggal tidak valid.');
     }
-    $sesi = max(1, (int) ($d['sesi'] ?? 1));
-    $mapel = bersih($d['mapel'] ?? '');
-    $pengawas = [];
-    foreach ((array) ($d['pengawas'] ?? []) as $p) {
-        $p = bersih($p);
-        if ($p !== '' && !in_array($p, $pengawas, true)) $pengawas[] = $p;
+    $jumlah = (int) ($d['jumlah_sesi'] ?? 0);
+    if ($jumlah < 1 || $jumlah > 10) {
+        return galat('Jumlah sesi harus antara 1 dan 10.');
     }
-    jalan('DELETE FROM jadwal_harian WHERE tanggal = ? AND sesi = ?', [$tanggal, $sesi]);
-    if ($mapel !== '' || $pengawas) {
+
+    $jamIn = is_array($d['jam'] ?? null) ? $d['jam'] : [];
+    $jam = [];
+    for ($i = 0; $i < $jumlah; $i++) {
+        $v = bersih($jamIn[$i] ?? '');
+        if (!preg_match('/^(\d{1,2})[:.]?(\d{2})$/', $v, $m)) {
+            return galat('Jam sesi ' . ($i + 1) . ' tidak valid (format 07.30).');
+        }
+        $h = (int) $m[1];
+        $menit = (int) $m[2];
+        if ($h > 23 || $menit > 59) {
+            return galat('Jam sesi ' . ($i + 1) . ' tidak valid (format 07.30).');
+        }
+        $jam[] = sprintf('%02d.%02d', $h, $menit);
+    }
+
+    $mapelIn = is_array($d['mapel'] ?? null) ? $d['mapel'] : [];
+    $mapel = [];
+    for ($i = 0; $i < $jumlah; $i++) {
+        $mapel[] = bersih($mapelIn[$i] ?? '');
+    }
+
+    simpanPengaturan(
+        'jadwal_set:' . $tanggal,
+        json_encode(['jumlah_sesi' => $jumlah, 'jam' => $jam], JSON_UNESCAPED_UNICODE)
+    );
+
+    // Ganti seluruh baris mapel tanggal ini agar tidak ada sisa sesi lama.
+    jalan('DELETE FROM jadwal_harian WHERE tanggal = ?', [$tanggal]);
+    for ($i = 0; $i < $jumlah; $i++) {
+        if ($mapel[$i] === '') continue;
         jalan(
             'INSERT INTO jadwal_harian (tanggal, sesi, mapel, pengawas) VALUES (?,?,?,?)',
-            [$tanggal, $sesi, $mapel, json_encode($pengawas, JSON_UNESCAPED_UNICODE)]
+            [$tanggal, $i + 1, $mapel[$i], '[]']
         );
     }
+
     return ['success' => true, 'message' => 'Jadwal harian tersimpan.'];
 }
 

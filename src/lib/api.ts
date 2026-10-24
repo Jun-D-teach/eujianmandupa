@@ -448,10 +448,22 @@ export type BarisJadwalHarianGas = {
   absen: string;
 };
 
+/** Setelan jadwal satu tanggal — jumlah sesi, jam & mapel per sesi. */
+export type SetJadwalHarianTanggalGas = {
+  /** Jumlah sesi tanggal ini (0 = belum pernah diatur). */
+  jumlah_sesi: number;
+  /** Jam mulai tiap sesi tersimpan; bisa lebih pendek dari jumlah_sesi. */
+  jam: string[];
+  /** Mapel per sesi tersimpan (indeks 0 = sesi 1). */
+  mapel: string[];
+};
+
 export type JadwalHarianGas = {
   tanggal: string;
   hari: string;
   total: number;
+  /** Setelan per hari (jumlah sesi + jam + mapel). */
+  set?: SetJadwalHarianTanggalGas;
   baris: BarisJadwalHarianGas[];
 };
 
@@ -484,12 +496,12 @@ export function getJadwalHarianGas(
   return apiCall("jadwalHarianHarianGas", { tanggal, kolom });
 }
 
-/** Simpan mapel + pengawas manual satu baris (tanggal + sesi). */
+/** Simpan jadwal SATU tanggal sekaligus: jumlah sesi + jam + mapel per sesi. */
 export function simpanJadwalHarianGas(data: {
   tanggal: string;
-  sesi: number;
-  mapel: string;
-  pengawas: string[];
+  jumlah_sesi: number;
+  jam: string[];
+  mapel: string[];
 }): Promise<{ message?: string }> {
   return apiCall("jadwalHarianSimpanGas", data);
 }

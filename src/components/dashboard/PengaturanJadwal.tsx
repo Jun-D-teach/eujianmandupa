@@ -28,7 +28,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertTriangle,
   CalendarDays,
-  Columns3,
   Plus,
   Printer,
   Save,
@@ -36,12 +35,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-type TabId = "jadwal" | "kalender" | "kolom";
+type TabId = "jadwal" | "kalender";
 
 const TABS: { id: TabId; label: string; ikon: typeof CalendarDays }[] = [
   { id: "jadwal", label: "Jadwal harian", ikon: CalendarDays },
   { id: "kalender", label: "Kalender (hari kerja & libur)", ikon: CalendarDays },
-  { id: "kolom", label: "Pengaturan kolom", ikon: Columns3 },
 ];
 
 /** 1=Senin … 7=Minggu (nomor hari Indonesia — sama dengan kalender). */
@@ -63,9 +61,10 @@ function hariIniISO(): string {
 
 /**
  * Jadwal harian — admin.
- * Satu tanggal = N sesi (N = jumlah hari kerja kalender); tiap sesi diisi
- * mapel (pengawas diambil otomatis dari "Jadwal pengawas otomatis"), lalu
- * dicetak menjadi daftar peserta per sesi (A, B, C…).
+ * Per TANGGAL (ujian bisa beberapa hari): atur jumlah sesi, jam mulai & mapel
+ * tiap sesi — semuanya TERSIMPAN per hari. Pengawas tidak diatur di sini;
+ * diambil otomatis dari "Jadwal pengawas otomatis" (Ruang ujian) saat mencetak.
+ * Kalender (hari kerja & libur) menentukan tanggal mana yang bisa diatur.
  */
 export function PengaturanJadwal() {
   const [tab, setTab] = useState<TabId>("jadwal");
@@ -74,7 +73,8 @@ export function PengaturanJadwal() {
   const [memuat, setMemuat] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Draft setelan (kolom + kalender).
+  // Pemetaan kolom tabel siswa — hanya dari setelan server (deteksi otomatis);
+  // tab "Pengaturan kolom" sudah dibuang, nilai ini tetap dipakai saat memuat baris.
   const [kolom, setKolom] = useState<KolomJadwalGas>({
     tingkat: "",
     kelas: "",
@@ -86,19 +86,29 @@ export function PengaturanJadwal() {
   const [liburBaru, setLiburBaru] = useState("");
   const [busySetel, setBusySetel] = useState(false);
 
-  // Jadwal satu tanggal.
+  // Jadwal satu tanggal — jumlah sesi, jam & mapel TERSIMPAN per hari.
+  // sesiTeks = teks bebas agar angka bisa dihapus/ditulis ulang bebas;
+  // angka final diambil dari `jumlahSesi` (dibatasi 1–10).
   const [tanggal, setTanggal] = useState(hariIniISO());
-  const [totalSesi, setTotalSesi] = useState(3);
+  const [sesiTeks, setSesiTeks] = useState("3");
   const [jamSesi, setJamSesi] = useState<string[]>(jamMulaiOtomatis(3));
   const [mapelSesi, setMapelSesi] = useState<string[]>(["", "", ""]);
   // Penugasan pengawas per tanggal — sumber kebenarannya "Jadwal pengawas
-  // otomatis" (Ruang ujian & pengawas); kolom pengawas dibaca dari sana.
+  // otomatis" (Ruang ujian); hanya dipakai untuk mencetak.
   const [jadwalPeng, setJadwalPeng] = useState<JadwalPengawasGas[]>([]);
   const [baris, setBaris] = useState<BarisJadwalHarianGas[] | null>(null);
   // Mulai true: baris pertama dimuat begitu setelan siap; di-set "true" hanya
-  // dari handler perubahan (tanggal/kolom) agar tidak ada setState sinkron di efek.
+  // dari handler perubahan tanggal agar tidak ada setState sinkron di efek.
   const [memuatJadwal, setMemuatJadwal] = useState(true);
   const [busy, setBusy] = useState(false);
+
+  /** Jumlah sesi valid (1–10) dari teks yang sedang diketik. */
+  const jumlahSesi = Math.max(1, Math.min(10, parseInt(sesiTeks, 10) || 1));
+  /** Bawaan jam otomatis 07.30, 10.00, … untuk sesi yang belum punya jam tersimpan. */
+  const autoJam = useMemo(() => jamMulaiOtomatis(jumlahSesi), [jumlahSesi]);
+  // `??` (bukan `||`) supaya kolom jam yang dikosongkan user tetap kosong,
+  // tidak langsung tertimpa bawaan otomatis.
+  const jamKe = (i: number) => jamSesi[i] ?? autoJam[i] ?? "";
 
   // Muat setelan + setelan kop kartu (sekali).
   useEffect(() => {
@@ -134,8 +144,8 @@ export function PengaturanJadwal() {
     };
   }, []);
 
-  // Muat baris jadwal (mapel tersimpan) + penugasan pengawas terbaru dari
-  // "Jadwal pengawas otomatis" untuk tanggal terpilih.
+  // Muat setelan per hari (jumlah sesi + jam + mapel tersimpan) + penugasan
+  // pengawas terbaru dari "Jadwal pengawas otomatis" untuk tanggal terpilih.
   useEffect(() => {
     if (setel === null) return;
     let hidup = true;
@@ -147,16 +157,12 @@ export function PengaturanJadwal() {
         if (!hidup) return;
         setBaris(res.baris);
         setJadwalPeng(rs?.jadwal ?? []);
-        setMapelSesi((m) => {
-          const n = Array.from(
-            { length: Math.max(m.length, res.total) },
-            (_, i) => m[i] ?? "",
-          );
-          res.baris.forEach((b) => {
-            n[b.sesi - 1] = b.mapel;
-          });
-          return n;
-        });
+        const set = res.set;
+        const n = set && set.jumlah_sesi > 0 ? set.jumlah_sesi : 3;
+        const auto = jamMulaiOtomatis(n);
+        setSesiTeks(String(n));
+        setJamSesi(Array.from({ length: n }, (_, i) => set?.jam?.[i] ?? auto[i]));
+        setMapelSesi(Array.from({ length: n }, (_, i) => set?.mapel?.[i] ?? ""));
       })
       .catch((err) => {
         if (hidup) {
@@ -177,14 +183,13 @@ export function PengaturanJadwal() {
   const hitung = setel
     ? hitungSesiTanggal(tanggal, hariKerja, libur)
     : { libur: true, alasan: null, sesi: [] as number[] };
-  const sesiAktif = hitung.sesi;
 
   // Pengawas per sesi (otomatis — tanpa pilih manual): nama unik per sesi
   // pada tanggal ini, diambil dari tabel jadwal pengawas (Ruang ujian).
   const pengawasSesi = useMemo(() => {
     const barisTgl = jadwalPeng.filter((r) => r.tanggal === tanggal);
     const n = Math.max(
-      totalSesi,
+      jumlahSesi,
       barisTgl.reduce((m, r) => Math.max(m, r.sesi), 0),
     );
     const out: string[][] = Array.from({ length: n }, () => []);
@@ -195,14 +200,7 @@ export function PengaturanJadwal() {
       if (arr && nama && !arr.includes(nama)) arr.push(nama);
     }
     return out;
-  }, [jadwalPeng, tanggal, totalSesi]);
-
-  const ubahTotalSesi = (n: number) => {
-    setTotalSesi(n);
-    const auto = jamMulaiOtomatis(n);
-    setJamSesi((j) => Array.from({ length: n }, (_, i) => j[i] || auto[i]));
-    setMapelSesi((m) => Array.from({ length: n }, (_, i) => m[i] ?? ""));
-  };
+  }, [jadwalPeng, tanggal, jumlahSesi]);
 
   const ubahJam = (i: number, v: string) =>
     setJamSesi((j) => {
@@ -235,17 +233,12 @@ export function PengaturanJadwal() {
   };
 
   const simpanSetelan = async () => {
-    if (kolom.tingkat === "" && kolom.kelas === "") {
-      toast.error("Pilih minimal kolom Tingkat atau Kelas di tab Pengaturan kolom.");
-      setTab("kolom");
-      return;
-    }
     setBusySetel(true);
     try {
       await setelJadwalGas({ kolom, hari_kerja: hariKerja, libur });
       setSetel((s) => (s ? { ...s, kolom, hari_kerja: hariKerja, libur } : s));
       setMemuatJadwal(true);
-      toast.success("Setelan jadwal disimpan.");
+      toast.success("Setelan kalender disimpan.");
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Gagal menyimpan setelan.",
@@ -255,38 +248,47 @@ export function PengaturanJadwal() {
     }
   };
 
-  /** Validasi sebelum cetak/simpan: kolom sesi aktif harus ≤ total sesi & terisi. */
-  const validasiSesi = (): boolean => {
-    const terlalu = sesiAktif.filter((s) => s > totalSesi);
-    if (terlalu.length) {
-      toast.error(
-        `Naikkan "Jumlah sesi" menjadi minimal ${Math.max(...terlalu)} — hari ini memakai ${sesiAktif.length} sesi.`,
-      );
-      return false;
+  /**
+   * Validasi bersama simpan & cetak: jam valid (07.30) dan mapel terisi
+   * untuk SEMUA sesi 1..jumlahSesi. Mengembalikan { jam, mapel } atau null
+   * (toast kesalahan sudah ditampilkan).
+   */
+  const siapkanIsi = (): { jam: string[]; mapel: string[] } | null => {
+    const jam: string[] = [];
+    for (let i = 0; i < jumlahSesi; i++) {
+      const j = normalisasiJam(jamKe(i));
+      if (!j) {
+        toast.error(`Jam sesi ${i + 1} tidak valid (format 07.30).`);
+        return null;
+      }
+      jam.push(j);
     }
-    const kosongMapel = sesiAktif.filter((s) => !(mapelSesi[s - 1] ?? "").trim());
-    if (kosongMapel.length) {
-      toast.error(
-        `Lengkapi mapel sesi ${kosongMapel.join(", ")} terlebih dahulu.`,
-      );
-      return false;
+    const mapel: string[] = [];
+    const kosong: number[] = [];
+    for (let i = 0; i < jumlahSesi; i++) {
+      const m = (mapelSesi[i] ?? "").trim();
+      mapel.push(m);
+      if (!m) kosong.push(i + 1);
     }
-    return true;
+    if (kosong.length) {
+      toast.error(`Lengkapi mapel sesi ${kosong.join(", ")} terlebih dahulu.`);
+      return null;
+    }
+    return { jam, mapel };
   };
 
   const simpanTanggal = async () => {
-    if (!validasiSesi()) return;
+    const isi = siapkanIsi();
+    if (!isi) return;
     setBusy(true);
     try {
-      for (const s of sesiAktif) {
-        await simpanJadwalHarianGas({
-          tanggal,
-          sesi: s,
-          mapel: (mapelSesi[s - 1] ?? "").trim(),
-          pengawas: pengawasSesi[s - 1] ?? [],
-        });
-      }
-      toast.success(`Jadwal ${labelTanggal(tanggal)} tersimpan.`);
+      const res = await simpanJadwalHarianGas({
+        tanggal,
+        jumlah_sesi: jumlahSesi,
+        jam: isi.jam,
+        mapel: isi.mapel,
+      });
+      toast.success(res.message || `Jadwal ${labelTanggal(tanggal)} tersimpan.`);
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Gagal menyimpan jadwal.",
@@ -301,23 +303,19 @@ export function PengaturanJadwal() {
       toast.error("Belum ada baris peserta untuk tanggal ini.");
       return;
     }
-    if (!validasiSesi()) return;
-    const jam = Array.from({ length: totalSesi }, (_, i) => {
-      const j = normalisasiJam(jamSesi[i] ?? "");
-      if (!j) {
-        toast.error(`Jam sesi ${i + 1} tidak valid (format 07.30).`);
-        throw new Error("jam");
-      }
-      return j;
-    });
+    const isi = siapkanIsi();
+    if (!isi) return;
     const html = jadwalHarianHTML(baris, {
       sekolah: kartu.sekolah,
       alamat: kartu.alamat,
       kota: kartu.kota,
-      totalSesi,
-      jamSesi: jam,
-      mapelSesi: Array.from({ length: totalSesi }, (_, i) => mapelSesi[i] ?? ""),
-      pengawasSesi: Array.from({ length: totalSesi }, (_, i) => pengawasSesi[i] ?? []),
+      totalSesi: jumlahSesi,
+      jamSesi: isi.jam,
+      mapelSesi: isi.mapel,
+      pengawasSesi: Array.from(
+        { length: jumlahSesi },
+        (_, i) => pengawasSesi[i] ?? [],
+      ),
     });
     cetakDokumen(html, `Jadwal Harian ${labelTanggal(tanggal)}`, (pesan) =>
       toast.error(pesan),
@@ -351,10 +349,10 @@ export function PengaturanJadwal() {
           Jadwal harian peserta
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Satu tanggal memakai beberapa sesi (sesi 1, 2, 3, … berurutan dari
-          hari kerja pada kalender) — isi mapel per sesi; pengawas diambil
-          otomatis dari "Jadwal pengawas otomatis" (Ruang ujian &amp;
-          pengawas), lalu dicetak sebagai daftar peserta per tanggal.
+          Atur per tanggal (ujian bisa beberapa hari): jumlah sesi, jam mulai &
+          mapel tiap sesi — tersimpan per hari. Pengawas diambil otomatis dari
+          "Jadwal pengawas otomatis" (Ruang ujian & pengawas), lalu jadwal
+          dicetak sebagai daftar peserta per tanggal.
         </p>
       </div>
 
@@ -400,55 +398,67 @@ export function PengaturanJadwal() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="jadwal-sesi">Jumlah sesi (per hari)</Label>
-                <select
+                <Label htmlFor="jadwal-sesi">Jumlah sesi hari ini</Label>
+                <Input
                   id="jadwal-sesi"
-                  value={totalSesi}
-                  onChange={(e) => ubahTotalSesi(Number(e.target.value))}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-                    <option key={n} value={n}>
-                      {n} sesi
-                    </option>
-                  ))}
-                </select>
+                  type="number"
+                  min={1}
+                  max={10}
+                  inputMode="numeric"
+                  value={sesiTeks}
+                  onChange={(e) => setSesiTeks(e.target.value)}
+                  onBlur={() => setSesiTeks(String(jumlahSesi))}
+                />
+                <p className="text-[11px] leading-4 text-muted-foreground">
+                  1–10 sesi per hari — berlaku untuk tanggal ini saja, lalu klik
+                  Simpan.
+                </p>
               </div>
               <div className="grid gap-2">
-                <Label>Kolom peserta &amp; sesi aktif</Label>
+                <Label>Peserta</Label>
                 <p className="rounded-md bg-muted px-3 py-2 text-xs leading-5">
                   {baris && baris.length > 0
                     ? `${baris.length} peserta · digilir antar tingkat (A, B, C, …)`
                     : "Belum ada peserta"}
-                  {sesiAktif.length > 0 && (
-                    <> · hari ini sesi {sesiAktif.join(", ")}</>
-                  )}
                 </p>
               </div>
             </div>
 
-            <div className="mt-4">
-              <Label>Jam mulai tiap sesi</Label>
-              <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-                {Array.from({ length: totalSesi }, (_, i) => (
-                  <div key={i} className="grid gap-1">
-                    <span className="text-[11px] font-medium text-muted-foreground">
-                      Sesi {i + 1}
-                    </span>
-                    <Input
-                      value={jamSesi[i] ?? ""}
-                      onChange={(e) => ubahJam(i, e.target.value)}
-                      placeholder="07.30"
-                      inputMode="numeric"
-                    />
-                  </div>
-                ))}
+            {!hitung.libur && (
+              <div className="mt-4">
+                <Label>Jam mulai & mapel tiap sesi</Label>
+                <div className="mt-2 grid gap-2">
+                  {Array.from({ length: jumlahSesi }, (_, i) => (
+                    <div
+                      key={i}
+                      className="grid gap-2 rounded-lg border border-border/60 p-2 sm:grid-cols-[6.5rem_9rem_1fr] sm:items-center"
+                    >
+                      <span className="text-xs font-bold text-muted-foreground">
+                        Sesi {i + 1}
+                      </span>
+                      <Input
+                        value={jamKe(i)}
+                        onChange={(e) => ubahJam(i, e.target.value)}
+                        placeholder="07.30"
+                        inputMode="numeric"
+                        aria-label={`Jam mulai sesi ${i + 1}`}
+                      />
+                      <Input
+                        value={mapelSesi[i] ?? ""}
+                        onChange={(e) => ubahMapel(i + 1, e.target.value)}
+                        placeholder="Mapel sesi ini (cth. Matematika)"
+                        aria-label={`Mapel sesi ${i + 1}`}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">
+                  Jam bawaan otomatis 07.30, 10.00, 12.30, … (jeda 2,5 jam) —
+                  bebas diubah (format 07.30). Pengawas tidak diatur di sini:
+                  otomatis mengikuti "Jadwal pengawas otomatis" saat dicetak.
+                </p>
               </div>
-              <p className="mt-1.5 text-[11px] text-muted-foreground">
-                Bawaan otomatis 07.30, 10.00, 12.30, … — bebas diubah (format
-                07.30).
-              </p>
-            </div>
+            )}
           </Card>
 
           {hitung.libur ? (
@@ -459,95 +469,31 @@ export function PengaturanJadwal() {
               <p className="mt-1 text-sm text-amber-800/90">{hitung.alasan}</p>
             </Card>
           ) : (
-            <>
-              <div className="space-y-4">
-                {sesiAktif.map((s) => {
-                  const dipilih = pengawasSesi[s - 1] ?? [];
-                  return (
-                    <Card key={s} className="border-border/70 p-5">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-sm font-bold">
-                          Sesi {s} · {normalisasiJam(jamSesi[s - 1] ?? "") || "—"}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="gap-1.5"
-                          disabled={busy}
-                          onClick={() => {
-                            void (async () => {
-                              try {
-                                await simpanJadwalHarianGas({
-                                  tanggal,
-                                  sesi: s,
-                                  mapel: (mapelSesi[s - 1] ?? "").trim(),
-                                  pengawas: dipilih,
-                                });
-                                toast.success(`Sesi ${s} tersimpan.`);
-                              } catch (err) {
-                                toast.error(
-                                  err instanceof Error
-                                    ? err.message
-                                    : "Gagal menyimpan sesi.",
-                                );
-                              }
-                            })();
-                          }}
-                        >
-                          <Save className="size-3.5" /> Simpan sesi {s}
-                        </Button>
-                      </div>
-
-                      <div className="mt-3 grid gap-4 lg:grid-cols-2">
-                        <div className="grid gap-2">
-                          <Label htmlFor={`mapel-${s}`}>Mapel ujian</Label>
-                          <Input
-                            id={`mapel-${s}`}
-                            value={mapelSesi[s - 1] ?? ""}
-                            onChange={(e) => ubahMapel(s, e.target.value)}
-                            placeholder="cth. Matematika"
-                          />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>Pengawas {s} (otomatis)</Label>
-                          <p className="rounded-md bg-muted px-3 py-2 text-xs leading-5">
-                            {dipilih.join(", ") ||
-                              "Belum ada penugasan — buat lewat Ruang ujian & pengawas → Jadwal pengawas otomatis."}
-                          </p>
-                        </div>
-                      </div>
-                    </Card>
-                  );
-                })}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3">
-                <Button
-                  type="button"
-                  className="gap-2"
-                  disabled={busy || memuatJadwal}
-                  onClick={() => void simpanTanggal()}
-                >
-                  <Save className="size-4" />
-                  {busy ? "Menyimpan…" : "Simpan jadwal tanggal ini"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="gap-2"
-                  disabled={memuatJadwal}
-                  onClick={cetak}
-                >
-                  <Printer className="size-4" /> Cetak jadwal harian
-                </Button>
-                <p className="text-[11px] leading-5 text-muted-foreground">
-                  Cetak A4 lanskap: kolom <strong>A, B, C…</strong> = sesi 1, 2,
-                  3… (kolom di luar hari ini dicetak tipis). Kolom pengawas
-                  mengikuti <strong>Jadwal pengawas otomatis</strong>.
-                </p>
-              </div>
-            </>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                className="gap-2"
+                disabled={busy || memuatJadwal}
+                onClick={() => void simpanTanggal()}
+              >
+                <Save className="size-4" />
+                {busy ? "Menyimpan…" : "Simpan jadwal tanggal ini"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                disabled={memuatJadwal}
+                onClick={cetak}
+              >
+                <Printer className="size-4" /> Cetak jadwal harian
+              </Button>
+              <p className="text-[11px] leading-5 text-muted-foreground">
+                Simpan per tanggal — ulangi untuk hari ujian berikutnya. Cetak A4
+                lanskap: kolom <strong>mapel & pengawas</strong> per sesi;
+                pengawas mengikuti <strong>Jadwal pengawas otomatis</strong>.
+              </p>
+            </div>
           )}
         </div>
       )}
@@ -560,8 +506,8 @@ export function PengaturanJadwal() {
           <Card className="border-border/70 p-5">
             <p className="text-sm font-bold">Hari kerja ujian</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Jumlah hari kerja menentukan jumlah sesi per hari: urutan hari
-              inilah yang menjadi sesi 1, 2, 3, …
+              Tanggal dengan hari ini bisa diatur jadwal hariannya; selain itu
+              (akhir pekan / tanggal libur) tidak ada jadwal.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {Array.from({ length: 7 }, (_, i) => i + 1).map((h) => {
@@ -587,8 +533,7 @@ export function PengaturanJadwal() {
           <Card className="border-border/70 p-5">
             <p className="text-sm font-bold">Tanggal libur</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Tanggal merah / libur madrasah — tidak dihitung sebagai hari
-              kerja.
+              Tanggal merah / libur madrasah — tidak ada jadwal ujian.
             </p>
             <div className="mt-3 flex flex-wrap items-end gap-3">
               <div className="grid gap-2">
@@ -640,109 +585,6 @@ export function PengaturanJadwal() {
           >
             <Save className="size-4" />
             {busySetel ? "Menyimpan…" : "Simpan kalender"}
-          </Button>
-        </div>
-      )}
-
-      {/* ---------------------------------------------------------- */}
-      {/* TAB: KOLOM                                                 */}
-      {/* ---------------------------------------------------------- */}
-      {tab === "kolom" && setel && (
-        <div className="space-y-5">
-          <Card className="border-border/70 p-5">
-            <p className="text-sm font-bold">Pemetaan kolom tabel siswa</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Otomatis terdeteksi dari tabel <code>siswa</code> (ditandai{" "}
-              <em>deteksi otomatis</em>). Ubah bila nama kolom berbeda.
-            </p>
-
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              {(
-                [
-                  ["tingkat", "Kolom tingkat (X / XI / XII)"],
-                  ["kelas", "Kolom kelas (mis. X.1)"],
-                  ["nis", "Kolom NIS / NISN"],
-                  ["absen", "Kolom nomor absen"],
-                ] as const
-              ).map(([kunci, label]) => {
-                const auto = setel.auto[kunci];
-                return (
-                  <div key={kunci} className="grid gap-2">
-                    <Label htmlFor={`kolom-${kunci}`}>{label}</Label>
-                    <select
-                      id={`kolom-${kunci}`}
-                      value={kolom[kunci]}
-                      onChange={(e) =>
-                        setKolom((k) => ({ ...k, [kunci]: e.target.value }))
-                      }
-                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    >
-                      <option value="">— tidak dipakai —</option>
-                      {kunci === "tingkat" && (
-                        <option value="#kelas">
-                          Tingkat diturunkan dari kolom kelas
-                        </option>
-                      )}
-                      {setel.daftar_kolom.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                    {auto && (
-                      <p className="text-[11px] text-muted-foreground">
-                        Deteksi otomatis: <strong>{auto}</strong>
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <p className="mt-3 text-[11px] leading-5 text-muted-foreground">
-              Minimal satu dari <strong>tingkat</strong> atau{" "}
-              <strong>kelas</strong> harus dipilih. Absen{" "}
-              <em>tidak dipakai</em> akan diisi otomatis 1, 2, 3, … per kelas.
-            </p>
-          </Card>
-
-          {setel.contoh.length > 0 && (
-            <Card className="border-border/70 p-5">
-              <p className="text-sm font-bold">Cuplikan data siswa</p>
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border/70 text-left text-xs text-muted-foreground">
-                      {Object.keys(setel.contoh[0]).map((c) => (
-                        <th key={c} className="px-2 py-1.5 font-semibold">
-                          {c}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {setel.contoh.map((r, i) => (
-                      <tr key={i} className="border-b border-border/40">
-                        {Object.keys(setel.contoh[0]).map((c) => (
-                          <td key={c} className="px-2 py-1.5">
-                            {String(r[c] ?? "")}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          )}
-
-          <Button
-            type="button"
-            className="gap-2"
-            disabled={busySetel}
-            onClick={() => void simpanSetelan()}
-          >
-            <Save className="size-4" />
-            {busySetel ? "Menyimpan…" : "Simpan pengaturan kolom"}
           </Button>
         </div>
       )}
