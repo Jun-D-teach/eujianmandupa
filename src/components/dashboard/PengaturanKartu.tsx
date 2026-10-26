@@ -86,15 +86,37 @@ export function PengaturanKartu() {
     }
     setBusy(true);
     try {
+      const kirimSekolah = set.sekolah.trim();
+      const kirimKegiatan = set.kegiatan.trim();
       const res = await gasCall<{ message?: string }>("aturKartuSet", {
         ...set,
-        sekolah: set.sekolah.trim(),
-        kegiatan: set.kegiatan.trim(),
+        sekolah: kirimSekolah,
+        kegiatan: kirimKegiatan,
         alamat: set.alamat.trim(),
         kota: set.kota.trim(),
         kepala: set.kepala.trim(),
         nip: set.nip.trim(),
       });
+      // Baca ulang: hosting yang masih memakai api/index.php LAMA bisa menjawab
+      // "sukses" padahal field baru (kegiatan) tidak ikut ditulis — akibatnya
+      // nilai hilang saat refresh & kartu tercetak "Ujian". Beri tahu admin.
+      try {
+        const ulang = await gasCall<SetKartu>("getKartuSet");
+        if (
+          (ulang.kegiatan ?? "").trim() !== kirimKegiatan ||
+          (ulang.sekolah ?? "").trim() !== kirimSekolah
+        ) {
+          toast.error(
+            "Backend hosting belum di-update — data tidak benar-benar tersimpan. " +
+              "Upload ulang api/index.php ke hosting (lihat PASANG.md §8), " +
+              "lalu simpan lagi.",
+            { duration: 10000 },
+          );
+          return;
+        }
+      } catch {
+        /* verifikasi gagal tidak menggugurkan sukses penyimpanan */
+      }
       toast.success(res.message || "Pengaturan kartu ujian disimpan.");
     } catch (err) {
       toast.error(
@@ -206,32 +228,20 @@ export function PengaturanKartu() {
                 required
               />
             </div>
-            <div className="grid gap-2">
-  <Label htmlFor="kop-kegiatan">Nama kegiatan *</Label>
-  <Input
-    id="kop-kegiatan"
-    value={set.kegiatan}
-    onChange={(e) => ubah("kegiatan")(e.target.value)}
-    placeholder="cth. Ujian Akhir Semester Ganjil"
-    required
-  />
-  <p className="text-[11px] text-muted-foreground">
-    Contoh: Ujian Tengah Semester, Ujian Akhir Semester, Penilaian Akhir
-    Tahun, dll.
-  </p>
-</div>
             <div className="grid gap-2 sm:col-span-2">
-              <Label htmlFor="kop-kegiatan">Nama kegiatan ujian</Label>
+              <Label htmlFor="kop-kegiatan">Nama kegiatan ujian *</Label>
               <Input
                 id="kop-kegiatan"
                 value={set.kegiatan}
                 onChange={(e) => ubah("kegiatan")(e.target.value)}
                 placeholder="cth. UAS Ganjil 2025/2026"
                 maxLength={60}
+                required
               />
               <p className="text-[11px] leading-4 text-muted-foreground">
-                Tercetak pada kartu peserta — satu kartu untuk semua mata
-                ujian dalam kegiatan ini (UAS, PAS, PAT, …).
+                Contoh: Ujian Tengah Semester, Ujian Akhir Semester, Penilaian
+                Akhir Tahun. Tercetak pada kartu peserta — satu kartu untuk
+                semua mata ujian dalam kegiatan ini (UAS, PAS, PAT, …).
               </p>
             </div>
             <div className="grid gap-2">
