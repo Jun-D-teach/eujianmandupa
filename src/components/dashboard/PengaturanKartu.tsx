@@ -206,6 +206,20 @@ export function PengaturanKartu() {
                 required
               />
             </div>
+            <div className="grid gap-2">
+  <Label htmlFor="kop-kegiatan">Nama kegiatan *</Label>
+  <Input
+    id="kop-kegiatan"
+    value={set.kegiatan}
+    onChange={(e) => ubah("kegiatan")(e.target.value)}
+    placeholder="cth. Ujian Akhir Semester Ganjil"
+    required
+  />
+  <p className="text-[11px] text-muted-foreground">
+    Contoh: Ujian Tengah Semester, Ujian Akhir Semester, Penilaian Akhir
+    Tahun, dll.
+  </p>
+</div>
             <div className="grid gap-2 sm:col-span-2">
               <Label htmlFor="kop-kegiatan">Nama kegiatan ujian</Label>
               <Input
