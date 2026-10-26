@@ -10,6 +10,9 @@
 export type SetKartu = {
   /** Kop baris 1 — nama madrasah. */
   sekolah: string;
+  /** Nama kegiatan ujian (mis. "UAS Ganjil 2025/2026") — SATU kartu untuk
+   *  seluruh mata ujian dalam kegiatan itu. */
+  kegiatan: string;
   /** Kop baris 2 — alamat / kontak. */
   alamat: string;
   /** Kota pada baris "…, tanggal" tanda tangan. */
@@ -28,10 +31,10 @@ export type IsiKartu = {
   nisn: string;
   nama: string;
   kelas: string;
-  judul: string;
-  /** Label jadwal jadi, mis. "Jumat, 12 Oktober 2026 pukul 08.00". */
-  jadwal: string;
-  durasi: number;
+  /** Nama kegiatan ujian — bukan judul per mapel. */
+  kegiatan: string;
+  /** Periode kegiatan (rentang tanggal seluruh mapel), bila diketahui. */
+  jadwal?: string;
   /** Hasil penentuan ruang (Pengaturan → Ruang ujian) — opsional. */
   ruang?: string;
   /** Nomor tempat duduk peserta pada ruang tersebut. */
@@ -46,6 +49,7 @@ export const UKURAN_KARTU = { lebar: 85.6, tinggi: 54 } as const;
 /** Setelan awal (dipakai saat belum pernah diatur / gagal memuat). */
 export const SET_KOSONG: SetKartu = {
   sekolah: "MAN 2 PALEMBANG",
+  kegiatan: "",
   alamat: "",
   kota: "Palembang",
   kepala: "",
@@ -243,9 +247,9 @@ export function kartuHTML(set: SetKartu, k: IsiKartu): string {
     </table>
     <div class="bawah">
       <table class="data ujian">
-        ${baris("Ujian", k.judul)}
-        ${baris("Jadwal", k.jadwal)}
-        ${baris("Durasi", `${k.durasi} menit`)}
+        ${baris("Kegiatan", k.kegiatan || set.kegiatan || "Ujian")}
+        ${baris("Jadwal", k.jadwal || "—")}
+        ${baris("Berlaku", "Seluruh mata ujian")}
       </table>
       <div class="ttd">
         <div class="ttd-kota">${esc(set.kota)}, ${tanggalPanjang()}</div>

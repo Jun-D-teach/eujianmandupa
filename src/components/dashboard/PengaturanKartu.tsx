@@ -29,6 +29,7 @@ export function PengaturanKartu() {
         if (!hidup) return;
         setSet({
           sekolah: res.sekolah ?? SET_KOSONG.sekolah,
+          kegiatan: res.kegiatan ?? "",
           alamat: res.alamat ?? "",
           kota: res.kota ?? SET_KOSONG.kota,
           kepala: res.kepala ?? "",
@@ -88,6 +89,7 @@ export function PengaturanKartu() {
       const res = await gasCall<{ message?: string }>("aturKartuSet", {
         ...set,
         sekolah: set.sekolah.trim(),
+        kegiatan: set.kegiatan.trim(),
         alamat: set.alamat.trim(),
         kota: set.kota.trim(),
         kepala: set.kepala.trim(),
@@ -181,7 +183,9 @@ export function PengaturanKartu() {
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Dicetak pada kartu ujian berukuran KTP (85,6 × 54 mm) — buka menu{" "}
-          <strong>Kelola Ujian</strong> lalu tombol <strong>Cetak kartu</strong>.
+          <strong>Kelola Ujian</strong> lalu tombol <strong>Cetak kartu
+          ujian</strong> di pojok kanan atas. Satu kartu dicetak per kegiatan
+          ujian (mis. UAS) dan berlaku untuk seluruh mata ujian.
           <br />
           Kop ini juga dipakai pada cetakan <strong>Jadwal harian</strong>,{" "}
           jadwal pengawas &amp; daftar hadir (Pengaturan → Ruang ujian / Jadwal
@@ -201,6 +205,20 @@ export function PengaturanKartu() {
                 placeholder="cth. MAN 2 PALEMBANG"
                 required
               />
+            </div>
+            <div className="grid gap-2 sm:col-span-2">
+              <Label htmlFor="kop-kegiatan">Nama kegiatan ujian</Label>
+              <Input
+                id="kop-kegiatan"
+                value={set.kegiatan}
+                onChange={(e) => ubah("kegiatan")(e.target.value)}
+                placeholder="cth. UAS Ganjil 2025/2026"
+                maxLength={60}
+              />
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                Tercetak pada kartu peserta — satu kartu untuk semua mata
+                ujian dalam kegiatan ini (UAS, PAS, PAT, …).
+              </p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="kop-alamat">Alamat / kontak kop</Label>

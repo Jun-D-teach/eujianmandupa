@@ -2329,11 +2329,12 @@ function a_aturPin(array $d): array
 /* KARTU UJIAN (kop, logo, tanda tangan kepala madrasah — admin)       */
 /* ------------------------------------------------------------------ */
 
-/** Baca setelan kartu: kop madrasah, kota, kepala madrasah, logo & TTD. */
+/** Baca setelan kartu: kop madrasah, kegiatan ujian, kota, kepala, logo & TTD. */
 function a_getKartuSet(): array
 {
     $set = [
         'sekolah' => 'MAN 2 PALEMBANG',
+        'kegiatan' => '',
         'alamat' => '',
         'kota' => 'Palembang',
         'kepala' => '',
@@ -2351,6 +2352,7 @@ function a_getKartuSet(): array
     return [
         'success' => true,
         'sekolah' => $set['sekolah'],
+        'kegiatan' => $set['kegiatan'],
         'alamat' => $set['alamat'],
         'kota' => $set['kota'],
         'kepala' => $set['kepala'],
@@ -2365,6 +2367,7 @@ function a_aturKartuSet(array $d): array
 {
     $teks = [
         'sekolah' => bersih($d['sekolah'] ?? ''),
+        'kegiatan' => bersih($d['kegiatan'] ?? ''),
         'alamat' => bersih($d['alamat'] ?? ''),
         'kota' => bersih($d['kota'] ?? ''),
         'kepala' => bersih($d['kepala'] ?? ''),

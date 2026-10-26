@@ -127,6 +127,7 @@ export function PengaturanRuang({
         setGuru(g.guru ?? []);
         setSetKartu({
           sekolah: kartu.sekolah ?? SET_KOSONG.sekolah,
+          kegiatan: kartu.kegiatan ?? "",
           alamat: kartu.alamat ?? "",
           kota: kartu.kota ?? SET_KOSONG.kota,
           kepala: kartu.kepala ?? "",
@@ -435,6 +436,7 @@ export function PengaturanRuang({
           variant="outline"
           className="shrink-0 gap-2"
           onClick={() => onBukaKartuUjian?.()}
+          title="Buka Kelola Ujian lalu tampilkan dialog cetak kartu (per kegiatan ujian)"
         >
           <Printer className="size-4" /> Cetak kartu ujian
         </Button>
@@ -997,9 +999,9 @@ export function PengaturanRuang({
           <p className="text-[11px] leading-5 text-muted-foreground">
             Bagan tempat duduk menampilkan nomor kursi + nama peserta per ruang;
             daftar hadir menyediakan kolom tanda tangan. Setelah penempatan
-            dibuat, klik <strong>Cetak kartu ujian</strong> di atas (atau buka{" "}
-            <strong>Kelola Ujian → Cetak kartu</strong>) — nomor ruang &amp;
-            duduk otomatis ikut tercetak pada kartu ujian.
+            dibuat, klik <strong>Cetak kartu ujian</strong> di atas — dialog cetak
+            terbuka di halaman <strong>Kelola Ujian</strong>. Nomor ruang &amp;
+            duduk otomatis ikut tercetak, satu kartu untuk seluruh mata ujian.
           </p>
         </div>
       </Card>

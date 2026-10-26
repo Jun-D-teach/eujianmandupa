@@ -122,6 +122,7 @@ export function PengaturanJadwal() {
         setLibur(s.libur);
         setKartu({
           sekolah: k.sekolah ?? SET_KOSONG.sekolah,
+          kegiatan: k.kegiatan ?? "",
           alamat: k.alamat ?? "",
           kota: k.kota ?? SET_KOSONG.kota,
           kepala: k.kepala ?? "",

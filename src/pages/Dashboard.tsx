@@ -65,6 +65,8 @@ export default function Dashboard() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const [tab, setTab] = useState<TabId>("ujian");
+  /** Memicu dialog cetak kartu di Kelola Ujian (dari menu Ruang ujian). */
+  const [bukaCetakKartu, setBukaCetakKartu] = useState(0);
 
   const role = user?.role;
   const tabs = tabsUntuk(role);
@@ -162,7 +164,9 @@ export default function Dashboard() {
       <div className="mx-auto w-full max-w-6xl px-5 py-8">
         {tabAktif === "ujian" && <SiswaUjian />}
         {tabAktif === "riwayat" && <SiswaRiwayat />}
-        {tabAktif === "kelola" && <KelolaUjian />}
+        {tabAktif === "kelola" && (
+          <KelolaUjian bukaCetakNonce={bukaCetakKartu} />
+        )}
         {tabAktif === "hasil" && <HasilUjian />}
         {tabAktif === "siswa" && <DataSiswa />}
         {tabAktif === "guru" && <DataGuru />}
@@ -171,7 +175,12 @@ export default function Dashboard() {
           <div className="space-y-10">
             <PengaturanPin />
             <PengaturanJadwal />
-            <PengaturanRuang onBukaKartuUjian={() => setTab("kelola")} />
+            <PengaturanRuang
+              onBukaKartuUjian={() => {
+                setTab("kelola");
+                setBukaCetakKartu((n) => n + 1);
+              }}
+            />
             <PengaturanKartu />
           </div>
         )}

@@ -180,6 +180,32 @@ function jadwalLabel(v?: string): string {
   return d.toLocaleString("id-ID", { dateStyle: "full", timeStyle: "short" });
 }
 
+/**
+ * Periode kegiatan ujian dari seluruh jadwal mulai mapel — dicetak pada kartu
+ * (satu kartu untuk semua mapel):
+ * "3 November 2026" · "3–8 November 2026" · "3 Oktober – 8 November 2026".
+ */
+function periodeKegiatan(daftar: { tgl_mulai?: string }[]): string {
+  const tgl = daftar
+    .map((u) => new Date(u.tgl_mulai ?? ""))
+    .filter((d) => !Number.isNaN(d.getTime()))
+    .sort((a, b) => a.getTime() - b.getTime());
+  if (tgl.length === 0) return "";
+  const hari = (d: Date) =>
+    d.toLocaleDateString("id-ID", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+  const awal = tgl[0];
+  const akhir = tgl[tgl.length - 1];
+  if (awal.getTime() === akhir.getTime()) return hari(awal);
+  const setahun = awal.getFullYear() === akhir.getFullYear();
+  if (setahun && awal.getMonth() === akhir.getMonth())
+    return `${awal.getDate()}–${akhir.getDate()} ${hari(akhir)}`;
+  return `${hari(awal)} – ${hari(akhir)}`;
+}
+
 type Kunci = "A" | "B" | "C" | "D" | "E";
 type SasarJenis = "" | "tingkat" | "kelas";
 
@@ -370,7 +396,7 @@ function PemilihSasaran(props: {
 }
 
 /** Kelola ujian: buat, aktifkan, susun soal, hapus. (guru & admin) */
-export function KelolaUjian() {
+export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } = {}) {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const { kelas: kelasList, tingkat: tingkatList } = useKelasSiswa();
@@ -390,9 +416,12 @@ export function KelolaUjian() {
   const [daftarGuru, setDaftarGuru] = useState<GuruGas[]>([]);
   const [busy, setBusy] = useState(false);
   const [hapusTarget, setHapusTarget] = useState<{ id: string; judul: string } | null>(null);
-  const [cetakTarget, setCetakTarget] = useState<UjianGas | null>(null);
+  /** Dialog cetak kartu — dibuka per KEGIATAN ujian (bukan per mapel). */
+  const [cetakBuka, setCetakBuka] = useState(false);
   const [cetakSet, setCetakSet] = useState<SetKartu | null>(null);
   const [cetakSiswa, setCetakSiswa] = useState<SiswaGas[] | null>(null);
+  /** Periode kegiatan (rentang tanggal seluruh mapel) untuk dicetak. */
+  const [cetakPeriode, setCetakPeriode] = useState("");
   /** Hasil penentuan ruang (Pengaturan → Ruang ujian): NISN → ruang & kursi. */
   const [cetakTempat, setCetakTempat] = useState<
     Map<string, { ruang: string; noDuduk: number }>
@@ -529,22 +558,34 @@ export function KelolaUjian() {
     }
   };
 
-  /** Buka dialog cetak kartu — muat setelan kop/TTD, siswa sesuai sasaran,
-   *  dan hasil penentuan ruang (bila sudah dibuat admin). */
-  const bukaCetak = async (u: UjianGas) => {
-    setCetakTarget(u);
+  /** Buka dialog cetak kartu KEgiatan ujian — muat setelan kop/TTD, seluruh
+   *  siswa peserta, jadwal & hasil penentuan ruang. Satu kartu dipakai untuk
+   *  semua mata ujian, jadi tidak diikat pada satu ujian/mapel. */
+  const bukaCetak = async () => {
+    setCetakBuka(true);
     setCetakSet(null);
     setCetakSiswa(null);
+    setCetakPeriode("");
     setCetakTempat(new Map());
     setCetakMuat(true);
     try {
-      const [set, siswa, rs] = await Promise.all([
+      const [set, siswa, rs, daftarUjian] = await Promise.all([
         gasCall<SetKartu>("getKartuSet"),
         gasCall<{ siswa: SiswaGas[] }>("getSiswa"),
         gasCall<RuangSetGas>("getRuangSet").catch(() => null),
+        gasCall<{ ujian: UjianGas[] }>("getUjian"),
       ]);
+      const daftar = daftarUjian.ujian ?? [];
       setCetakSet(set);
-      setCetakSiswa(siswa.siswa.filter((s) => cocokSasaran(u, s.kelas)));
+      // Peserta = gabungan sasaran seluruh ujian; tanpa ujian → semua siswa.
+      const peserta =
+        daftar.length === 0
+          ? siswa.siswa
+          : siswa.siswa.filter((s) =>
+              daftar.some((u) => cocokSasaran(u, s.kelas)),
+            );
+      setCetakSiswa(peserta);
+      setCetakPeriode(periodeKegiatan(daftar));
       const peta = new Map<string, { ruang: string; noDuduk: number }>();
       for (const p of rs?.penempatan ?? []) {
         peta.set(p.nisn, { ruang: p.ruang_nama, noDuduk: p.kursi });
@@ -554,40 +595,44 @@ export function KelolaUjian() {
       toast.error(
         err instanceof Error ? err.message : "Gagal memuat data kartu ujian.",
       );
-      setCetakTarget(null);
+      setCetakBuka(false);
     } finally {
       setCetakMuat(false);
     }
   };
 
-  /** Isi satu kartu — menyertakan ruang & no. duduk bila penempatan ada. */
-  const kartuDari = (u: UjianGas, s: SiswaGas): IsiKartu => {
+  // Tombol "Cetak kartu ujian" dari menu Ruang ujian → pindah ke Kelola Ujian
+  // lalu langsung membuka dialog cetak.
+  useEffect(() => {
+    if (bukaCetakNonce > 0) void bukaCetak();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bukaCetakNonce]);
+
+  /** Isi satu kartu — kegiatan ujian (bukan judul mapel) + ruang & no. duduk. */
+  const kartuDari = (s: SiswaGas): IsiKartu => {
     const t = cetakTempat.get(s.nisn);
     return {
       nisn: s.nisn,
       nama: s.nama,
       kelas: s.kelas,
-      judul: u.judul,
-      jadwal: u.tgl_mulai
-        ? jadwalLabel(u.tgl_mulai)
-        : "Tanpa jadwal (langsung dibuka)",
-      durasi: u.durasi_menit,
+      kegiatan: cetakSet?.kegiatan?.trim() || "Ujian",
+      jadwal: cetakPeriode || undefined,
       ruang: t?.ruang,
       noDuduk: t?.noDuduk,
     };
   };
 
   const jalankanCetak = () => {
-    if (!cetakTarget || !cetakSet || !cetakSiswa || cetakSiswa.length === 0) return;
-    const kartu: IsiKartu[] = cetakSiswa.map((s) => kartuDari(cetakTarget, s));
+    if (!cetakSet || !cetakSiswa || cetakSiswa.length === 0) return;
+    const kartu: IsiKartu[] = cetakSiswa.map((s) => kartuDari(s));
     cetakKartu(cetakSet, kartu, cetakMode, (pesan) => toast.error(pesan));
+    // Selesai — tutup dialog, kembali ke halaman Kelola Ujian.
+    setCetakBuka(false);
   };
 
-  /** Kartu contoh untuk pratinjau (siswa pertama yang cocok sasaran). */
+  /** Kartu contoh untuk pratinjau (peserta pertama). */
   const contohKartu: IsiKartu | null =
-    cetakTarget && cetakSiswa && cetakSiswa.length > 0
-      ? kartuDari(cetakTarget, cetakSiswa[0])
-      : null;
+    cetakSiswa && cetakSiswa.length > 0 ? kartuDari(cetakSiswa[0]) : null;
 
   /** Berapa kartu peserta yang sudah punya ruang & no. duduk. */
   const jumlahBertempat =
@@ -620,13 +665,24 @@ export function KelolaUjian() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-extrabold tracking-tight">Kelola ujian</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {isAdmin
-            ? "Atur jadwal, token per mapel, kelas peserta, aktif/nonaktif & izin unduh ke siswa; token dibagikan ke pengawas ruang."
-            : "Susun soal, pilihan jawaban, dan kunci jawaban ujian yang sudah dibuat admin."}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-extrabold tracking-tight">Kelola ujian</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {isAdmin
+              ? "Atur jadwal, token per mapel, kelas peserta, aktif/nonaktif & izin unduh ke siswa; token dibagikan ke pengawas ruang."
+              : "Susun soal, pilihan jawaban, dan kunci jawaban ujian yang sudah dibuat admin."}
+          </p>
+        </div>
+        {isAdmin && (
+          <Button
+            className="gap-2 shrink-0"
+            onClick={() => void bukaCetak()}
+            title="Cetak kartu peserta per kegiatan ujian (UAS/PAS/PAT) — satu kartu untuk semua mapel."
+          >
+            <Printer className="size-4" /> Cetak kartu ujian
+          </Button>
+        )}
       </div>
 
       {/* Form ujian baru — ADMIN */}
@@ -894,14 +950,6 @@ export function KelolaUjian() {
                       >
                         <Trash2 className="size-4" /> Hapus ujian
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-2"
-                        onClick={() => void bukaCetak(u)}
-                      >
-                        <Printer className="size-4" /> Cetak kartu
-                      </Button>
                     </div>
                   ) : (
                     <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-muted-foreground">
@@ -998,18 +1046,20 @@ export function KelolaUjian() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Dialog cetak kartu ujian (ukuran KTP) */}
+      {/* Dialog cetak kartu — per KEGIATAN ujian, satu kartu untuk semua mapel */}
       <Dialog
-        open={cetakTarget !== null}
-        onOpenChange={(open) => !open && setCetakTarget(null)}
+        open={cetakBuka}
+        onOpenChange={(open) => !open && setCetakBuka(false)}
       >
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Cetak kartu ujian</DialogTitle>
             <DialogDescription>
-              "{cetakTarget?.judul}" — kartu ukuran KTP (85,6 × 54 mm) untuk {" "}
-              {cetakSiswa?.length ?? 0} siswa sesuai sasaran ujian, lengkap
-              dengan kop, logo & tanda tangan kepala madrasah.
+              Kegiatan <strong>{cetakSet?.kegiatan?.trim() || "— belum diatur —"}</strong>{" "}
+              — kartu ukuran KTP (85,6 × 54 mm) untuk {" "}
+              {cetakSiswa?.length ?? 0} peserta. Satu kartu dipakai untuk semua
+              mata ujian, lengkap dengan kop, logo & tanda tangan kepala
+              madrasah.
               {jumlahBertempat > 0
                 ? ` ${jumlahBertempat} kartu menyertakan ruang & no. duduk dari hasil penentuan ruang.`
                 : ""}
@@ -1037,6 +1087,18 @@ export function KelolaUjian() {
                   KTP — 1 kartu / halaman
                 </Button>
               </div>
+
+              {!cetakSet?.kegiatan?.trim() && (
+                <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-5 text-amber-800">
+                  <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+                  <span>
+                    Nama kegiatan ujian belum diatur — kartu akan tercetak
+                    dengan judul generik. Isi di menu <strong>Pengaturan</strong>{" "}
+                    → <strong>Kop, logo &amp; tanda tangan kartu ujian</strong>{" "}
+                    (mis. “UAS Ganjil 2025/2026”).
+                  </span>
+                </div>
+              )}
 
               {(!cetakSet.logo || !cetakSet.ttd || !cetakSet.kepala) && (
                 <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-5 text-amber-800">
@@ -1077,8 +1139,9 @@ export function KelolaUjian() {
                   </div>
                 ) : (
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Tidak ada siswa yang cocok dengan sasaran ujian ini —
-                    periksa Data Siswa atau sasaran ujian.
+                    Belum ada peserta yang bisa dicetak — isi <strong>Data
+                    Siswa</strong> dulu atau centang sasaran kelas pada salah
+                    satu ujian.
                   </p>
                 )}
               </div>
@@ -1087,7 +1150,7 @@ export function KelolaUjian() {
           )}
 
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setCetakTarget(null)}>
+            <Button variant="ghost" onClick={() => setCetakBuka(false)}>
               Tutup
             </Button>
             <Button
