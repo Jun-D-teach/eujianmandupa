@@ -358,8 +358,7 @@ const AKSES = [
     'getUjian' => 1, 'getSoalAdmin' => 1, 'getHasil' => 1, 'getSiswa' => 1,
     'getKelasList' => 1, 'tambahSiswa' => 1, 'ubahSiswa' => 1, 'hapusSiswa' => 1,
     'hapusSiswaMassal' => 1, 'importSiswa' => 1, 'buatAkunSiswa' => 1,
-    'buatUjian' => 1, 'aturUjian' => 1,
-    'setAktifUjian' => 1, 'setIzinUnduh' => 1, 'hapusUjian' => 1, 'konfirmasiUjian' => 1,
+    'konfirmasiUjian' => 1,
     'tambahSoal' => 1, 'ubahSoal' => 1, 'tambahSoalContoh' => 1, 'hapusSoal' => 1,
     'imporSoal' => 1,
     'getGuru' => 1, 'tambahGuru' => 1, 'ubahGuru' => 1, 'hapusGuru' => 1,
@@ -367,6 +366,11 @@ const AKSES = [
     'importGuru' => 1, 'buatAkunGuru' => 1,
     'simpanBacaan' => 1, 'hapusBacaan' => 1,
     'getKoreksi' => 1, 'getJawabanKoreksi' => 1, 'simpanKoreksi' => 1,
+
+    // Penugasan ujian (mapel + guru pembuat soal), jadwal, token & status:
+    // HANYA admin. Guru cuma boleh mengelola soal ujian yang ditugaskan padanya.
+    'buatUjian' => 2, 'aturUjian' => 2, 'setAktifUjian' => 2,
+    'setIzinUnduh' => 2, 'hapusUjian' => 2,
 
     'getPengaturan' => 2, 'aturPin' => 2, 'buatPengguna' => 2,
     'ubahPeran' => 2, 'getPengguna' => 2, 'ubahPasswordPengguna' => 2,
@@ -599,7 +603,9 @@ function jalankan(string $action, array $d): array
 function a_ping(): array
 {
     $r = satu('SELECT COUNT(*) AS n FROM pengguna');
-    return ['success' => true, 'siap' => (int) ($r['n'] ?? 0) > 0];
+    // 'versi' = penanda rilis: memudahkan memastikan berkas api/index.php di
+    // hosting memang sudah versi terbaru (buka ?action=ping).
+    return ['success' => true, 'siap' => (int) ($r['n'] ?? 0) > 0, 'versi' => 'penugasan-guru-2'];
 }
 
 function a_setupAdmin(array $d): array
@@ -1348,6 +1354,35 @@ function bolehUjian(?array $ujian, string $peran, string $pengguna): bool
     return $nip !== '' && $nip === strtolower(bersih($pengguna));
 }
 
+/** Cari guru di tabel guru menurut NIP (tanpa peduli huruf besar/kecil). */
+function cariGuruNip(string $nip): ?array
+{
+    $nip = bersih($nip);
+    if ($nip === '') return null;
+    return satu('SELECT nip, nama, mapel FROM guru WHERE LOWER(nip) = ? LIMIT 1', [strtolower($nip)]);
+}
+
+/**
+ * Validasi penugasan ujian: mapel + guru pembuat soal.
+ * Nama guru SELALU diambil dari tabel guru (bukan dari kiriman klien).
+ * @param bool $wajib true saat membuat ujian: mapel & guru harus terisi.
+ * @return array{mapel?:string, guru_nip?:string, guru_nama?:string, error?:string}
+ */
+function validasiPenugasan(array $d, bool $wajib): array
+{
+    $mapel = bersih($d['mapel'] ?? '');
+    $nip = bersih($d['guru_nip'] ?? '');
+    if ($nip === '') {
+        if ($wajib) return ['error' => 'Pilih guru pembuat soal untuk ujian ini.'];
+        return ['mapel' => $mapel, 'guru_nip' => '', 'guru_nama' => ''];
+    }
+    $g = cariGuruNip($nip);
+    if (!$g) return ['error' => 'Guru dengan NIP itu tidak ada di Data Guru.'];
+    if ($mapel === '') $mapel = bersih($g['mapel']);
+    if ($wajib && $mapel === '') return ['error' => 'Mata pelajaran wajib diisi.'];
+    return ['mapel' => $mapel, 'guru_nip' => (string) $g['nip'], 'guru_nama' => (string) $g['nama']];
+}
+
 /** Gerbang guard: kembalikan galat bila guru tidak berhak atas ujian ini. */
 function tolakBilaBukanMilik(array $d, string $ujianId, string $pesan = ''): ?array
 {
@@ -1446,6 +1481,8 @@ function a_buatUjian(array $d): array
     $sasar = validasiSasar($d['sasar_jenis'] ?? '', $d['sasar_nilai'] ?? '');
     if (isset($sasar['error'])) return galat($sasar['error']);
     $tgl = validasiTglMulai($d['tgl_mulai'] ?? '');
+    $tugas = validasiPenugasan($d, true);
+    if (isset($tugas['error'])) return galat($tugas['error']);
 
     $id = idBaru('u');
     jalan(
@@ -1460,9 +1497,9 @@ function a_buatUjian(array $d): array
             $tgl,
             $sasar['jenis'],
             $sasar['nilai'],
-            bersih($d['mapel'] ?? ''),
-            bersih($d['guru_nip'] ?? ''),
-            bersih($d['guru_nama'] ?? ''),
+            $tugas['mapel'],
+            $tugas['guru_nip'],
+            $tugas['guru_nama'],
         ]
     );
     return ['success' => true, 'id' => $id, 'token' => $token, 'message' => 'Ujian dibuat (masih draft).'];
@@ -1478,11 +1515,15 @@ function a_aturUjian(array $d): array
     if (isset($sasar['error'])) return galat($sasar['error']);
     $tgl = validasiTglMulai($d['tgl_mulai'] ?? '');
     $id = bersih($d['id'] ?? '');
+    if (!cariUjian($id)) return galat('Ujian tidak ditemukan.');
     if (array_key_exists('mapel', $d) || array_key_exists('guru_nip', $d)) {
-        // Admin mengubah mapel & guru penanggung jawab soal.
+        // Admin mengubah mapel & guru penanggung jawab soal. Divalidasi dulu
+        // (guru harus ada di Data Guru) sebelum ada yang disimpan.
+        $tugas = validasiPenugasan($d, false);
+        if (isset($tugas['error'])) return galat($tugas['error']);
         jalan(
             'UPDATE ujian SET mapel = ?, guru_nip = ?, guru_nama = ? WHERE id = ?',
-            [bersih($d['mapel'] ?? ''), bersih($d['guru_nip'] ?? ''), bersih($d['guru_nama'] ?? ''), $id]
+            [$tugas['mapel'], $tugas['guru_nip'], $tugas['guru_nama'], $id]
         );
     }
 

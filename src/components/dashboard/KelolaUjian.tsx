@@ -385,8 +385,7 @@ export function KelolaUjian() {
   const [tglMulai, setTglMulai] = useState("");
   const [sasarJenis, setSasarJenis] = useState<SasarJenis>("");
   const [sasarNilai, setSasarNilai] = useState("");
-  /** Penugasan per ujian (admin): mata pelajaran & guru penanggung jawab. */
-  const [mapel, setMapel] = useState("");
+  /** Penugasan per ujian (admin): guru penanggung jawab. Mata pelajaran = judul ujian. */
   const [guruNip, setGuruNip] = useState("");
   const [daftarGuru, setDaftarGuru] = useState<GuruGas[]>([]);
   const [busy, setBusy] = useState(false);
@@ -440,6 +439,10 @@ export function KelolaUjian() {
       toast.error("Judul ujian wajib diisi.");
       return;
     }
+    if (!guruNip) {
+      toast.error("Pilih guru pembuat soal untuk ujian ini.");
+      return;
+    }
     if (tokenBaru.trim() && !tokenValid(tokenBaru)) {
       toast.error("Token harus 4–12 huruf/angka tanpa spasi.");
       return;
@@ -459,7 +462,8 @@ export function KelolaUjian() {
         tgl_mulai: tglMulai,
         sasar_jenis: sasarJenis,
         sasar_nilai: sasarNilai,
-        mapel: mapel.trim(),
+        // Mata pelajaran = judul ujian (tidak diisi dua kali).
+        mapel: judul.trim(),
         guru_nip: guru?.nip ?? "",
         guru_nama: guru?.nama ?? "",
       });
@@ -470,7 +474,6 @@ export function KelolaUjian() {
       setTglMulai("");
       setSasarJenis("");
       setSasarNilai("");
-      setMapel("");
       setGuruNip("");
       segarkan();
       toast.success("Ujian dibuat (draft). Susun soal lalu aktifkan.");
@@ -712,38 +715,32 @@ export function KelolaUjian() {
                   Admin
                 </Badge>
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="mapel-baru">Mata pelajaran</Label>
-                <Input
-                  id="mapel-baru"
-                  value={mapel}
-                  onChange={(e) => setMapel(e.target.value)}
-                  placeholder="cth. Matematika"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="guru-baru">Guru pembuat soal</Label>
+              <div className="grid gap-2 sm:col-span-2">
+                <Label htmlFor="guru-baru">Guru pembuat soal *</Label>
                 <select
                   id="guru-baru"
                   value={guruNip}
-                  onChange={(e) => {
-                    setGuruNip(e.target.value);
-                    const g = daftarGuru.find((x) => x.nip === e.target.value);
-                    if (g?.mapel && !mapel.trim()) setMapel(g.mapel);
-                  }}
+                  onChange={(e) => setGuruNip(e.target.value)}
                   className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm outline-none transition-[color,box-shadow] focus:border-ring focus:ring-ring/50"
                 >
-                  <option value="">— belum ditugaskan —</option>
+                  <option value="">— pilih guru —</option>
                   {daftarGuru.map((g) => (
                     <option key={g.nip} value={g.nip}>
                       {g.nama} ({g.nip}){g.mapel ? ` · ${g.mapel}` : ""}
                     </option>
                   ))}
                 </select>
+                {daftarGuru.length === 0 && (
+                  <p className="text-[11px] leading-4 text-destructive">
+                    Belum ada guru terdaftar — tambahkan dulu di menu Data
+                    Guru, lalu buat akun gurunya.
+                  </p>
+                )}
               </div>
               <p className="text-xs leading-5 text-muted-foreground sm:col-span-2">
-                Guru yang ditugaskan hanya melihat & mengelola ujian ini —
-                daftar ujian guru otomatis terfilter sesuai penugasan.
+                Mata pelajaran mengikuti judul ujian di atas. Guru yang
+                ditugaskan hanya melihat & mengelola ujian ini — daftar ujian
+                guru otomatis terfilter sesuai penugasan.
               </p>
             </div>
 
@@ -794,11 +791,19 @@ export function KelolaUjian() {
                         : " · Tanpa jadwal (langsung dibuka)"}
                       {isAdmin && u.token ? ` · Token ${u.token}` : ""}
                     </span>
-                    {u.guru_nama && (
+                    {u.guru_nama ? (
                       <span className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-muted-foreground">
                         <GraduationCap className="size-3" /> {u.guru_nama}
                         {u.guru_nip ? ` (${u.guru_nip})` : ""}
                       </span>
+                    ) : (
+                      isAdmin && (
+                        <span className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-destructive">
+                          <GraduationCap className="size-3" /> Belum ada guru
+                          pembuat soal — ujian ini tidak tampil ke guru mana
+                          pun
+                        </span>
+                      )
                     )}
                   </span>
                   <span className="ml-auto flex items-center gap-2">
@@ -2230,7 +2235,8 @@ function PanelPengaturan(props: {
   const [tgl, setTgl] = useState(props.tglMulai);
   const [jenis, setJenis] = useState<SasarJenis>(props.sasarJenis);
   const [nilai, setNilai] = useState(props.sasarNilai);
-  const [mapel, setMapel] = useState(props.mapel);
+  // Mapel mengikuti judul ujian; nilai tersimpan dikirim apa adanya.
+  const [mapel] = useState(props.mapel);
   const [guruNip, setGuruNip] = useState(props.guruNip);
   const [busy, setBusy] = useState(false);
 
@@ -2316,17 +2322,6 @@ function PanelPengaturan(props: {
             max={600}
             value={nilaiDurasi}
             onChange={(e) => setNilaiDurasi(e.target.value)}
-          />
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor={`mapel-${props.ujianId}`} className="gap-1.5">
-            <GraduationCap className="size-3.5" /> Mata pelajaran
-          </Label>
-          <Input
-            id={`mapel-${props.ujianId}`}
-            value={mapel}
-            onChange={(e) => setMapel(e.target.value)}
-            placeholder="cth. Matematika"
           />
         </div>
         <div className="grid gap-2">
