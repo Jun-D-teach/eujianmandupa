@@ -273,7 +273,6 @@ function DialogKoreksi({
   const [skor, setSkor] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
 
-  // Muat soal non-PG (rubrik) + jawaban teks kiriman terpilih.
   useEffect(() => {
     if (!target) return;
     let hidup = true;
