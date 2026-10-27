@@ -32,11 +32,9 @@ export function HasilUjian() {
   const [pilih, setPilih] = useState<string | null>(null);
   const [hasil, setHasil] = useState<HasilGas[] | null>(null);
   const [versi, setVersi] = useState(0);
-  /** Buka layar koreksi manual untuk satu kiriman siswa — dideklarasikan
-   *  SEBELUM early-return skeleton agar jumlah hook selalu tetap. */
   const [koreksi, setKoreksi] = useState<HasilGas | null>(null);
 
-  // Muat daftar ujian (dengan token, untuk petugas).
+  // Muat daftar ujian
   useEffect(() => {
     let hidup = true;
     setUjian(null);
@@ -54,7 +52,7 @@ export function HasilUjian() {
     };
   }, [versi]);
 
-  // Muat hasil ujian terpilih.
+  // Muat hasil ujian terpilih
   useEffect(() => {
     if (!pilih) {
       setHasil(null);
@@ -256,7 +254,7 @@ export function HasilUjian() {
   );
 }
 
-/** Layar koreksi manual: skor 0–100 per soal essay/uraian, nilai dihitung ulang. */
+/** Layar koreksi manual */
 function DialogKoreksi({
   target,
   onTutup,
@@ -307,7 +305,6 @@ function DialogKoreksi({
 
   const simpan = async () => {
     if (!target) return;
-    // Hanya kirim skor untuk soal yang punya jawaban teks (yang bisa di-update).
     const muatan: Record<string, number> = {};
     for (const s of soal ?? []) {
       if (!(s.id in jawaban)) continue;
