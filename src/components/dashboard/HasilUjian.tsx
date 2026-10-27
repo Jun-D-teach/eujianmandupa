@@ -32,6 +32,9 @@ export function HasilUjian() {
   const [pilih, setPilih] = useState<string | null>(null);
   const [hasil, setHasil] = useState<HasilGas[] | null>(null);
   const [versi, setVersi] = useState(0);
+  /** Buka layar koreksi manual untuk satu kiriman siswa — dideklarasikan
+   *  SEBELUM early-return skeleton agar jumlah hook selalu tetap. */
+  const [koreksi, setKoreksi] = useState<HasilGas | null>(null);
 
   // Muat daftar ujian (dengan token, untuk petugas).
   useEffect(() => {
@@ -79,9 +82,6 @@ export function HasilUjian() {
       </div>
     );
   }
-
-  /** Buka layar koreksi manual untuk satu kiriman siswa. */
-  const [koreksi, setKoreksi] = useState<HasilGas | null>(null);
 
   return (
     <div className="space-y-6">
