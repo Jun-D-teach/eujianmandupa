@@ -374,7 +374,7 @@ const AKSES = [
 
     'getPengaturan' => 2, 'aturPin' => 2, 'buatPengguna' => 2,
     'ubahPeran' => 2, 'getPengguna' => 2, 'ubahPasswordPengguna' => 2,
-    'ubahPasswordMassal' => 2,
+    'ubahPasswordMassal' => 2, 'generatePasswordMassal' => 2,
     'getKartuSet' => 2, 'aturKartuSet' => 2,
 
     'getRuangSet' => 2, 'simpanRuang' => 2, 'hapusRuang' => 2,
@@ -586,6 +586,7 @@ function jalankan(string $action, array $d): array
         case 'ubahPeran': return a_ubahPeran($d);
         case 'ubahPasswordPengguna': return a_ubahPasswordPengguna($d);
         case 'ubahPasswordMassal': return a_ubahPasswordMassal($d);
+        case 'generatePasswordMassal': return a_generatePasswordMassal($d);
         case 'getGuru': return a_getGuru();
         case 'tambahGuru': return a_tambahGuru($d);
         case 'ubahGuru': return a_ubahGuru($d);
@@ -1193,6 +1194,60 @@ function a_ubahPasswordMassal(array $d): array
         'success' => true,
         'ubah' => $n,
         'message' => 'Password ' . $n . ' akun diperbarui.',
+    ];
+}
+
+/**
+ * Password ACak ramah-baca (8 karakter, tanpa 0/O/1/I/l yang gampang
+ * salah ketik) memakai random_int — aman dipakai untuk akun siswa.
+ */
+function passwordAcak(int $panjang = 8): string
+{
+    $huruf = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    $n = strlen($huruf);
+    $s = '';
+    for ($i = 0; $i < $panjang; $i++) {
+        $s .= $huruf[random_int(0, $n - 1)];
+    }
+    return $s;
+}
+
+/**
+ * Generate password ACak berbeda untuk tiap akun terpilih (admin).
+ * Mengembalikan daftar {id, username, nama, password} agar admin bisa
+ * mencatat/mendistribusikannya ke siswa (tombol Unduh CSV di aplikasi).
+ */
+function a_generatePasswordMassal(array $d): array
+{
+    $raw = is_array($d['ids'] ?? null) ? $d['ids'] : [];
+    $ids = [];
+    foreach ($raw as $id) {
+        $id = bersih($id);
+        if ($id !== '') $ids[$id] = true;
+    }
+    if (!$ids) return galat('Tidak ada akun yang dipilih.');
+
+    $hasil = [];
+    foreach (array_keys($ids) as $id) {
+        $u = satu('SELECT username, nama, role FROM pengguna WHERE id = ?', [$id]);
+        if (!$u) continue;
+        $pass = passwordAcak();
+        jalan('UPDATE pengguna SET password = ? WHERE id = ?', [$pass, $id]);
+        // Akun guru (username = NIP) — samakan password di tabel guru juga.
+        jalan('UPDATE guru SET password = ? WHERE nip = ?', [$pass, (string) $u['username']]);
+        $hasil[] = [
+            'id' => $id,
+            'username' => (string) $u['username'],
+            'nama' => bersih($u['nama']) !== '' ? bersih($u['nama']) : (string) $u['username'],
+            'password' => $pass,
+        ];
+    }
+    if (!$hasil) return galat('Pengguna tidak ditemukan.');
+    return [
+        'success' => true,
+        'ubah' => count($hasil),
+        'daftar' => $hasil,
+        'message' => 'Password ' . count($hasil) . ' akun diganti otomatis (acak).',
     ];
 }
 

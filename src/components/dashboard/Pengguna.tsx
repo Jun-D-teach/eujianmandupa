@@ -16,8 +16,16 @@ import {
 } from "@/components/ui/dialog";
 import { Empty, EmptyContent, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Download, KeyRound, ShieldCheck, UserPlus } from "lucide-react";
+import { Download, KeyRound, Shuffle, ShieldCheck, UserPlus } from "lucide-react";
 import { toast } from "sonner";
+
+/** Satu baris hasil generate password acak (untuk dialog hasil & CSV). */
+type HasilAcak = {
+  id: string;
+  username: string;
+  nama: string;
+  password: string;
+};
 
 const PERAN = [
   { nilai: "admin", label: "Admin", ket: "Kelola ujian, hasil, & pengguna" },
@@ -47,6 +55,9 @@ export function Pengguna() {
   const [massalBaru, setMassalBaru] = useState("");
   const [massalUlang, setMassalUlang] = useState("");
   const [busyMassal, setBusyMassal] = useState(false);
+  // Hasil generate password ACak — ditampilkan sekali lalu disebarkan admin.
+  const [hasilAcak, setHasilAcak] = useState<HasilAcak[] | null>(null);
+  const [busyAcak, setBusyAcak] = useState(false);
 
   const muat = () => {
     setDaftar(null);
@@ -156,6 +167,52 @@ export function Pengguna() {
     } finally {
       setBusyMassal(false);
     }
+  };
+
+  /** Ganti password terpilih jadi ACak — hasilnya dibuka agar bisa disebarkan. */
+  const generateAcak = async () => {
+    if (terpilih.size === 0) return;
+    setBusyAcak(true);
+    try {
+      const res = await gasCall<{
+        ubah?: number;
+        daftar?: HasilAcak[];
+        message?: string;
+      }>("generatePasswordMassal", { ids: Array.from(terpilih) });
+      setHasilAcak(res.daftar ?? []);
+      setTerpilih(new Set());
+      muat();
+      toast.success(
+        res.message || `${res.ubah ?? 0} password diganti otomatis (acak).`,
+      );
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Gagal generate password.",
+      );
+    } finally {
+      setBusyAcak(false);
+    }
+  };
+
+  /** Unduh hasil generate sebagai CSV (siap dibagikan ke siswa). */
+  const unduhHasilAcak = () => {
+    if (!hasilAcak || hasilAcak.length === 0) return;
+    const esc = (v: string) => '"' + (v ?? '').replace(/"/g, '""') + '"';
+    const csv =
+      "\uFEFF" +
+      [
+        "Username,Password,Nama",
+        ...hasilAcak.map((h) =>
+          [h.username, h.password, h.nama].map(esc).join(","),
+        ),
+      ].join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "password-acak.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`${hasilAcak.length} password diunduh ke password-acak.csv.`);
   };
 
   /** Unduh daftar akun sebagai CSV (pakai Excel/LibreOffice). */
@@ -326,6 +383,17 @@ export function Pengguna() {
               }}
             >
               <KeyRound className="size-4" /> Ubah password {terpilih.size} akun
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-2"
+              onClick={() => void generateAcak()}
+              disabled={busyAcak}
+              title="Ganti password akun terpilih jadi acak, beda tiap akun"
+            >
+              <Shuffle className="size-4" />
+              {busyAcak ? "Menggenerate…" : `Generate acak ${terpilih.size} akun`}
             </Button>
           </div>
         </div>
@@ -559,6 +627,60 @@ export function Pengguna() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog hasil generate password acak (siap disebarkan ke siswa) */}
+      <Dialog
+        open={hasilAcak !== null}
+        onOpenChange={(open) => !open && setHasilAcak(null)}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Password acak berhasil dibuat</DialogTitle>
+            <DialogDescription>
+              {hasilAcak?.length ?? 0} akun kini punya password baru yang beda
+              tiap akun. Catat atau unduh CSV lalu bagikan ke pemilik akunnya.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-72 overflow-y-auto rounded-xl border border-border/70">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-muted/80 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2">Nama</th>
+                  <th className="px-3 py-2">Username</th>
+                  <th className="px-3 py-2 text-right">Password baru</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/60">
+                {(hasilAcak ?? []).map((h) => (
+                  <tr key={h.id}>
+                    <td className="px-3 py-2 font-semibold">{h.nama}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                      {h.username}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono font-bold">
+                      {h.password}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              onClick={unduhHasilAcak}
+              disabled={(hasilAcak ?? []).length === 0}
+            >
+              <Download className="size-4" /> Unduh CSV
+            </Button>
+            <Button type="button" onClick={() => setHasilAcak(null)}>
+              Selesai
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
