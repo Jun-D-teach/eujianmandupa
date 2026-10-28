@@ -374,6 +374,7 @@ const AKSES = [
 
     'getPengaturan' => 2, 'aturPin' => 2, 'buatPengguna' => 2,
     'ubahPeran' => 2, 'getPengguna' => 2, 'ubahPasswordPengguna' => 2,
+    'ubahPasswordMassal' => 2,
     'getKartuSet' => 2, 'aturKartuSet' => 2,
 
     'getRuangSet' => 2, 'simpanRuang' => 2, 'hapusRuang' => 2,
@@ -584,6 +585,7 @@ function jalankan(string $action, array $d): array
         case 'buatPengguna': return a_buatPengguna($d);
         case 'ubahPeran': return a_ubahPeran($d);
         case 'ubahPasswordPengguna': return a_ubahPasswordPengguna($d);
+        case 'ubahPasswordMassal': return a_ubahPasswordMassal($d);
         case 'getGuru': return a_getGuru();
         case 'tambahGuru': return a_tambahGuru($d);
         case 'ubahGuru': return a_ubahGuru($d);
@@ -1159,6 +1161,39 @@ function a_ubahPasswordPengguna(array $d): array
     jalan('UPDATE guru SET password = ? WHERE nip = ?', [$pass, (string) $u['username']]);
     $nama = bersih($u['nama']) !== '' ? bersih($u['nama']) : (string) $u['username'];
     return ['success' => true, 'message' => 'Password ' . $nama . ' (username ' . $u['username'] . ') diperbarui.'];
+}
+
+/**
+ * Ganti password MASSAL untuk daftar akun (admin) — dipakai kotak centang
+ * pada menu Pengguna: satu password seragam untuk semua akun terpilih.
+ */
+function a_ubahPasswordMassal(array $d): array
+{
+    $pass = bersih($d['password'] ?? '');
+    if (strlen($pass) < 4) return galat('Password minimal 4 karakter.');
+
+    $raw = is_array($d['ids'] ?? null) ? $d['ids'] : [];
+    $ids = [];
+    foreach ($raw as $id) {
+        $id = bersih($id);
+        if ($id !== '') $ids[$id] = true;
+    }
+    if (!$ids) return galat('Tidak ada akun yang dipilih.');
+
+    $n = 0;
+    foreach (array_keys($ids) as $id) {
+        $u = satu('SELECT username FROM pengguna WHERE id = ?', [$id]);
+        if (!$u) continue;
+        $n += jalan('UPDATE pengguna SET password = ? WHERE id = ?', [$pass, $id]);
+        // Akun guru (username = NIP) — samakan password di tabel guru juga.
+        jalan('UPDATE guru SET password = ? WHERE nip = ?', [$pass, (string) $u['username']]);
+    }
+    if ($n === 0) return galat('Pengguna tidak ditemukan.');
+    return [
+        'success' => true,
+        'ubah' => $n,
+        'message' => 'Password ' . $n . ' akun diperbarui.',
+    ];
 }
 
 /** Impor massal guru: rows = [[nip, nama, mapel, password?], ...] */

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -40,6 +41,12 @@ export function Pengguna() {
   const [passBaru, setPassBaru] = useState("");
   const [passUlang, setPassUlang] = useState("");
   const [busyPass, setBusyPass] = useState(false);
+  // Ubah password MASSAL — akun yang dicentang di tabel dapat password seragam.
+  const [terpilih, setTerpilih] = useState<Set<string>>(new Set());
+  const [bukaPassMassal, setBukaPassMassal] = useState(false);
+  const [massalBaru, setMassalBaru] = useState("");
+  const [massalUlang, setMassalUlang] = useState("");
+  const [busyMassal, setBusyMassal] = useState(false);
 
   const muat = () => {
     setDaftar(null);
@@ -120,6 +127,37 @@ export function Pengguna() {
     }
   };
 
+  /** Ganti password seragam untuk semua akun yang dicentang. */
+  const simpanPassMassal = async () => {
+    if (terpilih.size === 0) return;
+    if (massalBaru.length < 4) {
+      toast.error("Password minimal 4 karakter.");
+      return;
+    }
+    if (massalBaru !== massalUlang) {
+      toast.error("Password dan ulangan tidak sama.");
+      return;
+    }
+    setBusyMassal(true);
+    try {
+      const res = await gasCall<{ ubah?: number; message?: string }>(
+        "ubahPasswordMassal",
+        { ids: Array.from(terpilih), password: massalBaru },
+      );
+      const n = res.ubah ?? terpilih.size;
+      setBukaPassMassal(false);
+      setMassalBaru("");
+      setMassalUlang("");
+      setTerpilih(new Set());
+      muat();
+      toast.success(res.message || `Password ${n} akun diperbarui.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal mengubah password.");
+    } finally {
+      setBusyMassal(false);
+    }
+  };
+
   /** Unduh daftar akun sebagai CSV (pakai Excel/LibreOffice). */
   const unduhCsv = () => {
     if (!daftar || daftar.length === 0) return;
@@ -149,6 +187,30 @@ export function Pengguna() {
       </div>
     );
   }
+
+  /* Kotak centang: pilih banyak → ubah password massal */
+  const semuaTerpilih =
+    daftar.length > 0 && daftar.every((u) => terpilih.has(u.id));
+  const sebagianTerpilih =
+    !semuaTerpilih && daftar.some((u) => terpilih.has(u.id));
+
+  const toggleSemua = () =>
+    setTerpilih((lama) => {
+      const baru = new Set(lama);
+      for (const u of daftar) {
+        if (semuaTerpilih) baru.delete(u.id);
+        else baru.add(u.id);
+      }
+      return baru;
+    });
+
+  const togglePilih = (id: string) =>
+    setTerpilih((lama) => {
+      const baru = new Set(lama);
+      if (baru.has(id)) baru.delete(id);
+      else baru.add(id);
+      return baru;
+    });
 
   return (
     <div className="space-y-6">
@@ -239,6 +301,36 @@ export function Pengguna() {
         </form>
       </Card>
 
+      {/* Bar aksi massal — muncul saat ada kotak centang terpilih */}
+      {terpilih.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-ink/20 bg-ink/5 px-4 py-3">
+          <p className="text-sm font-semibold">
+            {terpilih.size} pengguna dipilih
+            {terpilih.size === daftar.length ? " (seluruh daftar)" : ""}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTerpilih(new Set())}
+            >
+              Batalkan pilihan
+            </Button>
+            <Button
+              size="sm"
+              className="gap-2"
+              onClick={() => {
+                setMassalBaru("");
+                setMassalUlang("");
+                setBukaPassMassal(true);
+              }}
+            >
+              <KeyRound className="size-4" /> Ubah password {terpilih.size} akun
+            </Button>
+          </div>
+        </div>
+      )}
+
       <Card className="overflow-hidden border-border/70">
         {daftar.length === 0 ? (
           <Empty className="py-14">
@@ -251,9 +343,22 @@ export function Pengguna() {
           </Empty>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm">
+            <table className="w-full min-w-[700px] text-sm">
               <thead className="bg-muted/60 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 <tr>
+                  <th className="w-10 px-5 py-3">
+                    <Checkbox
+                      checked={
+                        semuaTerpilih
+                          ? true
+                          : sebagianTerpilih
+                            ? "indeterminate"
+                            : false
+                      }
+                      onCheckedChange={toggleSemua}
+                      aria-label="Pilih semua pengguna pada daftar ini"
+                    />
+                  </th>
                   <th className="px-5 py-3">Nama</th>
                   <th className="px-5 py-3">Username</th>
                   <th className="px-5 py-3">Kelas</th>
@@ -263,6 +368,13 @@ export function Pengguna() {
               <tbody className="divide-y divide-border/60">
                 {daftar.map((u) => (
                   <tr key={u.id} className="transition-colors hover:bg-muted/40">
+                    <td className="px-5 py-3.5">
+                      <Checkbox
+                        checked={terpilih.has(u.id)}
+                        onCheckedChange={() => togglePilih(u.id)}
+                        aria-label={`Pilih ${u.nama || u.username}`}
+                      />
+                    </td>
                     <td className="px-5 py-3.5">
                       <span className="flex items-center gap-2 font-semibold">
                         <span className="flex size-8 items-center justify-center rounded-full bg-accent text-xs font-bold text-accent-foreground">
@@ -382,6 +494,68 @@ export function Pengguna() {
               </Button>
               <Button type="submit" disabled={busyPass}>
                 {busyPass ? "Menyimpan…" : "Simpan password"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog ganti password MASSAL untuk akun yang dicentang */}
+      <Dialog
+        open={bukaPassMassal}
+        onOpenChange={(open) => !open && setBukaPassMassal(false)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Ubah password {terpilih.size} akun</DialogTitle>
+            <DialogDescription>
+              Password baru dipakai seragam untuk semua akun yang dicentang
+              pada tabel. Beri tahu pengguna setelah disimpan.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void simpanPassMassal();
+            }}
+            className="grid gap-4"
+          >
+            <div className="grid gap-2">
+              <Label htmlFor="pg-massal-baru">Password baru *</Label>
+              <Input
+                id="pg-massal-baru"
+                type="password"
+                value={massalBaru}
+                onChange={(e) => setMassalBaru(e.target.value)}
+                placeholder="minimal 4 karakter"
+                autoComplete="new-password"
+                required
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="pg-massal-ulang">Ulangi password *</Label>
+              <Input
+                id="pg-massal-ulang"
+                type="password"
+                value={massalUlang}
+                onChange={(e) => setMassalUlang(e.target.value)}
+                placeholder="ketik ulang password baru"
+                autoComplete="new-password"
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setBukaPassMassal(false)}
+              >
+                Batal
+              </Button>
+              <Button type="submit" disabled={busyMassal}>
+                {busyMassal
+                  ? "Menyimpan…"
+                  : `Simpan ${terpilih.size} password`}
               </Button>
             </DialogFooter>
           </form>
