@@ -39,6 +39,10 @@ export type IsiKartu = {
   ruang?: string;
   /** Nomor tempat duduk peserta pada ruang tersebut. */
   noDuduk?: number;
+  /** Username login siswa — dicetak bila akunnya sudah dibuat admin. */
+  username?: string;
+  /** Password login siswa — dicetak bila akunnya sudah dibuat admin. */
+  password?: string;
 };
 
 export type CetakMode = "A4" | "KTP";
@@ -226,6 +230,9 @@ export function kartuHTML(set: SetKartu, k: IsiKartu): string {
   const barisKursi = k.noDuduk
     ? baris("No. duduk", String(k.noDuduk))
     : "";
+  // Akun login — hanya dicetak bila tersedia (kartu tetap rapi tingginya).
+  const barisUser = k.username ? baris("Username", k.username) : "";
+  const barisPass = k.password ? baris("Password", k.password) : "";
 
   return `
 <div class="kartu">
@@ -249,7 +256,8 @@ export function kartuHTML(set: SetKartu, k: IsiKartu): string {
       <table class="data ujian">
         ${baris("Kegiatan", k.kegiatan || set.kegiatan || "Ujian")}
         ${baris("Jadwal", k.jadwal || "—")}
-        ${baris("Berlaku", "Seluruh mata ujian")}
+        ${barisUser}
+        ${barisPass}
       </table>
       <div class="ttd">
         <div class="ttd-kota">${esc(set.kota)}, ${tanggalPanjang()}</div>

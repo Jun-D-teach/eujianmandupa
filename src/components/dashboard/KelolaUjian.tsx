@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { gasCall, tokenValid, type BacaanGas, type GuruGas, type RuangSetGas, type SoalGas, type SiswaGas, type UjianGas } from "@/lib/api";
+import { gasCall, tokenValid, type BacaanGas, type GuruGas, type PenggunaGas, type RuangSetGas, type SoalGas, type SiswaGas, type UjianGas } from "@/lib/api";
 import {
   cetakKartu,
   cocokSasaran,
@@ -428,6 +428,11 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
   >(new Map());
   const [cetakMode, setCetakMode] = useState<CetakMode>("A4");
   const [cetakMuat, setCetakMuat] = useState(false);
+  /** Peta akun login peserta (username & password) untuk dicetak di kartu —
+   *  kunci "u:<nisn>" lalu cadangan "n:<NAMA|KELAS>". */
+  const [cetakAkun, setCetakAkun] = useState<
+    Map<string, { username: string; password: string }>
+  >(new Map());
 
   useEffect(() => {
     let hidup = true;
@@ -567,13 +572,17 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
     setCetakSiswa(null);
     setCetakPeriode("");
     setCetakTempat(new Map());
+    setCetakAkun(new Map());
     setCetakMuat(true);
     try {
-      const [set, siswa, rs, daftarUjian] = await Promise.all([
+      const [set, siswa, rs, daftarUjian, pg] = await Promise.all([
         gasCall<SetKartu>("getKartuSet"),
         gasCall<{ siswa: SiswaGas[] }>("getSiswa"),
         gasCall<RuangSetGas>("getRuangSet").catch(() => null),
         gasCall<{ ujian: UjianGas[] }>("getUjian"),
+        // Akun login (admin-only) — bila gagal, kartu tetap tercetak tanpa
+        // kolom username & password.
+        gasCall<{ pengguna: PenggunaGas[] }>("getPengguna").catch(() => null),
       ]);
       const daftar = daftarUjian.ujian ?? [];
       setCetakSet(set);
@@ -591,6 +600,22 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
         peta.set(p.nisn, { ruang: p.ruang_nama, noDuduk: p.kursi });
       }
       setCetakTempat(peta);
+
+      // Peta akun login → username (umumnya = NISN), cadangan nama+kelas.
+      const akun = new Map<string, { username: string; password: string }>();
+      for (const p of pg?.pengguna ?? []) {
+        const info = { username: p.username, password: p.password ?? "" };
+        if (p.username) akun.set(`u:${p.username}`, info);
+        const nama = (p.nama ?? "").trim().toUpperCase();
+        if (nama && p.role === "siswa") {
+          const kelas = (p.kelas ?? "").trim().toUpperCase();
+          const kKelas = `n:${nama}|${kelas}`;
+          const kNama = `n:${nama}`;
+          if (!akun.has(kKelas)) akun.set(kKelas, info);
+          if (!akun.has(kNama)) akun.set(kNama, info);
+        }
+      }
+      setCetakAkun(akun);
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Gagal memuat data kartu ujian.",
@@ -608,9 +633,16 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bukaCetakNonce]);
 
-  /** Isi satu kartu — kegiatan ujian (bukan judul mapel) + ruang & no. duduk. */
+  /** Isi satu kartu — kegiatan ujian (bukan judul mapel) + ruang & no. duduk
+   *  + akun login (username & password) bila akun siswa sudah dibuat. */
   const kartuDari = (s: SiswaGas): IsiKartu => {
     const t = cetakTempat.get(s.nisn);
+    const akun =
+      cetakAkun.get(`u:${s.nisn}`) ??
+      cetakAkun.get(
+        `n:${(s.nama ?? "").trim().toUpperCase()}|${(s.kelas ?? "").trim().toUpperCase()}`,
+      ) ??
+      cetakAkun.get(`n:${(s.nama ?? "").trim().toUpperCase()}`);
     return {
       nisn: s.nisn,
       nama: s.nama,
@@ -619,6 +651,8 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
       jadwal: cetakPeriode || undefined,
       ruang: t?.ruang,
       noDuduk: t?.noDuduk,
+      username: akun?.username || undefined,
+      password: akun?.password || undefined,
     };
   };
 
@@ -638,6 +672,12 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
   const jumlahBertempat =
     cetakSiswa && cetakSiswa.length > 0
       ? cetakSiswa.filter((s) => cetakTempat.has(s.nisn)).length
+      : 0;
+
+  /** Berapa peserta yang kartunya ikut menyertakan username & password login. */
+  const jumlahAkun =
+    cetakSiswa && cetakSiswa.length > 0
+      ? cetakSiswa.filter((s) => kartuDari(s).username).length
       : 0;
 
   const konfirmasiHapus = async () => {
@@ -1062,6 +1102,9 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
               madrasah.
               {jumlahBertempat > 0
                 ? ` ${jumlahBertempat} kartu menyertakan ruang & no. duduk dari hasil penentuan ruang.`
+                : ""}
+              {jumlahAkun > 0
+                ? ` ${jumlahAkun} kartu menyertakan username & password login siswa.`
                 : ""}
             </DialogDescription>
           </DialogHeader>
