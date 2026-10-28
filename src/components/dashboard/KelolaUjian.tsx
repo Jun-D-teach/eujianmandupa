@@ -1172,16 +1172,19 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
                 <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-5 text-amber-800">
                   <TriangleAlert className="mt-0.5 size-4 shrink-0" />
                   <span>
-                    <strong>{jumlahTanpaPass} kartu belum menampilkan
-                    password.</strong> Kemungkinan (1) akun di menu{" "}
+                    <strong>
+                      {jumlahTanpaPass} dari {cetakSiswa?.length ?? 0} kartu
+                      menampilkan password "{`(belum tercatat)`}".
+                    </strong>{" "}
+                    Username terbaca pada {jumlahAkun} kartu — jadi data akun
+                    sampai ke aplikasi, hanya kolom <code className="rounded bg-amber-100/70 px-1">password</code>{" "}
+                    yang kosong dari server. Penyebabnya (1) akun di menu{" "}
                     <strong>Pengguna</strong> belum punya password tercatat, atau
-                    (2) <code className="rounded bg-amber-100/70 px-1">
-                      api/index.php
-                    </code>{" "}
-                    di server ini masih versi lama sehingga kolom password tidak
-                    dikirim. Cek cepat: menu <strong>Pengguna</strong> →{" "}
-                    <strong>Unduh CSV akun</strong> — kolom password kosong
-                    berarti penyebabnya di sana.
+                    (2) <code className="rounded bg-amber-100/70 px-1">api/index.php</code>{" "}
+                    di server ini masih versi lama. Cek cepat: menu{" "}
+                    <strong>Pengguna</strong> → <strong>Unduh CSV akun</strong> —
+                    bila kolom password kosong di sana, penyebabnya backend/DB
+                    server ini, bukan kartu.
                   </span>
                 </div>
               )}

@@ -230,9 +230,13 @@ export function kartuHTML(set: SetKartu, k: IsiKartu): string {
   const barisKursi = k.noDuduk
     ? baris("No. duduk", String(k.noDuduk))
     : "";
-  // Akun login — hanya dicetak bila tersedia (kartu tetap rapi tingginya).
+  // Akun login — Username dicetak bila akun terbaca; Password tetap dicetak
+  // (meski kosong) dengan keterangan "(belum tercatat)" supaya kekurangan
+  // data ketahuan SEBELUM kartu dicetak, bukan senyap-nyap hilang.
   const barisUser = k.username ? baris("Username", k.username) : "";
-  const barisPass = k.password ? baris("Password", k.password) : "";
+  const barisPass = k.username
+    ? baris("Password", k.password || "(belum tercatat)")
+    : "";
 
   return `
 <div class="kartu">
