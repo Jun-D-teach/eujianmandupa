@@ -680,6 +680,13 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
       ? cetakSiswa.filter((s) => kartuDari(s).username).length
       : 0;
 
+  /** Berapa peserta yang kartunya BELUM menampilkan password (akun tanpa
+   *  password tercatat / backend belum mengirim kolom password). */
+  const jumlahTanpaPass =
+    cetakSiswa && cetakSiswa.length > 0
+      ? cetakSiswa.filter((s) => !kartuDari(s).password).length
+      : 0;
+
   const konfirmasiHapus = async () => {
     if (!hapusTarget) return;
     try {
@@ -1157,6 +1164,24 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
                       .join(", ")}
                     ). Lengkapi di menu <strong>Pengaturan</strong> agar kartu
                     tampil sempurna.
+                  </span>
+                </div>
+              )}
+
+              {jumlahTanpaPass > 0 && (
+                <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-5 text-amber-800">
+                  <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+                  <span>
+                    <strong>{jumlahTanpaPass} kartu belum menampilkan
+                    password.</strong> Kemungkinan (1) akun di menu{" "}
+                    <strong>Pengguna</strong> belum punya password tercatat, atau
+                    (2) <code className="rounded bg-amber-100/70 px-1">
+                      api/index.php
+                    </code>{" "}
+                    di server ini masih versi lama sehingga kolom password tidak
+                    dikirim. Cek cepat: menu <strong>Pengguna</strong> →{" "}
+                    <strong>Unduh CSV akun</strong> — kolom password kosong
+                    berarti penyebabnya di sana.
                   </span>
                 </div>
               )}
