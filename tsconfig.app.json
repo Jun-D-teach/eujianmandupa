@@ -28,5 +28,10 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src", "vly-toolbar-readonly.tsx"]
+  "include": ["src", "vly-toolbar-readonly.tsx"],
+  /* src/convex adalah sisa template Convex — tidak diimpor satu pun kode
+     aplikasi (backend-nya api/index.php), dan folder hasil codegen
+     src/convex/_generated masuk .gitignore sehingga tidak ikut ter-clone.
+     Dikecualikan agar `npm run build` lolos di clone baru. */
+  "exclude": ["src/convex"]
 }
