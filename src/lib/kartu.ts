@@ -175,7 +175,7 @@ export function gayaKartu(): string {
   page-break-inside: avoid; break-inside: avoid;
 }
 .kop { display: flex; align-items: center; gap: 1.8mm;
-  padding: 1.6mm 2.5mm; border-bottom: 0.35mm solid #14171c; }
+  padding: 1.2mm 2.5mm; border-bottom: 0.35mm solid #14171c; }
 .kop .logo { width: 9.5mm; height: 9.5mm; object-fit: contain; flex: none; }
 .kop-teks { flex: 1; min-width: 0; text-align: center; line-height: 1.2; }
 .kop-nama { font-size: 8pt; font-weight: 800; text-transform: uppercase;
@@ -185,12 +185,15 @@ export function gayaKartu(): string {
   text-overflow: ellipsis; white-space: nowrap; }
 .kop-judul { background: #14171c; color: #fff; text-align: center;
   font-size: 6.6pt; font-weight: 800; letter-spacing: 0.35em;
-  text-indent: 0.35em; padding: 0.9mm 0 0.7mm; }
+  text-indent: 0.35em; padding: 0.7mm 0 0.5mm; }
 .isi { flex: 1; min-height: 0; display: flex; flex-direction: column;
-  gap: 1.2mm; padding: 1.6mm 2.5mm 1.4mm; }
-table.data { border-collapse: collapse; width: 100%; font-size: 6pt;
-  line-height: 1.45; }
-table.data td { padding: 0.15mm 0; vertical-align: top; }
+  gap: 0.8mm; padding: 1.2mm 2.5mm 1.1mm; }
+/* Tinggi baris ditekan (5.6pt / leading 1.35) supaya 5 baris data + blok
+   bawah + tanda tangan tetap muat dalam tinggi kartu 54 mm — kalau tidak,
+   baris terbawah (Password) terpotong di tepi kartu. */
+table.data { border-collapse: collapse; width: 100%; font-size: 5.6pt;
+  line-height: 1.35; }
+table.data td { padding: 0.12mm 0; vertical-align: top; }
 table.data td.lbl { width: 13mm; color: #444; }
 table.data td.dot { width: 1.6mm; }
 table.data td.val { font-weight: 600; }
@@ -200,9 +203,9 @@ table.ujian { width: auto; max-width: 45mm; table-layout: fixed; }
 .ttd { flex: none; width: 34mm; text-align: center; font-size: 5.2pt;
   line-height: 1.3; }
 .ttd-jabatan { font-weight: 700; }
-.ttd-foto { height: 9mm; display: flex; align-items: center;
+.ttd-foto { height: 7.5mm; display: flex; align-items: center;
   justify-content: center; }
-.ttd-foto img { max-height: 9mm; max-width: 30mm; object-fit: contain; }
+.ttd-foto img { max-height: 7.5mm; max-width: 30mm; object-fit: contain; }
 .ttd-nama { font-weight: 700; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 .ttd-nip { color: #333; }
