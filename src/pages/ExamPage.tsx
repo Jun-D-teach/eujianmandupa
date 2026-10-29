@@ -43,7 +43,6 @@ import {
   ArrowLeft,
   Clock,
   Lock,
-  ShieldAlert,
   Siren,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -869,9 +868,11 @@ export default function ExamPage() {
                 <ArrowLeft className="size-4" /> Beranda
               </Button>
             ) : (
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-ink text-white">
-                <ShieldAlert className="size-4" />
-              </span>
+              <img
+                src="./logo-sekolah.png"
+                alt="MAN 2 Palembang"
+                className="size-7 shrink-0 rounded-lg bg-white object-contain"
+              />
             )}
             <span className="truncate text-sm font-bold tracking-tight">
               {sesi?.judul ?? meta?.judul ?? "Ujian"}

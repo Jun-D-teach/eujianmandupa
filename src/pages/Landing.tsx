@@ -10,14 +10,12 @@ import {
   GraduationCap,
   Lock,
   Power,
-  ShieldAlert,
   Siren,
   Smartphone,
   Upload,
   Users,
   WifiOff,
 } from "lucide-react";
-import logo from "@/assets/logo.svg";
 
 const easeOut: [number, number, number, number] = [0.22, 1, 0.36, 1];
 
@@ -46,9 +44,11 @@ function Reveal({
 function Logo({ className = "" }: { className?: string }) {
   return (
     <span className={`flex items-center gap-2.5 ${className}`}>
-      <span className="flex size-8 items-center justify-center rounded-lg bg-ink text-white">
-        <ShieldAlert className="size-4" />
-      </span>
+      <img
+        src="./logo-sekolah.png"
+        alt="MAN 2 Palembang"
+        className="size-8 rounded-lg bg-white object-contain"
+      />
       <span className="text-[15px] font-bold tracking-tight">UjianAman</span>
     </span>
   );
@@ -592,7 +592,11 @@ export default function Landing() {
       <footer className="border-t border-border/70 px-5 py-10">
         <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-4 sm:flex-row">
           <span className="flex items-center gap-2.5">
-            <img src={logo} alt="UjianAman" className="size-7 rounded-md" />
+            <img
+              src="./logo-sekolah.png"
+              alt="MAN 2 Palembang"
+              className="size-7 rounded-md bg-white object-contain"
+            />
             <span className="text-sm font-bold tracking-tight">UjianAman</span>
           </span>
           <p className="text-xs text-muted-foreground">

@@ -100,9 +100,11 @@ export default function Dashboard() {
             onClick={() => navigate("/")}
             className="flex items-center gap-2.5"
           >
-            <span className="flex size-8 items-center justify-center rounded-lg bg-ink text-white">
-              <ShieldCheck className="size-4" />
-            </span>
+            <img
+              src="./logo-sekolah.png"
+              alt="MAN 2 Palembang"
+              className="size-8 rounded-lg bg-white object-contain"
+            />
             <span className="hidden text-[15px] font-bold tracking-tight sm:block">
               UjianAman
             </span>

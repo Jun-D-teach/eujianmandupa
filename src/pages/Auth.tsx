@@ -15,7 +15,6 @@ import {
   simpanUser,
   type UserGas,
 } from "@/lib/api";
-import logo from "@/assets/logo.svg";
 import { ArrowRight, Loader2, Lock, Server, ShieldCheck } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
@@ -137,11 +136,11 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
           <CardHeader className="text-center">
             <div className="flex justify-center">
               <img
-                src={logo}
-                alt="UjianAman"
+                src="./logo-sekolah.png"
+                alt="MAN 2 Palembang"
                 width={56}
                 height={56}
-                className="mb-3 mt-3 cursor-pointer rounded-lg"
+                className="mb-3 mt-3 cursor-pointer rounded-lg bg-white object-contain"
                 onClick={() => navigate("/")}
               />
             </div>
