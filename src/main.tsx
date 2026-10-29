@@ -8,6 +8,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router";
 import "./index.css";
 import { registerServiceWorker } from "./lib/pwa";
+import { InstallPwa } from "./components/InstallPwa";
 // ExamPage diimpor STATIS (bukan lazy) — kode ujian harus sudah ikut terbaca
 // begitu shell aplikasi terbuka, supaya tombol "Kerjakan" tetap jalan saat
 // internet dimatikan. Lazy import = fetch chunk = gagal saat offline.
@@ -201,6 +202,7 @@ createRoot(document.getElementById("root")!).render(
           </Suspense>
         </BrowserRouter>
         <Toaster />
+        <InstallPwa />
       </AuthProvider>
     </RootErrorBoundary>
   </StrictMode>,
