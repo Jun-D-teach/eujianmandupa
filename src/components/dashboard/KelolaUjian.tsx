@@ -395,6 +395,14 @@ function PemilihSasaran(props: {
   );
 }
 
+/**
+ * Kunci pencocokan akun login — NISN/username/nama dinormalisasi (trim +
+ * huruf besar) supaya username yang ditulis huruf kecil atau punya spasi di
+ * tepi tetap cocok dengan data siswa. Dipakai saat MEMBUAT peta dan saat
+ * MENCARI, jadi kedua sisi selalu memakai kunci yang sama.
+ */
+const kunciAkun = (v: string): string => String(v ?? "").trim().toUpperCase();
+
 /** Kelola ujian: buat, aktifkan, susun soal, hapus. (guru & admin) */
 export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } = {}) {
   const { user } = useAuth();
@@ -602,17 +610,23 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
       setCetakTempat(peta);
 
       // Peta akun login → username (umumnya = NISN), cadangan nama+kelas.
+      // Kunci dinormalisasi (lihat kunciAkun) dan BILA ADA AKUN GANDA, akun
+      // yang punya password yang menang — kartu tidak boleh mencetak akun
+      // kosong padahal menu Pengguna/CSV menampilkan password-nya.
       const akun = new Map<string, { username: string; password: string }>();
+      const isi = (kunci: string, info: { username: string; password: string }) => {
+        const lama = akun.get(kunci);
+        if (!lama || (lama.password === "" && info.password !== "")) {
+          akun.set(kunci, info);
+        }
+      };
       for (const p of pg?.pengguna ?? []) {
-        const info = { username: p.username, password: p.password ?? "" };
-        if (p.username) akun.set(`u:${p.username}`, info);
-        const nama = (p.nama ?? "").trim().toUpperCase();
+        const info = { username: p.username ?? "", password: p.password ?? "" };
+        if (info.username) isi(`u:${kunciAkun(info.username)}`, info);
+        const nama = kunciAkun(p.nama ?? "");
         if (nama && p.role === "siswa") {
-          const kelas = (p.kelas ?? "").trim().toUpperCase();
-          const kKelas = `n:${nama}|${kelas}`;
-          const kNama = `n:${nama}`;
-          if (!akun.has(kKelas)) akun.set(kKelas, info);
-          if (!akun.has(kNama)) akun.set(kNama, info);
+          isi(`n:${nama}|${kunciAkun(p.kelas ?? "")}`, info);
+          isi(`n:${nama}`, info);
         }
       }
       setCetakAkun(akun);
@@ -638,11 +652,9 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
   const kartuDari = (s: SiswaGas): IsiKartu => {
     const t = cetakTempat.get(s.nisn);
     const akun =
-      cetakAkun.get(`u:${s.nisn}`) ??
-      cetakAkun.get(
-        `n:${(s.nama ?? "").trim().toUpperCase()}|${(s.kelas ?? "").trim().toUpperCase()}`,
-      ) ??
-      cetakAkun.get(`n:${(s.nama ?? "").trim().toUpperCase()}`);
+      cetakAkun.get(`u:${kunciAkun(s.nisn)}`) ??
+      cetakAkun.get(`n:${kunciAkun(s.nama ?? "")}|${kunciAkun(s.kelas ?? "")}`) ??
+      cetakAkun.get(`n:${kunciAkun(s.nama ?? "")}`);
     return {
       nisn: s.nisn,
       nama: s.nama,
