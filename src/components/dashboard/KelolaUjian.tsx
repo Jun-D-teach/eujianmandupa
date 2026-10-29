@@ -677,10 +677,6 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
     };
   };
 
-  /** Peserta tercentang di kotak centang — hanya kartu inilah yang dicetak. */
-  const cetakTerpilih =
-    cetakSiswa?.filter((s) => cetakPilih.has(s.nisn)) ?? [];
-
   /** Daftar yang tampil di daftar centang — sudah disaring kotak pencarian. */
   const pesertaTampil = (() => {
     const daftar = cetakSiswa ?? [];
@@ -693,6 +689,9 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
         s.nisn.toLowerCase().includes(q),
     );
   })();
+
+  /** Yang dicetak = yang tercentang DAN lolos filter pencarian (sesuai tampilan). */
+  const cetakTerpilih = pesertaTampil.filter((s) => cetakPilih.has(s.nisn));
 
   /** Centang / lepas satu peserta. */
   const toggleCetak = (nisn: string, on: boolean) => {
@@ -1151,7 +1150,9 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
             <DialogDescription>
               Kegiatan <strong>{cetakSet?.kegiatan?.trim() || "— belum diatur —"}</strong>{" "}
               — kartu ukuran KTP (85,6 × 54 mm) untuk {" "}
-              {cetakSiswa?.length ?? 0} peserta. Satu kartu dipakai untuk semua
+              {cetakTerpilih.length} peserta terpilih (dari{" "}
+              {cetakSiswa?.length ?? 0}). Sesuaikan lewat kotak centang dan
+              pencarian. Satu kartu dipakai untuk semua
               mata ujian, lengkap dengan kop, logo & tanda tangan kepala
               madrasah.
               {jumlahBertempat > 0
@@ -1191,7 +1192,10 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
                   <p className="text-sm font-bold">
                     Pilih peserta
                     <span className="ml-2 text-xs font-medium text-muted-foreground">
-                      {cetakTerpilih.length} dari {cetakSiswa.length} terpilih
+                      {cetakTerpilih.length} kartu akan dicetak
+                      {cetakPilih.size !== cetakTerpilih.length
+                        ? ` (dari ${cetakPilih.size} tercentang)`
+                        : ""}
                     </span>
                   </p>
                   <div className="flex gap-2">
@@ -1295,7 +1299,7 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
                   <TriangleAlert className="mt-0.5 size-4 shrink-0" />
                   <span>
                     <strong>
-                      {jumlahTanpaPass} dari {cetakSiswa?.length ?? 0} kartu
+                      {jumlahTanpaPass} dari {cetakTerpilih.length} kartu
                       menampilkan password "{`(belum tercatat)`}".
                     </strong>{" "}
                     Username terbaca pada {jumlahAkun} kartu — jadi data akun

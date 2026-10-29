@@ -12,7 +12,6 @@ import {
   KeyRound,
   PenLine,
   Send,
-  Trophy,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -589,32 +588,28 @@ export function SelesaiFase(props: {
   sesi: SesiUjian;
   onBeranda: () => void;
 }) {
-  const hasil = props.sesi.hasil;
-  const nilai = hasil?.nilai ?? 0;
-
   return (
     <div className="space-y-5">
       <Card className="overflow-hidden border-border/70">
         <div className="bg-ink px-6 py-8 text-center text-white">
-          <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15">
-            <Trophy className="size-6 text-emerald-400" />
+          <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-emerald-500/15 ring-1 ring-emerald-400/40">
+            <CheckCircle2 className="size-6 text-emerald-400" />
           </span>
           <p className="mt-4 text-xs font-bold uppercase tracking-[0.2em] text-white/50">
             Jawaban terkirim
           </p>
-          <p className="mt-2 text-6xl font-extrabold tracking-tight text-emerald-400">
-            {nilai}
+          <p className="mx-auto mt-2 max-w-md text-2xl font-extrabold leading-tight tracking-tight sm:text-3xl">
+            Anda sudah menyelesaikan ujian
           </p>
-          <p className="mt-1 text-sm text-white/60">
-            {hasil?.benar ?? 0} benar dari {hasil?.total_soal ?? 0} soal
+          <p className="mt-2 text-sm leading-6 text-white/60">
+            Jawaban berhasil dikirim dan tersimpan. Hasil akan diumumkan oleh
+            pengawas atau guru.
           </p>
         </div>
         <CardContent className="divide-y divide-border/60 p-0">
           {[
             ["Nama", props.sesi.nama],
             ["Kelas", props.sesi.kelas],
-            ["Token", props.sesi.token || "—"],
-            ["Pelanggaran", `${props.sesi.pelanggaran.length} strike`],
             [
               "Waktu kirim",
               props.sesi.kirimPada
