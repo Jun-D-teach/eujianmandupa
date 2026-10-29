@@ -49,7 +49,9 @@ function Logo({ className = "" }: { className?: string }) {
         alt="MAN 2 Palembang"
         className="size-8 rounded-lg bg-white object-contain"
       />
-      <span className="text-[15px] font-bold tracking-tight">UjianAman</span>
+      <span className="max-w-[150px] text-[11px] font-bold leading-[1.2] tracking-tight sm:max-w-[210px] sm:text-[13px]">
+        MADRASAH ALIYAH NEGERI 2 PALEMBANG
+      </span>
     </span>
   );
 }
@@ -597,7 +599,9 @@ export default function Landing() {
               alt="MAN 2 Palembang"
               className="size-7 rounded-md bg-white object-contain"
             />
-            <span className="text-sm font-bold tracking-tight">UjianAman</span>
+            <span className="max-w-[240px] text-sm font-bold leading-[1.25] tracking-tight">
+              MADRASAH ALIYAH NEGERI 2 PALEMBANG
+            </span>
           </span>
           <p className="text-xs text-muted-foreground">
             PWA ujian online wajib offline · Backend PHP + MySQL di hosting

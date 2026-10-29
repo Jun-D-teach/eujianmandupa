@@ -105,8 +105,8 @@ export default function Dashboard() {
               alt="MAN 2 Palembang"
               className="size-8 rounded-lg bg-white object-contain"
             />
-            <span className="hidden text-[15px] font-bold tracking-tight sm:block">
-              UjianAman
+            <span className="hidden max-w-[200px] text-[13px] font-bold leading-[1.2] tracking-tight sm:block">
+              MADRASAH ALIYAH NEGERI 2 PALEMBANG
             </span>
           </button>
 
