@@ -12,16 +12,22 @@
   "theme_color": "#14171c",
   "icons": [
     {
-      "src": "./icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "./logo-sekolah.png",
+      "sizes": "1280x1252",
+      "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "./logo-sekolah.png",
+      "sizes": "1280x1252",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "maskable"
+      "purpose": "any"
     }
   ]
 }
