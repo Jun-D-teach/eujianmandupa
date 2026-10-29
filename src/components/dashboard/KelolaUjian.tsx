@@ -441,6 +441,8 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
   const [cetakAkun, setCetakAkun] = useState<
     Map<string, { username: string; password: string }>
   >(new Map());
+  /** Kotak centang pilihan peserta: NISN yang kartunya akan dicetak. */
+  const [cetakPilih, setCetakPilih] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let hidup = true;
@@ -602,6 +604,9 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
               daftar.some((u) => cocokSasaran(u, s.kelas)),
             );
       setCetakSiswa(peserta);
+      // Semua peserta tercentang secara bawaan — administrator tinggal
+      // menyeleksi bila ingin mencetak sebagian.
+      setCetakPilih(new Set(peserta.map((s) => s.nisn)));
       setCetakPeriode(periodeKegiatan(daftar));
       const peta = new Map<string, { ruang: string; noDuduk: number }>();
       for (const p of rs?.penempatan ?? []) {
@@ -668,36 +673,48 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
     };
   };
 
+  /** Peserta tercentang di kotak centang — hanya kartu inilah yang dicetak. */
+  const cetakTerpilih =
+    cetakSiswa?.filter((s) => cetakPilih.has(s.nisn)) ?? [];
+
+  /** Centang / lepas satu peserta. */
+  const toggleCetak = (nisn: string, on: boolean) => {
+    setCetakPilih((lama) => {
+      const baru = new Set(lama);
+      if (on) baru.add(nisn);
+      else baru.delete(nisn);
+      return baru;
+    });
+  };
+
+  const pilihSemuaCetak = () => {
+    setCetakPilih(new Set((cetakSiswa ?? []).map((s) => s.nisn)));
+  };
+
   const jalankanCetak = () => {
-    if (!cetakSet || !cetakSiswa || cetakSiswa.length === 0) return;
-    const kartu: IsiKartu[] = cetakSiswa.map((s) => kartuDari(s));
+    if (!cetakSet || cetakTerpilih.length === 0) return;
+    const kartu: IsiKartu[] = cetakTerpilih.map((s) => kartuDari(s));
     cetakKartu(cetakSet, kartu, cetakMode, (pesan) => toast.error(pesan));
     // Selesai — tutup dialog, kembali ke halaman Kelola Ujian.
     setCetakBuka(false);
   };
 
-  /** Kartu contoh untuk pratinjau (peserta pertama). */
+  /** Kartu contoh untuk pratinjau (peserta terpilih pertama). */
   const contohKartu: IsiKartu | null =
-    cetakSiswa && cetakSiswa.length > 0 ? kartuDari(cetakSiswa[0]) : null;
+    cetakTerpilih.length > 0 ? kartuDari(cetakTerpilih[0]) : null;
 
-  /** Berapa kartu peserta yang sudah punya ruang & no. duduk. */
-  const jumlahBertempat =
-    cetakSiswa && cetakSiswa.length > 0
-      ? cetakSiswa.filter((s) => cetakTempat.has(s.nisn)).length
-      : 0;
+  /** Berapa kartu peserta terpilih yang sudah punya ruang & no. duduk. */
+  const jumlahBertempat = cetakTerpilih.filter((s) =>
+    cetakTempat.has(s.nisn),
+  ).length;
 
-  /** Berapa peserta yang kartunya ikut menyertakan username & password login. */
-  const jumlahAkun =
-    cetakSiswa && cetakSiswa.length > 0
-      ? cetakSiswa.filter((s) => kartuDari(s).username).length
-      : 0;
+  /** Berapa peserta terpilih yang kartunya ikut menyertakan username & password. */
+  const jumlahAkun = cetakTerpilih.filter((s) => kartuDari(s).username).length;
 
-  /** Berapa peserta yang kartunya BELUM menampilkan password (akun tanpa
-   *  password tercatat / backend belum mengirim kolom password). */
-  const jumlahTanpaPass =
-    cetakSiswa && cetakSiswa.length > 0
-      ? cetakSiswa.filter((s) => !kartuDari(s).password).length
-      : 0;
+  /** Berapa peserta terpilih yang kartunya BELUM menampilkan password (akun
+   *  tanpa password tercatat / backend belum mengirim kolom password). */
+  const jumlahTanpaPass = cetakTerpilih.filter((s) => !kartuDari(s).password)
+    .length;
 
   const konfirmasiHapus = async () => {
     if (!hapusTarget) return;
@@ -1150,6 +1167,56 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
                 </Button>
               </div>
 
+              {/* Kotak centang: pilih peserta yang kartunya dicetak */}
+              <div className="rounded-2xl border border-border/70 bg-card">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
+                  <p className="text-sm font-bold">
+                    Pilih peserta
+                    <span className="ml-2 text-xs font-medium text-muted-foreground">
+                      {cetakTerpilih.length} dari {cetakSiswa.length} terpilih
+                    </span>
+                  </p>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={pilihSemuaCetak}>
+                      Centang semua
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCetakPilih(new Set())}
+                    >
+                      Kosongkan
+                    </Button>
+                  </div>
+                </div>
+                <div className="max-h-52 overflow-y-auto p-2">
+                  <ul className="grid gap-1 sm:grid-cols-2">
+                    {cetakSiswa.map((s) => (
+                      <li key={s.nisn}>
+                        <label className="flex cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-muted/60">
+                          <Checkbox
+                            checked={cetakPilih.has(s.nisn)}
+                            onCheckedChange={(on) =>
+                              toggleCetak(s.nisn, on === true)
+                            }
+                          />
+                          <span className="truncate font-medium">{s.nama}</span>
+                          <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                            {s.kelas}
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                  {cetakSiswa.length === 0 && (
+                    <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                      Belum ada data siswa peserta — isi <strong>Data Siswa</strong>{" "}
+                      dulu.
+                    </p>
+                  )}
+                </div>
+              </div>
+
               {!cetakSet?.kegiatan?.trim() && (
                 <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-5 text-amber-800">
                   <TriangleAlert className="mt-0.5 size-4 shrink-0" />
@@ -1222,9 +1289,9 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
                   </div>
                 ) : (
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Belum ada peserta yang bisa dicetak — isi <strong>Data
-                    Siswa</strong> dulu atau centang sasaran kelas pada salah
-                    satu ujian.
+                    {cetakSiswa && cetakSiswa.length > 0
+                      ? "Belum ada peserta terpilih — centang peserta pada daftar di atas."
+                      : "Belum ada peserta yang bisa dicetak — isi Data Siswa dulu atau centang sasaran kelas pada salah satu ujian."}
                   </p>
                 )}
               </div>
@@ -1239,14 +1306,9 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
             <Button
               className="gap-2"
               onClick={jalankanCetak}
-              disabled={
-                cetakMuat ||
-                !cetakSet ||
-                !cetakSiswa ||
-                cetakSiswa.length === 0
-              }
+              disabled={cetakMuat || !cetakSet || cetakTerpilih.length === 0}
             >
-              <Printer className="size-4" /> Cetak {cetakSiswa?.length ?? 0}{" "}
+              <Printer className="size-4" /> Cetak {cetakTerpilih.length}{" "}
               kartu
             </Button>
           </DialogFooter>

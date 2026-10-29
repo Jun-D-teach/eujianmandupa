@@ -307,6 +307,17 @@ function pastikanStruktur(): void
             KEY idx_jawaban_teks_hasil (hasil_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     );
+    // Jawaban pilihan ganda (A–E) per kiriman — dipakai laporan/ekspor Excel.
+    db()->exec(
+        "CREATE TABLE IF NOT EXISTS jawaban_pg (
+            hasil_id VARCHAR(40) NOT NULL,
+            soal_id VARCHAR(40) NOT NULL,
+            ujian_id VARCHAR(40) NOT NULL DEFAULT '',
+            pilihan VARCHAR(4) NOT NULL DEFAULT '',
+            PRIMARY KEY (hasil_id, soal_id),
+            KEY idx_jawaban_pg_hasil (hasil_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
 
     $siap = true;
 }
@@ -355,7 +366,7 @@ const AKSES = [
     'getUjianSiswa' => 0, 'getUjianInfo' => 0, 'getSoal' => 0,
     'getHasilSaya' => 0, 'submitJawaban' => 0, 'catatBukaKunci' => 0,
 
-    'getUjian' => 1, 'getSoalAdmin' => 1, 'getHasil' => 1, 'getSiswa' => 1,
+    'getUjian' => 1, 'getSoalAdmin' => 1, 'getHasil' => 1, 'getLaporan' => 1, 'getSiswa' => 1,
     'getKelasList' => 1, 'tambahSiswa' => 1, 'ubahSiswa' => 1, 'hapusSiswa' => 1,
     'hapusSiswaMassal' => 1, 'importSiswa' => 1, 'buatAkunSiswa' => 1,
     'konfirmasiUjian' => 1,
@@ -539,6 +550,7 @@ function jalankan(string $action, array $d): array
         case 'getSoal': return a_getSoal($d);
         case 'getSoalAdmin': return a_getSoalAdmin($d);
         case 'getHasil': return a_getHasil($d);
+        case 'getLaporan': return a_getLaporan($d);
         case 'getHasilSaya': return a_getHasilSaya($d);
         case 'getPengguna': return a_getPengguna();
         case 'getSiswa': return a_getSiswa();
@@ -2105,11 +2117,22 @@ function a_submitJawaban(array $d): array
 
     $hasilId = idBaru('h');
     $poin = 0;
+    $jawabanPg = [];  // disimpan untuk laporan/ekspor (A–E per soal)
     foreach ($jawaban as $item) {
         $idSoal = (string) ($item['id_soal'] ?? '');
         if (!isset($tipeMap[$idSoal]) || $tipeMap[$idSoal] !== 'pg') continue;
         $pilihan = strtoupper(bersih($item['pilihan'] ?? ''));
-        if ($pilihan !== '' && $kunciMap[$idSoal] === $pilihan) $poin += 100;
+        if ($pilihan === '') continue;
+        $jawabanPg[$idSoal] = $pilihan;
+        if ($kunciMap[$idSoal] === $pilihan) $poin += 100;
+    }
+
+    foreach ($jawabanPg as $idSoalPg => $pilihanPg) {
+        jalan(
+            'INSERT INTO jawaban_pg (hasil_id, soal_id, ujian_id, pilihan) VALUES (?,?,?,?)
+             ON DUPLICATE KEY UPDATE pilihan = VALUES(pilihan)',
+            [$hasilId, $idSoalPg, $ujianId, $pilihanPg]
+        );
     }
 
     // Jawaban teks (essay/uraian) disimpan untuk dikoreksi manual guru.
@@ -2236,6 +2259,83 @@ function a_getHasil(array $d): array
     if ($tolak) return $tolak;
     $rows = semua('SELECT * FROM hasil WHERE ujian_id = ? ORDER BY timestamp DESC', [$ujianId]);
     return ['success' => true, 'hasil' => array_map('barisHasil', $rows)];
+}
+
+/**
+ * Laporan hasil ujian untuk ekspor Excel: satu baris per kiriman siswa
+ * berisi waktu kirim, nama, NISN, kelas, dan jawaban A–E / teks per soal.
+ * NISN dicocokkan dari tabel siswa (nama + kelas, fallback nama unik).
+ * Akses: guru/admin penanggung jawab ujian (sama seperti getHasil).
+ */
+function a_getLaporan(array $d): array
+{
+    $ujianId = bersih($d['ujian_id'] ?? '');
+    $tolak = tolakBilaBukanMilik($d, $ujianId);
+    if ($tolak) return $tolak;
+
+    // Urutan soal (id berbasis waktu — sebaris dengan menu Koreksi).
+    $urutSoal = [];
+    $nomor = 0;
+    foreach (semua('SELECT id, tipe FROM soal WHERE ujian_id = ? ORDER BY id', [$ujianId]) as $s) {
+        $nomor++;
+        $idS = (string) $s['id'];
+        $urutSoal[$idS] = [
+            'id' => $idS,
+            'nomor' => $nomor,
+            'tipe' => strtolower(bersih($s['tipe'] ?? 'pg')) === 'pg' ? 'pg' : 'teks',
+        ];
+    }
+
+    // Peta siswa → NISN: kunci "NAMA|KELAS", plus nama unik sebagai cadangan.
+    $nisnByKelas = [];
+    $hitungNama = [];
+    $nisnByNama = [];
+    foreach (semua('SELECT nisn, nama, kelas FROM siswa') as $s) {
+        $nama = strtoupper(bersih($s['nama']));
+        $nisnByKelas[$nama . '|' . strtoupper(bersih($s['kelas']))] = (string) $s['nisn'];
+        $hitungNama[$nama] = ($hitungNama[$nama] ?? 0) + 1;
+        $nisnByNama[$nama] = (string) $s['nisn'];
+    }
+
+    // Jawaban PG (A–E) & teks per kiriman — satu query lalu dipetakan.
+    $pgByHasil = [];
+    foreach (semua('SELECT hasil_id, soal_id, pilihan FROM jawaban_pg WHERE ujian_id = ?', [$ujianId]) as $j) {
+        $pgByHasil[(string) $j['hasil_id']][(string) $j['soal_id']] = strtoupper(bersih($j['pilihan']));
+    }
+    $teksByHasil = [];
+    foreach (semua('SELECT hasil_id, soal_id, teks FROM jawaban_teks WHERE ujian_id = ?', [$ujianId]) as $j) {
+        $teksByHasil[(string) $j['hasil_id']][(string) $j['soal_id']] = (string) $j['teks'];
+    }
+
+    $baris = [];
+    foreach (semua('SELECT * FROM hasil WHERE ujian_id = ? ORDER BY kelas, nama', [$ujianId]) as $h) {
+        $hid = (string) $h['id'];
+        $nama = strtoupper(bersih($h['nama']));
+        $nisn = $nisnByKelas[$nama . '|' . strtoupper(bersih($h['kelas']))]
+            ?? (($hitungNama[$nama] ?? 0) === 1 ? $nisnByNama[$nama] : '');
+
+        $jawabanPerSoal = [];
+        foreach ($urutSoal as $idS => $info) {
+            $jawabanPerSoal[$idS] = $info['tipe'] === 'pg'
+                ? ($pgByHasil[$hid][$idS] ?? '')
+                : ($teksByHasil[$hid][$idS] ?? '');
+        }
+
+        $baris[] = [
+            'hasil_id' => $hid,
+            'timestamp' => (string) ($h['timestamp'] ?? ''),
+            'nama' => (string) $h['nama'],
+            'kelas' => (string) $h['kelas'],
+            'nisn' => $nisn,
+            'nilai' => (int) $h['nilai'],
+            'benar' => (int) $h['benar'],
+            'total_soal' => (int) $h['total_soal'],
+            'total_pelanggaran' => (int) $h['total_pelanggaran'],
+            'jawaban' => $jawabanPerSoal,
+        ];
+    }
+
+    return ['success' => true, 'soal' => array_values($urutSoal), 'baris' => $baris];
 }
 
 function a_getHasilSaya(array $d): array
