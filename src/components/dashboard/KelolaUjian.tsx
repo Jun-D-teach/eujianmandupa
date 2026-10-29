@@ -72,6 +72,7 @@ import {
   Power,
   Printer,
   RefreshCw,
+  Search,
   Share2,
   Sparkles,
   Target,
@@ -443,6 +444,8 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
   >(new Map());
   /** Kotak centang pilihan peserta: NISN yang kartunya akan dicetak. */
   const [cetakPilih, setCetakPilih] = useState<Set<string>>(new Set());
+  /** Kata kunci pencarian peserta di dialog cetak (filter nama/kelas). */
+  const [cariCetak, setCariCetak] = useState("");
 
   useEffect(() => {
     let hidup = true;
@@ -580,6 +583,7 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
     setCetakBuka(true);
     setCetakSet(null);
     setCetakSiswa(null);
+    setCariCetak("");
     setCetakPeriode("");
     setCetakTempat(new Map());
     setCetakAkun(new Map());
@@ -677,6 +681,19 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
   const cetakTerpilih =
     cetakSiswa?.filter((s) => cetakPilih.has(s.nisn)) ?? [];
 
+  /** Daftar yang tampil di daftar centang — sudah disaring kotak pencarian. */
+  const pesertaTampil = (() => {
+    const daftar = cetakSiswa ?? [];
+    const q = cariCetak.trim().toLowerCase();
+    if (!q) return daftar;
+    return daftar.filter(
+      (s) =>
+        s.nama.toLowerCase().includes(q) ||
+        s.kelas.toLowerCase().includes(q) ||
+        s.nisn.toLowerCase().includes(q),
+    );
+  })();
+
   /** Centang / lepas satu peserta. */
   const toggleCetak = (nisn: string, on: boolean) => {
     setCetakPilih((lama) => {
@@ -687,8 +704,9 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
     });
   };
 
+  /** Centang semua peserta yang sedang tampil (mengikuti pencarian). */
   const pilihSemuaCetak = () => {
-    setCetakPilih(new Set((cetakSiswa ?? []).map((s) => s.nisn)));
+    setCetakPilih(new Set(pesertaTampil.map((s) => s.nisn)));
   };
 
   const jalankanCetak = () => {
@@ -1189,9 +1207,29 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
                     </Button>
                   </div>
                 </div>
+
+                {/* Pencarian cepat: nama / kelas / NISN */}
+                <div className="border-b border-border/60 px-4 pb-3 pt-1">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={cariCetak}
+                      onChange={(e) => setCariCetak(e.target.value)}
+                      placeholder="Cari nama, kelas, atau NISN…"
+                      aria-label="Cari peserta"
+                      className="pl-9"
+                    />
+                    {cariCetak.trim() !== "" && (
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                        {pesertaTampil.length} cocok
+                      </span>
+                    )}
+                  </div>
+                </div>
+
                 <div className="max-h-52 overflow-y-auto p-2">
                   <ul className="grid gap-1 sm:grid-cols-2">
-                    {cetakSiswa.map((s) => (
+                    {pesertaTampil.map((s) => (
                       <li key={s.nisn}>
                         <label className="flex cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-muted/60">
                           <Checkbox
@@ -1212,6 +1250,11 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
                     <p className="px-2 py-6 text-center text-sm text-muted-foreground">
                       Belum ada data siswa peserta — isi <strong>Data Siswa</strong>{" "}
                       dulu.
+                    </p>
+                  )}
+                  {cetakSiswa.length > 0 && pesertaTampil.length === 0 && (
+                    <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                      Tidak ada peserta yang cocok dengan "{cariCetak.trim()}".
                     </p>
                   )}
                 </div>
