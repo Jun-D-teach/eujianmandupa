@@ -23,7 +23,6 @@ import {
   Pencil,
   PlayCircle,
   RefreshCw,
-  Trophy,
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -569,35 +568,34 @@ export function SiswaRiwayat() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold tracking-tight">Riwayat nilai</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight">Riwayat ujian</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Nilai dihitung otomatis di server saat jawaban terkirim. Jawaban
-          essay/uraian menunggu koreksi manual guru — nilai bisa berubah
-          setelah dikoreksi.
+          Daftar ujian yang sudah kamu selesaikan, lengkap dengan waktu
+          pengerjaan dan pelanggarannya. Nilai diumumkan oleh pengawas atau
+          guru.
         </p>
       </div>
 
       {hasil.length === 0 ? (
         <Empty className="rounded-3xl border border-dashed border-border/70 py-14">
           <EmptyContent>
-            <EmptyTitle>Belum ada nilai</EmptyTitle>
+            <EmptyTitle>Belum ada ujian yang selesai</EmptyTitle>
             <EmptyDescription>
-              Nilai akan muncul setelah kamu mengirim jawaban ujian.
+              Riwayat muncul setelah kamu mengirim jawaban ujian.
             </EmptyDescription>
           </EmptyContent>
         </Empty>
       ) : (
         <Card className="overflow-hidden border-border/70">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm">
+            <table className="w-full min-w-[720px] text-sm">
               <thead className="bg-muted/60 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 <tr>
                   <th className="px-5 py-3">Ujian</th>
                   <th className="px-5 py-3">Kelas</th>
-                  <th className="px-5 py-3">Benar</th>
                   <th className="px-5 py-3">Pelanggaran</th>
-                  <th className="px-5 py-3 text-right">Nilai</th>
-                  <th className="px-5 py-3 text-right">Waktu</th>
+                  <th className="px-5 py-3">Status</th>
+                  <th className="px-5 py-3 text-right">Selesai pada</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
@@ -605,9 +603,6 @@ export function SiswaRiwayat() {
                   <tr key={h.id} className="transition-colors hover:bg-muted/40">
                     <td className="px-5 py-3.5 font-semibold">{h.ujian_judul}</td>
                     <td className="px-5 py-3.5 text-muted-foreground">{h.kelas}</td>
-                    <td className="px-5 py-3.5 text-muted-foreground">
-                      {h.benar}/{h.total_soal}
-                    </td>
                     <td className="px-5 py-3.5">
                       <span
                         className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ${
@@ -620,22 +615,20 @@ export function SiswaRiwayat() {
                         {h.total_pelanggaran}
                       </span>
                     </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <span className="inline-flex items-center gap-1.5 font-bold">
-                        <Trophy className="size-4 text-emerald-600" />
-                        {h.nilai}
+                    <td className="px-5 py-3.5">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                        Selesai
                       </span>
-                      {(h.menunggu ?? 0) > 0 && (
-                        <span className="mt-1 block rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                          {h.menunggu} menunggu koreksi
-                        </span>
-                      )}
                     </td>
                     <td className="px-5 py-3.5 text-right text-xs text-muted-foreground">
                       {h.timestamp
                         ? new Date(h.timestamp).toLocaleString("id-ID", {
-                            dateStyle: "medium",
-                            timeStyle: "short",
+                            weekday: "long",
+                            day: "numeric",
+                            month: "long",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
                           })
                         : "—"}
                     </td>

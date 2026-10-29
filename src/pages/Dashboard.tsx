@@ -46,7 +46,7 @@ const LABEL_PERAN: Record<string, string> = {
 
 const TABS: Record<TabId, { label: string; ikon: typeof Users }> = {
   ujian: { label: "Ujian Saya", ikon: ClipboardList },
-  riwayat: { label: "Riwayat Nilai", ikon: History },
+  riwayat: { label: "Riwayat Ujian", ikon: History },
   kelola: { label: "Kelola Ujian", ikon: ClipboardList },
   hasil: { label: "Hasil Ujian", ikon: ShieldCheck },
   siswa: { label: "Data Siswa", ikon: Users },

@@ -588,6 +588,18 @@ export function SelesaiFase(props: {
   sesi: SesiUjian;
   onBeranda: () => void;
 }) {
+  const waktuSelesai = props.sesi.kirimPada
+    ? new Date(props.sesi.kirimPada).toLocaleString("id-ID", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "—";
+  const jumlahPelanggaran = props.sesi.pelanggaran.length;
+
   return (
     <div className="space-y-5">
       <Card className="overflow-hidden border-border/70">
@@ -608,24 +620,31 @@ export function SelesaiFase(props: {
         </div>
         <CardContent className="divide-y divide-border/60 p-0">
           {[
+            ["Ujian", props.sesi.judul],
             ["Nama", props.sesi.nama],
             ["Kelas", props.sesi.kelas],
+            ["Selesai pada", waktuSelesai],
             [
-              "Waktu kirim",
-              props.sesi.kirimPada
-                ? new Date(props.sesi.kirimPada).toLocaleString("id-ID", {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })
-                : "—",
+              "Pelanggaran",
+              jumlahPelanggaran === 0
+                ? "Tidak ada"
+                : `${jumlahPelanggaran} pelanggaran`,
             ],
           ].map(([k, v]) => (
             <div
               key={k}
-              className="flex items-center justify-between px-5 py-3.5 text-sm"
+              className="flex items-center justify-between gap-3 px-5 py-3.5 text-sm"
             >
-              <span className="text-muted-foreground">{k}</span>
-              <span className="font-semibold">{v}</span>
+              <span className="shrink-0 text-muted-foreground">{k}</span>
+              <span
+                className={`text-right font-semibold ${
+                  k === "Pelanggaran" && jumlahPelanggaran > 0
+                    ? "text-red-600"
+                    : ""
+                }`}
+              >
+                {v}
+              </span>
             </div>
           ))}
         </CardContent>
