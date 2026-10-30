@@ -200,9 +200,10 @@ createRoot(document.getElementById("root")!).render(
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>
+          {/* InstallPwa memakai useLocation() → wajib di DALAM BrowserRouter. */}
+          <InstallPwa />
         </BrowserRouter>
         <Toaster />
-        <InstallPwa />
       </AuthProvider>
     </RootErrorBoundary>
   </StrictMode>,
