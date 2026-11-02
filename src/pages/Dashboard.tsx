@@ -149,33 +149,39 @@ export default function Dashboard() {
 </nav>
 
     {/* User Profile */}
-    <div className="flex items-center gap-3">
-      <div className="hidden text-right sm:block">
-        <p className="max-w-[180px] truncate text-sm font-bold leading-4 text-foreground">
-          {user.nama || user.username}
-        </p>
-        <p className="text-xs font-medium text-muted-foreground">
-          {LABEL_PERAN[user.role]}
-          {user.kelas ? ` · ${user.kelas}` : ""}
-        </p>
-      </div>
+   <div className="flex items-center gap-2 sm:gap-3">
+  {/* Informasi User: Tampil di HP (kecil) dan Desktop (normal) */}
+  <div className="flex flex-col items-end gap-0.5">
+    <p className="text-xs sm:text-sm font-bold text-foreground truncate max-w-[90px] sm:max-w-[180px]">
+      {user.nama || user.username}
+    </p>
+    <div className="flex items-center gap-1.5">
+      <span className="text-[10px] sm:text-xs font-medium text-muted-foreground">
+        {user.kelas ? user.kelas : LABEL_PERAN[user.role]}
+      </span>
+      {/* Badge Role hanya muncul di layar yang agak lebar (tablet/PC) agar hemat tempat di HP */}
       <Badge
         variant="secondary"
-        className="hidden uppercase tracking-wider sm:inline-flex bg-emerald-500/10 text-emerald-700 font-bold"
+        className="hidden sm:inline-flex h-4 px-1.5 text-[10px] uppercase tracking-wider bg-emerald-500/10 text-emerald-700 font-bold"
       >
         {LABEL_PERAN[user.role]}
       </Badge>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="group gap-2 border-red-200 bg-red-50 text-red-600 transition-all hover:bg-red-100 hover:text-red-700 hover:border-red-300 hover:shadow-md"
-        onClick={handleSignOut}
-      >
-        <LogOut className="size-4 transition-transform group-hover:-translate-x-0.5" />
-        <span className="hidden sm:inline">Keluar</span>
-      </Button>
     </div>
+  </div>
+
+  {/* Tombol Keluar: Ikon saja di HP, Ikon + Teks di Desktop */}
+  <Button
+    type="button"
+    variant="outline"
+    size="sm"
+    className="group gap-1 sm:gap-2 border-red-200 bg-red-50 text-red-600 px-2 sm:px-3 transition-all hover:bg-red-100 hover:text-red-700 hover:border-red-300"
+    onClick={handleSignOut}
+    title="Keluar"
+  >
+    <LogOut className="size-4 transition-transform group-hover:-translate-x-0.5" />
+    <span className="hidden sm:inline text-xs font-semibold">Keluar</span>
+  </Button>
+</div>
   </div>
 </header>
 
