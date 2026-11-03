@@ -76,6 +76,9 @@ const KOSONG: RuangSetGas = { ruang: [], pengawas: [], jadwal: [], penempatan: [
 export function PengaturanRuang({
   onBukaKartuUjian,
 }: { onBukaKartuUjian?: () => void } = {}) {
+   const [busy, setBusy] = useState(false);
+    const [jadwal, setJadwal] = useState<JadwalPengawasGas[]>([]);
+  const [memuat, setMemuat] = useState(true);
   const [ruangSet, setRuangSet] = useState<RuangSetGas | null>(null);
   const [guru, setGuru] = useState<GuruGas[]>([]);
   const [setKartu, setSetKartu] = useState<SetKartu>({ ...SET_KOSONG });
@@ -285,34 +288,24 @@ export function PengaturanRuang({
       return n;
     });
 
-  const buatJadwal = async () => {
-    if (!tglMulai) {
-      toast.error("Pilih tanggal mulai ujian.");
+  // Fungsi untuk membuat jadwal otomatis
+  const buatJadwalOtomatis = async () => {
+    if (!confirm('Buat ulang jadwal pengawas otomatis? Jadwal lama akan ditimpa.')) {
       return;
     }
-    const jamBersih = Array.from({ length: sesiHari }, (_, i) =>
-      normalisasiJam(jamSesiList[i] ?? ""),
-    );
-    if (jamBersih.some((j) => !j)) {
-      toast.error("Ada jam per sesi yang tidak valid — format 07.30.");
-      return;
-    }
-    setBusyJadwal(true);
+    
+    setBusy(true);
     try {
-      const res = await gasCall<{ message?: string }>("buatJadwalPengawas", {
-        tanggal_mulai: tglMulai,
-        total_hari: totalHari,
-        sesi_per_hari: sesiHari,
-        jam: jamBersih.join(", "),
-      });
-      toast.success(res.message || "Jadwal pengawas dibuat.");
-      await muatUlang();
+      const res = await gasCall<{ dibuat: number }>('buatJadwalPengawasOtomatis', {});
+      toast.success(res.message || `Jadwal dibuat: ${res.dibuat} penugasan.`);
+      
+      // Reload jadwal
+      const rs = await gasCall<RuangSetGas>('getRuangSet');
+      setJadwal(rs.jadwal || []);
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Gagal membuat jadwal pengawas.",
-      );
+      toast.error(err instanceof Error ? err.message : 'Gagal membuat jadwal.');
     } finally {
-      setBusyJadwal(false);
+      setBusy(false);
     }
   };
 
@@ -348,12 +341,17 @@ export function PengaturanRuang({
     );
   }, [ruangSet]);
 
-  const cetakJadwal = () =>
-    cetakDokumen(
-      jadwalPengawasHTML(setKartu, ruangSet?.jadwal ?? []),
-      "Jadwal Pengawas",
-      (pesan) => toast.error(pesan),
-    );
+
+  // Fungsi cetak (sama seperti sebelumnya)
+  const cetakJadwal = () => {
+    if (!jadwal || jadwal.length === 0) {
+      toast.error('Belum ada jadwal pengawas.');
+      return;
+    }
+    
+    const html = jadwalPengawasHTML(jadwal);
+    cetakDokumen(html, 'Jadwal Pengawas Ujian', (pesan) => toast.error(pesan));
+  };
 
   /* ---------------- d. penempatan & cetakan ---------------- */
   const buatTempat = async () => {
@@ -747,167 +745,80 @@ export function PengaturanRuang({
         </div>
       </Card>
 
-      {/* ---------------- 3. Jadwal pengawas otomatis ---------------- */}
-      <Card className="border-border/70">
-        <div className="space-y-4 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <span className="flex size-10 items-center justify-center rounded-2xl bg-ink text-white">
-                <CalendarDays className="size-5" />
-              </span>
-              <div>
-                <p className="text-sm font-bold">Jadwal pengawas otomatis</p>
-                <p className="text-xs text-muted-foreground">
-                  {jumlahSesiJadwal > 0
-                    ? `${jumlahSesiJadwal} penugasan tersimpan`
-                    : "Belum ada jadwal — isi lalu klik Buat jadwal."}
-                </p>
-              </div>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-2"
-              onClick={cetakJadwal}
-              disabled={jumlahSesiJadwal === 0}
-            >
-              <Printer className="size-4" /> Cetak jadwal pengawas
-            </Button>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="grid gap-2">
-              <Label htmlFor="jd-tgl">Tanggal mulai ujian *</Label>
-              <Input
-                id="jd-tgl"
-                type="date"
-                value={tglMulai}
-                onChange={(e) => setTglMulai(e.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="jd-hari">Total hari ujian</Label>
-              <Input
-                id="jd-hari"
-                type="text"
-                inputMode="numeric"
-                value={totalHariTeks}
-                onChange={(e) => setTotalHariTeks(e.target.value)}
-                onBlur={() => setTotalHariTeks(String(totalHari))}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="jd-sesi">Sesi per hari</Label>
-              <Input
-                id="jd-sesi"
-                type="text"
-                inputMode="numeric"
-                value={sesiHariTeks}
-                onChange={(e) => setSesiHariTeks(e.target.value)}
-                onBlur={() => setSesiHariTeks(String(sesiHari))}
-              />
-            </div>
-          </div>
-
-          <div>
-            <Label>Jam mulai tiap sesi</Label>
-            <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              {Array.from({ length: sesiHari }, (_, i) => (
-                <div key={i} className="grid gap-1">
-                  <span className="text-[11px] font-medium text-muted-foreground">
-                    Sesi {i + 1}
-                  </span>
-                  <Input
-                    value={jamSesiList[i] ?? ""}
-                    onChange={(e) => ubahJamSesi(i, e.target.value)}
-                    placeholder="07.30"
-                    inputMode="numeric"
-                    aria-label={`Jam mulai sesi ${i + 1}`}
-                  />
-                </div>
+     <Card className="border-border/70">
+  <div className="border-b border-border/60 px-5 py-4">
+    <h3 className="text-base font-extrabold tracking-tight">
+      Jadwal pengawas otomatis
+    </h3>
+    <p className="mt-1 text-xs text-muted-foreground">
+      Sistem otomatis membagi guru pengawas ke jadwal yang sudah dibuat di 
+      <strong> Jadwal harian peserta</strong>. Tidak perlu setting ulang.
+    </p>
+  </div>
+  
+  <div className="p-5">
+    <div className="flex flex-wrap items-center gap-3">
+      <Button
+        type="button"
+        className="gap-2"
+        disabled={busy}
+        onClick={buatJadwalOtomatis}
+      >
+        <CalendarDays className="size-4" />
+        {busy ? 'Membuat...' : 'Buat jadwal otomatis'}
+      </Button>
+      
+      <Button
+        type="button"
+        variant="outline"
+        className="gap-2"
+        onClick={cetakJadwal}
+        disabled={!jadwal || jadwal.length === 0}
+      >
+        <Printer className="size-4" />
+        Cetak jadwal pengawas
+      </Button>
+    </div>
+    
+    {jadwal && jadwal.length > 0 && (
+      <div className="mt-6">
+        <p className="text-sm font-semibold mb-3">
+          {jadwal.length} penugasan tersimpan
+        </p>
+        
+        <div className="rounded-lg border border-border/60 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="px-4 py-3 text-left font-semibold">Hari / Tanggal</th>
+                <th className="px-4 py-3 text-left font-semibold">Sesi</th>
+                <th className="px-4 py-3 text-left font-semibold">Jam</th>
+                <th className="px-4 py-3 text-left font-semibold">Pengawas (Ruang)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/60">
+              {jadwal.map((row, idx) => (
+                <tr key={idx} className="hover:bg-muted/30">
+                  <td className="px-4 py-3">
+                    <p className="font-medium">Hari ke-{row.hari_ke}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {labelTanggal(row.tanggal)}
+                    </p>
+                  </td>
+                  <td className="px-4 py-3">Sesi {row.sesi}</td>
+                  <td className="px-4 py-3 font-mono text-xs">{row.jam}</td>
+                  <td className="px-4 py-3 text-xs">
+                    Ruang {row.ruang_nama} — {row.nama}
+                  </td>
+                </tr>
               ))}
-            </div>
-            <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">
-              Tepat {sesiHari} kolom jam untuk {sesiHari} sesi — bawaan otomatis
-              07.30, 10.00, 12.30, … (jeda 2,5 jam), bebas diubah (format
-              07.30). Setiap sesi, tiap ruang dijaga satu guru — penugasan
-              digilir merata ke seluruh guru pengawas.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              className="gap-2"
-              onClick={() => void buatJadwal()}
-              disabled={busyJadwal || jumlahRuang === 0 || pilih.length === 0}
-            >
-              <Wand2 className="size-4" />
-              {busyJadwal ? "Menyusun…" : "Buat jadwal otomatis"}
-            </Button>
-            {jumlahRuang === 0 && (
-              <span className="self-center text-xs text-muted-foreground">
-                Tambah ruang dulu.
-              </span>
-            )}
-            {jumlahRuang > 0 && pilih.length === 0 && (
-              <span className="self-center text-xs text-muted-foreground">
-                Centang guru pengawas dulu.
-              </span>
-            )}
-            {jumlahSesiJadwal > 0 && (
-              <span className="self-center text-xs text-muted-foreground">
-                Membuat ulang jadwal akan menimpa yang sekarang.
-              </span>
-            )}
-          </div>
-
-          {/* Pratinjau jadwal */}
-          {grupJadwal.length > 0 && (
-            <div className="max-h-72 overflow-y-auto rounded-2xl border border-border/70">
-              <table className="w-full text-left text-xs">
-                <thead className="sticky top-0 bg-muted text-[11px] uppercase tracking-wide">
-                  <tr>
-                    <th className="px-3 py-2">Hari / Tanggal</th>
-                    <th className="px-3 py-2">Sesi</th>
-                    <th className="px-3 py-2">Jam</th>
-                    <th className="px-3 py-2">Pengawas (ruang)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {grupJadwal.map((g) => (
-                    <tr
-                      key={`${g.tanggal}-${g.sesi}`}
-                      className="border-t border-border/60 align-top"
-                    >
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <span className="font-semibold">
-                          Hari ke-{g.hariKe}
-                        </span>
-                        <br />
-                        <span className="text-muted-foreground">
-                          {labelTanggal(g.tanggal)}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        Sesi {g.sesi}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap font-mono">
-                        {g.jam}
-                      </td>
-                      <td className="px-3 py-2">
-                        {g.anggota
-                          .map((a) => `${a.ruang} — ${a.nama}`)
-                          .join(" · ")}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+            </tbody>
+          </table>
         </div>
-      </Card>
+      </div>
+    )}
+  </div>
+</Card>
 
       {/* ---------------- 4. Penempatan tempat duduk & cetak ---------------- */}
       <Card className="border-border/70">

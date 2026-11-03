@@ -20,17 +20,23 @@ import {
   labelTanggal,
   normalisasiJam,
 } from "@/lib/jadwal-harian";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+
 import {
   AlertTriangle,
   CalendarDays,
+  Clock,
+  Edit,
   Plus,
   Printer,
   Save,
+  Settings,
+  Trash2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -101,7 +107,16 @@ export function PengaturanJadwal() {
   // dari handler perubahan tanggal agar tidak ada setState sinkron di efek.
   const [memuatJadwal, setMemuatJadwal] = useState(true);
   const [busy, setBusy] = useState(false);
-
+  // Daftar semua tanggal yang sudah dijadwalkan (untuk list view)
+  const [daftarJadwal, setDaftarJadwal] = useState<Array<{
+    tanggal: string;
+    hari: string;
+    jumlah_sesi: number;
+    jam: string[];
+    mapel: Record<number, string>;
+  }>>([]);
+  const [memuatDaftar, setMemuatDaftar] = useState(true);
+  const [busyHapus, setBusyHapus] = useState<string | null>(null);
   /** Jumlah sesi valid (1–10) dari teks yang sedang diketik. */
   const jumlahSesi = Math.max(1, Math.min(10, parseInt(sesiTeks, 10) || 1));
   /** Bawaan jam otomatis 07.30, 10.00, … untuk sesi yang belum punya jam tersimpan. */
@@ -110,6 +125,50 @@ export function PengaturanJadwal() {
   // tidak langsung tertimpa bawaan otomatis.
   const jamKe = (i: number) => jamSesi[i] ?? autoJam[i] ?? "";
 
+    // Muat daftar semua jadwal yang tersimpan
+  useEffect(() => {
+    if (setel === null) return;
+    let hidup = true;
+    setMemuatDaftar(true);
+    gasCall<{ daftar: Array<any> }>("getDaftarJadwal")
+      .then((res) => {
+        if (hidup) setDaftarJadwal(res.daftar);
+      })
+      .catch((err) => {
+        if (hidup) {
+          toast.error(err instanceof Error ? err.message : "Gagal memuat daftar jadwal.");
+        }
+      })
+      .finally(() => {
+        if (hidup) setMemuatDaftar(false);
+      });
+    return () => {
+      hidup = false;
+    };
+  }, [setel]);
+
+    const hapusJadwal = async (tanggal: string) => {
+    if (!confirm(`Hapus jadwal untuk tanggal ${labelTanggal(tanggal)}?`)) {
+      return;
+    }
+    setBusyHapus(tanggal);
+    try {
+      await gasCall("hapusJadwalHarian", { tanggal });
+      // Refresh daftar
+      const res = await gasCall<{ daftar: Array<any> }>("getDaftarJadwal");
+      setDaftarJadwal(res.daftar);
+      toast.success(`Jadwal ${labelTanggal(tanggal)} dihapus.`);
+      // Jika tanggal yang dihapus sedang dipilih, reset ke hari ini
+      if (tanggal === tanggal) {
+        setTanggal(hariIniISO());
+        setMemuatJadwal(true);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal menghapus jadwal.");
+    } finally {
+      setBusyHapus(null);
+    }
+  };
   // Muat setelan + setelan kop kartu (sekali).
   useEffect(() => {
     let hidup = true;
@@ -489,6 +548,110 @@ export function PengaturanJadwal() {
               >
                 <Printer className="size-4" /> Cetak jadwal harian
               </Button>
+               <Card className="border-border/70">
+            <div className="border-b border-border/60 px-5 py-4">
+              <h3 className="text-base font-extrabold tracking-tight">
+                Daftar Jadwal Tersimpan
+              </h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Semua tanggal pelaksanaan ujian yang sudah diatur — klik Edit untuk mengubah, 
+                atau Hapus untuk menghapus jadwal tanggal tersebut.
+              </p>
+            </div>
+            
+            {memuatDaftar ? (
+              <div className="p-5">
+                <Skeleton className="h-16 w-full" />
+              </div>
+            ) : daftarJadwal.length === 0 ? (
+              <div className="p-5 text-center">
+                <p className="text-sm text-muted-foreground">
+                  Belum ada jadwal yang tersimpan. Atur jadwal untuk tanggal tertentu di atas.
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border/60">
+                {daftarJadwal.map((jadwal) => (
+                  <div
+                    key={jadwal.tanggal}
+                    className={`flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between ${
+                      jadwal.tanggal === tanggal
+                        ? "bg-emerald-500/5"
+                        : ""
+                    }`}
+                  >
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-bold text-foreground">
+                          {labelTanggal(jadwal.tanggal)}
+                        </p>
+                        <span className="text-xs font-medium text-muted-foreground">
+                          ({jadwal.hari})
+                        </span>
+                        {jadwal.tanggal === tanggal && (
+                          <Badge
+                            variant="secondary"
+                            className="h-5 bg-emerald-500/20 text-emerald-700 text-[10px]"
+                          >
+                            Sedang dipilih
+                          </Badge>
+                        )}
+                      </div>
+                      
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {Array.from({ length: jadwal.jumlah_sesi }, (_, i) => {
+                          const sesi = i + 1;
+                          const jam = jadwal.jam[i] || "-";
+                          const mapel = jadwal.mapel[sesi] || "-";
+                          return (
+                            <span
+                              key={sesi}
+                              className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2.5 py-1 text-[11px] font-medium"
+                            >
+                              <span className="font-semibold">Sesi {sesi}:</span>
+                              <span>{jam}</span>
+                              <span className="text-muted-foreground">·</span>
+                              <span>{mapel}</span>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 text-xs"
+                        onClick={() => {
+                          setTanggal(jadwal.tanggal);
+                          setMemuatJadwal(true);
+                          toast.success(
+                            `Memuat jadwal ${labelTanggal(jadwal.tanggal)}...`,
+                          );
+                        }}
+                      >
+                        <Edit className="size-3.5" />
+                        Edit
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+                        disabled={busyHapus === jadwal.tanggal}
+                        onClick={() => hapusJadwal(jadwal.tanggal)}
+                      >
+                        <Trash2 className="size-3.5" />
+                        {busyHapus === jadwal.tanggal ? "Menghapus..." : "Hapus"}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
               <p className="text-[11px] leading-5 text-muted-foreground">
                 Simpan per tanggal — ulangi untuk hari ujian berikutnya. Cetak A4
                 lanskap: kolom <strong>mapel & pengawas</strong> per sesi;

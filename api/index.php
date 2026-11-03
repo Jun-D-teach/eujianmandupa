@@ -366,6 +366,8 @@ const AKSES = [
     'getUjianSiswa' => 0, 'getUjianInfo' => 0, 'getSoal' => 0,
     'getHasilSaya' => 0, 'submitJawaban' => 0, 'catatBukaKunci' => 0,
 
+       'getDaftarJadwal' => 2,      // admin only
+    'hapusJadwalHarian' => 2,    // admin only
     'getUjian' => 1, 'getSoalAdmin' => 1, 'getHasil' => 1, 'getLaporan' => 1, 'getSiswa' => 1,
     'getKelasList' => 1, 'tambahSiswa' => 1, 'ubahSiswa' => 1, 'hapusSiswa' => 1,
     'hapusSiswaMassal' => 1, 'importSiswa' => 1, 'buatAkunSiswa' => 1,
@@ -382,7 +384,9 @@ const AKSES = [
     // HANYA admin. Guru cuma boleh mengelola soal ujian yang ditugaskan padanya.
     'buatUjian' => 2, 'aturUjian' => 2, 'setAktifUjian' => 2,
     'setIzinUnduh' => 2, 'hapusUjian' => 2,
-
+    
+    'buatJadwalPengawasOtomatis' => 2,  // admin only
+    
     'getPengaturan' => 2, 'aturPin' => 2, 'buatPengguna' => 2,
     'ubahPeran' => 2, 'getPengguna' => 2, 'ubahPasswordPengguna' => 2,
     'ubahPasswordMassal' => 2, 'generatePasswordMassal' => 2,
@@ -533,7 +537,107 @@ function galat(string $pesan): array
 {
     return ['success' => false, 'message' => $pesan];
 }
-
+/**
+ * Buat jadwal pengawas otomatis berdasarkan jadwal harian yang sudah ada.
+ * Tidak perlu input tanggal/hari lagi — langsung pakai data dari jadwal_harian.
+ */
+function a_buatJadwalPengawasOtomatis(array $d): array
+{
+    // Ambil semua tanggal unik dari jadwal_harian
+    $tanggalRows = semua(
+        'SELECT DISTINCT tanggal, sesi, jam FROM jadwal_harian 
+         WHERE tanggal >= CURDATE()
+         ORDER BY tanggal, sesi'
+    );
+    
+    if (empty($tanggalRows)) {
+        return galat('Belum ada jadwal harian. Buat jadwal di menu "Jadwal harian peserta" terlebih dahulu.');
+    }
+    
+    // Ambil semua guru pengawas yang tersedia
+    $pengawas = daftarPengawas();
+    if (empty($pengawas)) {
+        return galat('Belum ada guru pengawas. Centang guru pengawas di menu Ruang ujian terlebih dahulu.');
+    }
+    
+    // Ambil semua ruang
+    $ruang = daftarRuang();
+    if (empty($ruang)) {
+        return galat('Belum ada ruang ujian. Buat daftar ruang terlebih dahulu.');
+    }
+    
+    // Ambil data nama guru
+    $namaGuru = [];
+    foreach (semua('SELECT nip, nama FROM guru') as $g) {
+        $namaGuru[strtolower(bersih($g['nip']))] = bersih($g['nama']);
+    }
+    
+    // Hapus jadwal pengawas lama
+    jalan('DELETE FROM jadwal_pengawas', []);
+    
+    // Kelompokkan sesi per tanggal
+    $jadwalPerTanggal = [];
+    foreach ($tanggalRows as $row) {
+        $tgl = bersih($row['tanggal']);
+        $sesi = (int)$row['sesi'];
+        $jam = bersih($row['jam']);
+        
+        if (!isset($jadwalPerTanggal[$tgl])) {
+            $jadwalPerTanggal[$tgl] = [];
+        }
+        $jadwalPerTanggal[$tgl][$sesi] = $jam;
+    }
+    
+    // Buat penugasan untuk setiap tanggal, sesi, dan ruang
+    $idx = 0;
+    $dibuat = 0;
+    
+    foreach ($jadwalPerTanggal as $tanggal => $sesiList) {
+        // Urutkan sesi
+        ksort($sesiList);
+        
+        foreach ($sesiList as $sesi => $jam) {
+            foreach ($ruang as $rg) {
+                // Gilir pengawas
+                $nip = $pengawas[$idx % count($pengawas)];
+                $idx++;
+                
+                jalan(
+                    'INSERT INTO jadwal_pengawas
+                     (id, hari_ke, tanggal, sesi, jam, ruang_id, ruang_nama, nip, nama)
+                     VALUES (?,?,?,?,?,?,?,?,?)',
+                    [
+                        idBaru('jp'),
+                        0, // hari_ke akan dihitung nanti
+                        $tanggal,
+                        $sesi,
+                        $jam,
+                        $rg['id'],
+                        $rg['nama'],
+                        $nip,
+                        $namaGuru[strtolower($nip)] ?? $nip,
+                    ]
+                );
+                $dibuat++;
+            }
+        }
+    }
+    
+    // Update hari_ke berdasarkan urutan tanggal
+    $tanggalUnik = array_keys($jadwalPerTanggal);
+    sort($tanggalUnik);
+    $hariKe = 1;
+    foreach ($tanggalUnik as $tgl) {
+        jalan('UPDATE jadwal_pengawas SET hari_ke = ? WHERE tanggal = ?', [$hariKe, $tgl]);
+        $hariKe++;
+    }
+    
+    return [
+        'success' => true, 
+        'dibuat' => $dibuat,
+        'message' => "$dibuat penugasan pengawas dibuat otomatis berdasarkan jadwal harian.",
+    ];
+}
 /* ------------------------------------------------------------------ */
 /* Handler aksi                                                        */
 /* ------------------------------------------------------------------ */
@@ -548,8 +652,11 @@ function jalankan(string $action, array $d): array
         case 'getUjianInfo': return a_getUjianInfo($d);
         case 'getUjian': return a_getUjian($d);
         case 'getSoal': return a_getSoal($d);
+            case 'getDaftarJadwal': return a_getDaftarJadwal();
+        case 'hapusJadwalHarian': return a_hapusJadwalHarian($d);
         case 'getSoalAdmin': return a_getSoalAdmin($d);
         case 'getHasil': return a_getHasil($d);
+        case 'buatJadwalPengawasOtomatis': return a_buatJadwalPengawasOtomatis($d);
         case 'getLaporan': return a_getLaporan($d);
         case 'getHasilSaya': return a_getHasilSaya($d);
         case 'getPengguna': return a_getPengguna();
@@ -3336,4 +3443,67 @@ function a_catatBukaKunci(array $d): array
         ]
     );
     return ['success' => true];
+}
+/**
+ * Dapatkan SEMUA tanggal yang sudah punya jadwal (untuk list di admin).
+ */
+function a_getDaftarJadwal(): array
+{
+    // Ambil semua tanggal unik dari tabel jadwal_harian
+    $rows = semua(
+        'SELECT DISTINCT tanggal, COUNT(*) as jumlah_sesi 
+         FROM jadwal_harian 
+         GROUP BY tanggal 
+         ORDER BY tanggal ASC'
+    );
+    
+    $daftar = [];
+    foreach ($rows as $r) {
+        $tgl = bersih($r['tanggal']);
+        
+        // Ambil info jam dari tabel pengaturan
+        $setJson = bacaPengaturan('jadwal_set:' . $tgl, '');
+        $jam = [];
+        if ($setJson !== '') {
+            $sj = json_decode($setJson, true);
+            if (is_array($sj) && is_array($sj['jam'])) {
+                $jam = $sj['jam'];
+            }
+        }
+        
+        // Ambil mapel per sesi
+        $mapel = [];
+        foreach (semua('SELECT sesi, mapel FROM jadwal_harian WHERE tanggal = ? ORDER BY sesi', [$tgl]) as $m) {
+            $mapel[(int)$m['sesi']] = bersih($m['mapel']);
+        }
+        
+        $daftar[] = [
+            'tanggal' => $tgl,
+            'hari' => namaHari($tgl),
+            'jumlah_sesi' => (int)$r['jumlah_sesi'],
+            'jam' => $jam,
+            'mapel' => $mapel,
+        ];
+    }
+    
+    return ['success' => true, 'daftar' => $daftar];
+}
+
+/**
+ * Hapus jadwal untuk satu tanggal tertentu.
+ */
+function a_hapusJadwalHarian(array $d): array
+{
+    $tanggal = bersih($d['tanggal'] ?? '');
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal)) {
+        return galat('Tanggal tidak valid.');
+    }
+    
+    // Hapus dari tabel jadwal_harian
+    jalan('DELETE FROM jadwal_harian WHERE tanggal = ?', [$tanggal]);
+    
+    // Hapus dari tabel pengaturan (jadwal_set:YYYY-MM-DD)
+    jalan('DELETE FROM pengaturan WHERE kunci = ?', ['jadwal_set:' . $tanggal]);
+    
+    return ['success' => true, 'message' => "Jadwal $tanggal dihapus."];
 }
