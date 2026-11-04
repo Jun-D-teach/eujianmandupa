@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   gasCall,
   type GuruGas,
+  type JadwalPengawasGas, // <-- TAMBAHKAN INI
   type PenempatanGas,
   type RuangGas,
   type RuangSetGas,
@@ -296,8 +297,9 @@ export function PengaturanRuang({
     
     setBusy(true);
     try {
-      const res = await gasCall<{ dibuat: number }>('buatJadwalPengawasOtomatis', {});
-      toast.success(res.message || `Jadwal dibuat: ${res.dibuat} penugasan.`);
+     // Tambahkan message?: string ke dalam tipe generic
+const res = await gasCall<{ dibuat: number; message?: string }>('buatJadwalPengawasOtomatis', {});
+toast.success(res.message || `Jadwal dibuat: ${res.dibuat} penugasan.`);
       
       // Reload jadwal
       const rs = await gasCall<RuangSetGas>('getRuangSet');
@@ -343,15 +345,15 @@ export function PengaturanRuang({
 
 
   // Fungsi cetak (sama seperti sebelumnya)
-  const cetakJadwal = () => {
-    if (!jadwal || jadwal.length === 0) {
-      toast.error('Belum ada jadwal pengawas.');
-      return;
-    }
-    
-    const html = jadwalPengawasHTML(jadwal);
-    cetakDokumen(html, 'Jadwal Pengawas Ujian', (pesan) => toast.error(pesan));
-  };
+ const cetakJadwal = () => {
+  if (!jadwal || jadwal.length === 0) {
+    toast.error('Belum ada jadwal pengawas.');
+    return;
+  }
+  // Tambahkan setKartu sebagai argumen pertama
+  const html = jadwalPengawasHTML(setKartu, jadwal); 
+  cetakDokumen(html, 'Jadwal Pengawas Ujian', (pesan) => toast.error(pesan));
+};
 
   /* ---------------- d. penempatan & cetakan ---------------- */
   const buatTempat = async () => {

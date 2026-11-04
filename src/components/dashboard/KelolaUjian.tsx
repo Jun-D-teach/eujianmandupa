@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
+// Tambahkan import di bagian atas file
+import { downloadTemplateExcel, parseExcelFile } from '@/lib/soal-import';
+import { beriNomorDanPilihanOtomatis, hapusNomorDanPilihan } from "@/lib/soal-import";
 import { gasCall, tokenValid, type BacaanGas, type GuruGas, type PenggunaGas, type RuangSetGas, type SoalGas, type SiswaGas, type UjianGas } from "@/lib/api";
 import {
   cetakKartu,
@@ -88,6 +91,15 @@ import { toast } from "sonner";
 
 const PILIHAN = ["A", "B", "C", "D", "E"] as const;
 const OPSI_WAJIB = ["A", "B", "C", "D"] as const;
+const FIELD_OPSI = {
+  A: "opsi_a",
+  B: "opsi_b",
+  C: "opsi_c",
+  D: "opsi_d",
+  E: "opsi_e",
+} as const;
+const RE_HURUF_DEPAN = /^[A-E][\s.)\-–—:]+/i;
+const MAKS_GAMBAR_SOAL = 300 * 1024;
 /** Pilihan tipe soal — pg dinilai otomatis, lainnya dikoreksi manual. */
 const TIPE_SOAL = [
   { nilai: "pg", label: "Pilihan ganda", keterangan: "Dinilai otomatis" },
@@ -107,18 +119,7 @@ const FORM_KOSONG = {
   gambar: "",
 };
 
-/** Batas data URL gambar soal — menjaga kuota penyimpanan offline HP siswa. */
-const MAKS_GAMBAR_SOAL = 350_000;
-
-/** Deteksi huruf "A." / "B)" di depan teks pilihan. */
-const RE_HURUF_DEPAN = /^[A-E][\s.)\-–—:]+/i;
-
-/** Kunci state form untuk sebuah huruf opsi: "A" → "opsi_a".
- *  Selalu huruf kecil supaya value input, handler set(), dan muatan simpan
- *  memakai kunci yang sama (dulu "opsi_A" membuat input kosong walau
- *  "Pecah otomatis" sudah mengisi, dan simpan crash membaca undefined). */
-const fieldOpsi = (huruf: string) =>
-  `opsi_${huruf.toLowerCase()}` as keyof typeof FORM_KOSONG;
+const fieldOpsi = (huruf: (typeof PILIHAN)[number]) => FIELD_OPSI[huruf];
 
 /** Teks pilihan untuk daftar admin — beri huruf A–E, lalu render format
  *  (tebal/miring) jadi HTML aman (lihat src/lib/soal-format.ts). */
@@ -1396,7 +1397,39 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
   const [pratinjau, setPratinjau] = useState<BarisSoalOtomat[] | null>(null);
   const [imporBusy, setImporBusy] = useState(false);
   const refFileImpor = useRef<HTMLInputElement | null>(null);
+    // State & Fungsi khusus Import Excel & Auto Numbering (Hanya di dalam PanelSoal)
+  const [fileExcel, setFileExcel] = useState<File | null>(null);
+  const [teksManual, setTeksManual] = useState("");
+  const [showAutoNumber, setShowAutoNumber] = useState(false);
 
+ const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  try {
+    const soalArray = await parseExcelFile(file);
+    // Konversi ke format BarisSoalOtomat yang benar
+    const previewData: BarisSoalOtomat[] = soalArray.map((s, index) => {
+      const opsi = [s.opsi_a, s.opsi_b, s.opsi_c, s.opsi_d, s.opsi_e || ""];
+      return {
+        nomor: String(index + 1),
+        pertanyaan: s.pertanyaan,
+        opsi,
+        opsiMentah: opsi,
+        kunci: (s.kunci_jawaban || "") as "A" | "B" | "C" | "D" | "E" | "",
+      };
+    });
+    setPratinjau(previewData);
+    setImporBuka(true);
+    toast.success(`${soalArray.length} soal berhasil dibaca dari Excel.`);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : 'Gagal membaca file Excel.');
+  }
+};
+
+  const handleDownloadTemplate = () => {
+    downloadTemplateExcel();
+    toast.success('Template Excel berhasil diunduh.');
+  };
   const muat = () => {
     setSoal(null);
     gasCall<{ soal: SoalGas[]; bacaan?: BacaanGas[] }>("getSoalAdmin", { ujian_id: ujianId })
@@ -1705,6 +1738,69 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       );
     }
   };
+
+ const konversiTeksManualKeSoal = (): BarisSoalOtomat[] => {
+  const barisList = teksManual.split(/\r?\n/).map(b => b.trim()).filter(b => b !== '');
+  const soal: BarisSoalOtomat[] = [];
+  let current: Partial<BarisSoalOtomat> | null = null;
+  let pilihanCount = 0;
+  
+  for (const b of barisList) {
+    // Deteksi nomor soal
+    const matchNomor = b.match(/^\d{1,3}[.)-\s]\s*(.+)$/);
+    if (matchNomor && (!current || pilihanCount >= 2)) {
+      if (current && current.pertanyaan) {
+        soal.push({
+          nomor: current.nomor || "",
+          pertanyaan: current.pertanyaan,
+          opsi: current.opsi || ["", "", "", "", ""],
+          opsiMentah: current.opsiMentah || current.opsi || ["", "", "", "", ""],
+          kunci: current.kunci || "",
+        });
+      }
+      current = {
+        nomor: matchNomor[0].trim(),
+        pertanyaan: matchNomor[1],
+        opsi: ["", "", "", "", ""],
+        opsiMentah: ["", "", "", "", ""],
+        kunci: "",
+      };
+      pilihanCount = 0;
+      continue;
+    }
+    
+    // Deteksi pilihan
+    const matchPilihan = b.match(/^[A-Ea-e][\.\)\-\s]\s*(.+)$/);
+    if (matchPilihan && current) {
+      const huruf = matchPilihan[0].charAt(0).toUpperCase();
+      const index = huruf.charCodeAt(0) - "A".charCodeAt(0);
+      if (index >= 0 && index < 5 && current.opsi) {
+        current.opsi[index] = matchPilihan[1];
+        if (current.opsiMentah) current.opsiMentah[index] = b;
+        pilihanCount++;
+      }
+      continue;
+    }
+    
+    // Jika bukan nomor/pilihan, tambahkan ke pertanyaan (multi-baris)
+    if (current && pilihanCount === 0) {
+      current.pertanyaan = (current.pertanyaan || "") + " " + b;
+    }
+  }
+  
+  // Simpan soal terakhir
+  if (current && current.pertanyaan) {
+    soal.push({
+      nomor: current.nomor || "",
+      pertanyaan: current.pertanyaan,
+      opsi: current.opsi || ["", "", "", "", ""],
+      opsiMentah: current.opsiMentah || current.opsi || ["", "", "", "", ""],
+      kunci: current.kunci || "",
+    });
+  }
+  
+  return soal;
+};
 
   /* ---------------- Impor dari Word (dialog) ---------------- */
 
@@ -2322,13 +2418,175 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
             >
               <Upload className="size-4" /> Pilih file .docx
             </Button>
+            {/* Tombol Download Template */}
+<div className="flex flex-wrap gap-2">
+  <Button
+    type="button"
+    variant="outline"
+    size="sm"
+    onClick={handleDownloadTemplate}
+    className="gap-2 border-emerald-600 text-emerald-700 hover:bg-emerald-50"
+  >
+    <Download className="size-4" />
+    Download Template Excel
+  </Button>
+</div>
+
+{/* Tombol Upload Excel */}
+<div className="space-y-2">
+  <Label htmlFor="file-excel" className="text-sm font-semibold">
+    Atau upload file Excel (.xlsx, .xls, .csv)
+  </Label>
+  <div className="flex items-center gap-2">
+    <Input
+      id="file-excel"
+      type="file"
+      accept=".xlsx,.xls,.csv"
+      onChange={handleExcelUpload}
+      className="flex-1"
+    />
+    {fileExcel && (
+      <span className="text-xs text-muted-foreground">
+        {fileExcel.name}
+      </span>
+    )}
+  </div>
+  <p className="text-[11px] text-muted-foreground">
+    Format: pertanyaan | opsi_a | opsi_b | opsi_c | opsi_d | opsi_e | kunci_jawaban | tipe
+  </p>
+</div>
             {namaFileImpor && (
               <span className="text-xs font-semibold text-muted-foreground">
                 {namaFileImpor}
               </span>
             )}
           </div>
-
+{/* FITUR AUTO NUMBERING - Tambahkan sebelum textarea import */}
+<Card className="border-emerald-500/30 bg-emerald-500/5">
+  <div className="p-4">
+    <div className="flex items-center justify-between mb-3">
+      <div>
+        <p className="text-sm font-bold text-emerald-900">
+          ✨ Auto Numbering (Beri Nomor Otomatis)
+        </p>
+        <p className="text-xs text-emerald-700 mt-1">
+          Paste teks dari Word, lalu klik tombol untuk otomatis tambah nomor soal & pilihan A-E
+        </p>
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => setShowAutoNumber(!showAutoNumber)}
+        className="gap-2 border-emerald-600 text-emerald-700 hover:bg-emerald-100"
+      >
+        {showAutoNumber ? "Tutup" : "Buka Editor"}
+      </Button>
+    </div>
+    
+    {showAutoNumber && (
+      <div className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => {
+              const hasil = beriNomorDanPilihanOtomatis(teksManual);
+              setTeksManual(hasil);
+              toast.success("Nomor soal & pilihan ditambahkan otomatis!");
+            }}
+            disabled={!teksManual.trim()}
+            className="gap-2 bg-emerald-600 hover:bg-emerald-700"
+          >
+            <span>🔢</span> Beri Nomor Otomatis
+          </Button>
+          
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const hasil = hapusNomorDanPilihan(teksManual);
+              setTeksManual(hasil);
+              toast.success("Semua nomor & pilihan dihapus — siap dinomori ulang.");
+            }}
+            disabled={!teksManual.trim()}
+            className="gap-2"
+          >
+            <span>🧹</span> Hapus Semua Nomor
+          </Button>
+          
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setTeksManual("")}
+            disabled={!teksManual}
+          >
+            <span>🗑️</span> Kosongkan
+          </Button>
+        {showAutoNumber && teksManual.trim() && (
+  <Button
+    type="button"
+    onClick={async () => {
+      const soalArray = konversiTeksManualKeSoal();
+      if (soalArray.length === 0) {
+        toast.error("Tidak ada soal yang terdeteksi. Pastikan format: nomor soal + 5 pilihan.");
+        return;
+      }
+      try {
+        // Konversi BarisSoalOtomat ke format yang diharapkan backend
+        const soalUntukBackend = soalArray.map(s => ({
+          pertanyaan: s.pertanyaan,
+          opsi_a: s.opsi[0] || "",
+          opsi_b: s.opsi[1] || "",
+          opsi_c: s.opsi[2] || "",
+          opsi_d: s.opsi[3] || "",
+          opsi_e: s.opsi[4] || "",
+          kunci_jawaban: s.kunci || "",
+        }));
+        
+        const res = await gasCall<{ masuk: number; lewati: number }>("imporSoal", {
+          ujian_id: ujianId,
+          soal: soalUntukBackend,
+        });
+        toast.success(`${res.masuk} soal diimpor dari teks manual.`);
+        setTeksManual("");
+        setShowAutoNumber(false);
+        // Refresh daftar soal
+        muat();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Gagal mengimpor soal.");
+      }
+    }}
+    className="gap-2 bg-emerald-600 hover:bg-emerald-700"
+  >
+    <span>📥</span> Import Soal dari Teks
+  </Button>
+)}
+        </div>
+        
+        <textarea
+          value={teksManual}
+          onChange={(e) => setTeksManual(e.target.value)}
+          placeholder={`Paste teks dari Word di sini...\n\nContoh format yang akan otomatis dinomori:\nApa ibu kota Indonesia?\nJakarta\nBandung\nSurabaya\nSemarang\nMedan\n\nBerapa 2 + 2?\n3\n4\n5\n6\n7`}
+          rows={15}
+          className="w-full rounded-lg border border-emerald-300 bg-white p-3 font-mono text-sm leading-relaxed focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+        />
+        
+        <div className="flex items-center justify-between text-xs text-emerald-700">
+          <span>
+            💡 Tips: Hapus dulu semua nomor lama dengan tombol "Hapus Semua Nomor", 
+            lalu klik "Beri Nomor Otomatis" untuk hasil yang rapi.
+          </span>
+          <span className="font-mono">
+            {teksManual.split('\n').filter(l => l.trim()).length} baris
+          </span>
+        </div>
+      </div>
+    )}
+  </div>
+</Card>
           <Textarea
             value={teksImpor}
             onChange={(e) => setTeksImpor(e.target.value)}

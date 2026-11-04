@@ -478,7 +478,131 @@ export async function bacaDocx(file: File): Promise<string> {
   }
   return xmlKeTeks(new TextDecoder("utf-8").decode(xml));
 }
+/**
+ * BERI NOMOR SOAL + PILIHAN A-E OTOMATIS
+ * 
+ * Cara pakai:
+ * 1. Paste teks dari Word ke textarea
+ * 2. Blok teks yang mau dinomori (misal soal 1-5)
+ * 3. Klik tombol "Beri Nomor Otomatis"
+ * 4. Sistem otomatis tambah "1.", "2.", dst. dan "A.", "B.", dst.
+ * 
+ * Logika:
+ * - Deteksi paragraf yang terlihat seperti pertanyaan (panjang > 20 char, tidak mulai dengan A-E)
+ * - Deteksi paragraf yang terlihat seperti pilihan (pendek, mulai dengan A-E atau hanya teks)
+ * - Tambahkan nomor urut untuk pertanyaan
+ * - Tambahkan A. B. C. D. E. untuk 5 baris berikutnya
+ */
+export function beriNomorDanPilihanOtomatis(teks: string): string {
+  if (!teks.trim()) return teks;
+  
+  const baris = teks.split(/\r?\n/);
+  const hasil: string[] = [];
+  let nomorSoal = 1;
+  let status: 'cari-soal' | 'cari-pilihan' = 'cari-soal';
+  let pilihanIndex = 0;
+  const HURUF_PILIHAN = ['A', 'B', 'C', 'D', 'E'];
+  
+  // Regex untuk deteksi nomor soal yang sudah ada
+  const regexNomorAda = /^\d{1,3}[\.\)\-\s]/;
+  // Regex untuk deteksi pilihan yang sudah ada
+  const regexPilihanAda = /^[A-Ea-e][\.\)\-\s]/;
+  
+  for (let i = 0; i < baris.length; i++) {
+    const barisAsli = baris[i];
+    const barisTrim = barisAsli.trim();
+    
+    // Skip baris kosong
+    if (barisTrim === '') {
+      hasil.push(barisAsli);
+      continue;
+    }
+    
+    // Jika baris sudah punya nomor soal (1., 2., dst), reset status
+    if (regexNomorAda.test(barisTrim)) {
+      // Extract nomor dari teks yang sudah ada
+      const match = barisTrim.match(/^(\d{1,3})/);
+      if (match) {
+        nomorSoal = parseInt(match[1]);
+      }
+      status = 'cari-pilihan';
+      pilihanIndex = 0;
+      hasil.push(barisAsli);
+      continue;
+    }
+    
+    // Jika baris sudah punya pilihan (A., B., dst), skip
+    if (regexPilihanAda.test(barisTrim)) {
+      pilihanIndex++;
+      hasil.push(barisAsli);
+      continue;
+    }
+    
+    // LOGIKA AUTO-NOMORING
+    if (status === 'cari-soal') {
+      // Baris ini kemungkinan adalah pertanyaan
+      // Tambahkan nomor soal
+      hasil.push(`${nomorSoal}. ${barisTrim}`);
+      status = 'cari-pilihan';
+      pilihanIndex = 0;
+      nomorSoal++;
+    } else {
+      // status === 'cari-pilihan'
+      // Tambahkan huruf pilihan
+      if (pilihanIndex < 5) {
+        const huruf = HURUF_PILIHAN[pilihanIndex];
+        hasil.push(`${huruf}. ${barisTrim}`);
+        pilihanIndex++;
+        
+        // Jika sudah 5 pilihan, kembali ke mode cari soal
+        if (pilihanIndex === 5) {
+          status = 'cari-soal';
+        }
+      } else {
+        // Sudah lebih dari 5 baris, kemungkinan ini soal baru atau teks tambahan
+        // Anggap sebagai soal baru
+        hasil.push(`${nomorSoal}. ${barisTrim}`);
+        status = 'cari-pilihan';
+        pilihanIndex = 0;
+        nomorSoal++;
+      }
+    }
+  }
+  
+  return hasil.join('\n');
+}
 
+/**
+ * HAPUS SEMUA NOMOR DAN PILIHAN
+ * Berguna untuk reset sebelum auto-numbering
+ */
+/**
+ * HAPUS SEMUA NOMOR DAN PILIHAN
+ * Berguna untuk reset sebelum auto-numbering
+ */
+export function hapusNomorDanPilihan(teks: string): string {
+  // PERBAIKAN: Ganti nama variabel jadi 'barisList'
+  const barisList = teks.split(/\r?\n/);
+  const hasil: string[] = [];
+  
+  // PERBAIKAN: Ganti 'for (const baris of baris)' jadi 'for (const b of barisList)'
+  for (const b of barisList) {
+    const trim = b.trim();
+    if (trim === '') {
+      hasil.push(b);
+      continue;
+    }
+    
+    // Hapus nomor soal di awal (1., 2., 1), dst.)
+    let bersih = trim.replace(/^\d{1,3}[\.\)\-\s]+\s*/, '');
+    // Hapus pilihan di awal (A., B., a), dst.)
+    bersih = bersih.replace(/^[A-Ea-e][\.\)\-\s]+\s*/, '');
+    
+    hasil.push(bersih);
+  }
+  
+  return hasil.join('\n');
+}
 /**
  * Baca file soal apa pun yang didukung → teks.
  * .docx dibaca otomatis; .doc/RTF lama diminta disalin-tempel.
@@ -499,4 +623,130 @@ export async function bacaFileSoal(file: File): Promise<string> {
     throw new Error("File RTF tidak didukung — salin-tempel isinya ke kotak teks.");
   }
   return teks;
+}
+import * as XLSX from 'xlsx';
+
+/**
+ * Generate template Excel untuk import soal
+ */
+export function downloadTemplateExcel(): void {
+  // Header template
+  const headers = ['pertanyaan', 'opsi_a', 'opsi_b', 'opsi_c', 'opsi_d', 'opsi_e', 'kunci_jawaban', 'tipe'];
+  
+  // Contoh data
+  const contoh = [
+    [
+      'Apa ibu kota Indonesia?',
+      'Jakarta',
+      'Bandung',
+      'Surabaya',
+      'Semarang',
+      'Medan',
+      'A',
+      'pg'
+    ],
+    [
+      'Berapa hasil 2 + 2?',
+      '3',
+      '4',
+      '5',
+      '6',
+      '7',
+      'B',
+      'pg'
+    ],
+    [
+      'Jelaskan pengertian fotosintesis!',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      'essay'
+    ],
+  ];
+  
+  // Buat worksheet
+  const wsData = [headers, ...contoh];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  
+  // Atur lebar kolom
+  ws['!cols'] = [
+    { wch: 50 }, // pertanyaan
+    { wch: 20 }, // opsi_a
+    { wch: 20 }, // opsi_b
+    { wch: 20 }, // opsi_c
+    { wch: 20 }, // opsi_d
+    { wch: 20 }, // opsi_e
+    { wch: 15 }, // kunci_jawaban
+    { wch: 10 }, // tipe
+  ];
+  
+  // Buat workbook
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Template Soal');
+  
+  // Download
+  XLSX.writeFile(wb, 'Template_Impor_Soal.xlsx');
+}
+
+/**
+ * Parse file Excel menjadi array soal
+ */
+export function parseExcelFile(file: File): Promise<Array<{
+  pertanyaan: string;
+  opsi_a: string;
+  opsi_b: string;
+  opsi_c: string;
+  opsi_d: string;
+  opsi_e: string;
+  kunci_jawaban: string;
+  tipe: string;
+}>> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = (e) => {
+      try {
+        const data = e.target?.result;
+        const workbook = XLSX.read(data, { type: 'array' });
+        
+        // Ambil sheet pertama
+        const firstSheet = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheet];
+        
+        // Convert ke JSON
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        
+        if (jsonData.length < 2) {
+          reject(new Error('File Excel kosong atau tidak ada data.'));
+          return;
+        }
+        
+        // Baris pertama adalah header, data mulai dari baris kedua
+        const rows = jsonData.slice(1) as any[][];
+        
+        const soal = rows
+          .filter(row => row[0] && String(row[0]).trim() !== '') // Filter baris kosong
+          .map(row => ({
+            pertanyaan: String(row[0] || '').trim(),
+            opsi_a: String(row[1] || '').trim(),
+            opsi_b: String(row[2] || '').trim(),
+            opsi_c: String(row[3] || '').trim(),
+            opsi_d: String(row[4] || '').trim(),
+            opsi_e: String(row[5] || '').trim(),
+            kunci_jawaban: String(row[6] || '').trim().toUpperCase(),
+            tipe: String(row[7] || 'pg').trim().toLowerCase(),
+          }));
+        
+        resolve(soal);
+      } catch (err) {
+        reject(new Error('Gagal membaca file Excel. Pastikan format benar.'));
+      }
+    };
+    
+    reader.onerror = () => reject(new Error('Gagal membaca file.'));
+    reader.readAsArrayBuffer(file);
+  });
 }
