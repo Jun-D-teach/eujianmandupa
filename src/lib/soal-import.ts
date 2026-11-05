@@ -10,6 +10,9 @@
  *     (tanpa pustaka tambahan; memakai DecompressionStream bawaan browser)
  *  2. Tempel-teks (salin-tempel dari Word / Google Docs)
  *
+ * Rumus Word (Insert → Equation) di file .docx diubah jadi teks linear
+ * (pecahan, pangkat, akar, sigma, integral, dst) — lihat rumusKeTeks().
+ *
  * Heuristik pemecahan:
  *  - Soal baru : baris bernomor "1." "2)" "3 -" "4:" atau label "Soal 5."
  *  - Pilihan   : penanda "A." "B)" "C:" "D -" — boleh satu baris per pilihan
@@ -173,12 +176,14 @@ function cariPenanda(baris: string, longgar = false): Penanda[] {
       // terkena: di awal baris, setelah spasi, atau huruf besar menempel
       // ("VenusB. Bumi" hasil run Word yang menempel).
       const sebelum = m.index > 0 ? baris[m.index - 1] : "";
-      if (
-        m.index > 0 &&
-        m[1] === m[1].toLowerCase() &&
-        /[a-z]/i.test(sebelum)
-      ) {
-        continue;
+      if (m.index > 0) {
+        const kecil = m[1] === m[1].toLowerCase();
+        // Huruf kecil hanya penanda bila diawali spasi, "(" / "[" atau
+        // penanda format — "(a+b)" / "(√c)" dari rumus BUKAN penanda "b)".
+        if (kecil && !/[\s(\[*_~]/.test(sebelum)) continue;
+        // Huruf besar yang menempel operator matematika ("A+B)", "x=B.")
+        // juga bagian rumus, bukan penanda pilihan.
+        if (!kecil && /[+−×÷=/^<>√]/.test(sebelum)) continue;
       }
     }
     const pos = m.index + (longgar ? 0 : m[1].length);
@@ -440,8 +445,228 @@ async function ambilDariZip(
   return null;
 }
 
+/* ------------------------------------------------------------------ */
+/* Rumus Word (Equation / OMML) → teks linear Unicode                  */
+/* ------------------------------------------------------------------ */
+/*
+ * Rumus yang diketik dengan Insert → Equation disimpan Word sebagai tag
+ * <m:f> (pecahan), <m:sSup> (pangkat), <m:rad> (akar), dst. Tanpa
+ * penanganan khusus tag itu dibuang dan strukturnya hilang ("½" → "12").
+ * Di sini rumus diubah jadi TEKS BIASA yang terbaca: (x+1)/(x−2), x², √(x+1),
+ * ∑₁ⁿ … — murni teks, jadi disimpan & ditampilkan persis seperti soal biasa
+ * (tanpa pustaka, tanpa jaringan → aman untuk mode offline siswa).
+ */
+
+const NS_M = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+const NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+/** Hanya karakter yang glyph-nya ada di hampir semua HP (angka & tanda). */
+const NAIK: Record<string, string> = {
+  "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+  "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+  "+": "⁺", "-": "⁻", "−": "⁻", "=": "⁼", "(": "⁽", ")": "⁾", n: "ⁿ",
+};
+const TURUN: Record<string, string> = {
+  "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
+  "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+  "+": "₊", "-": "₋", "−": "₋", "=": "₌", "(": "₍", ")": "₎",
+};
+
+function petakan(s: string, peta: Record<string, string>): string | null {
+  if (!s) return "";
+  let out = "";
+  for (const c of s) {
+    const m = peta[c];
+    if (!m) return null;
+    out += m;
+  }
+  return out;
+}
+
+/** Kurung seimbang yang membungkus seluruh teks: "(a+b)". */
+function sudahDikurung(s: string): boolean {
+  if (!s.startsWith("(") || !s.endsWith(")")) return false;
+  let d = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "(") d++;
+    else if (s[i] === ")") d--;
+    if (d === 0 && i < s.length - 1) return false;
+  }
+  return d === 0;
+}
+
+/** Bungkus dengan kurung bila lebih dari satu "suku" sederhana. */
+function bungkus(s: string): string {
+  if (/^[\p{L}\p{N}.,]+$/u.test(s) || sudahDikurung(s)) return s;
+  return `(${s})`;
+}
+
+function naik(s: string): string {
+  if (!s) return "";
+  return petakan(s, NAIK) ?? "^" + bungkus(s);
+}
+function turun(s: string): string {
+  if (!s) return "";
+  return petakan(s, TURUN) ?? "_" + bungkus(s);
+}
+
+function anakM(el: Element, nama: string): Element | null {
+  for (const c of Array.from(el.children)) {
+    if (c.localName === nama && c.namespaceURI === NS_M) return c;
+  }
+  return null;
+}
+
+/** Nilai m:val pada elemen properti (mis. dPr/begChr); `bawaan` bila tak ada. */
+function nilaiProp(el: Element, prop: string, nama: string, bawaan: string): string {
+  const p = anakM(el, prop);
+  const n = p ? anakM(p, nama) : null;
+  if (!n) return bawaan;
+  return n.hasAttributeNS(NS_M, "val") ? (n.getAttributeNS(NS_M, "val") ?? "") : bawaan;
+}
+
+function benar(v: string): boolean {
+  return v === "1" || v === "on" || v === "true";
+}
+
+function isiRumus(el: Element): string {
+  let out = "";
+  for (const c of Array.from(el.children)) {
+    if (c.namespaceURI === NS_M && c.localName.endsWith("Pr")) continue;
+    out += rumus(c);
+  }
+  return out;
+}
+
+function bagian(el: Element, nama: string): string {
+  const a = anakM(el, nama);
+  return a ? rumus(a) : "";
+}
+
+function rumus(el: Element): string {
+  switch (el.localName) {
+    case "t":
+      return el.textContent ?? "";
+    case "r": {
+      let s = "";
+      for (const c of Array.from(el.children)) {
+        if (c.localName === "t") s += c.textContent ?? "";
+      }
+      return s;
+    }
+    case "f": {
+      const n = bagian(el, "num");
+      const d = bagian(el, "den");
+      const tipe = nilaiProp(el, "fPr", "type", "bar");
+      if (tipe === "lin") return `${n}/${d}`;
+      if (tipe === "noBar") return `(${n}; ${d})`;
+      return `${bungkus(n)}/${bungkus(d)}`;
+    }
+    case "sSup":
+      return bagian(el, "e") + naik(bagian(el, "sup"));
+    case "sSub":
+      return bagian(el, "e") + turun(bagian(el, "sub"));
+    case "sSubSup":
+      return bagian(el, "e") + turun(bagian(el, "sub")) + naik(bagian(el, "sup"));
+    case "sPre":
+      return turun(bagian(el, "sub")) + naik(bagian(el, "sup")) + bagian(el, "e");
+    case "rad": {
+      const e = bungkus(bagian(el, "e"));
+      const deg = bagian(el, "deg").trim();
+      if (!deg || benar(nilaiProp(el, "radPr", "degHide", "0"))) return "√" + e;
+      if (deg === "3") return "∛" + e;
+      if (deg === "4") return "∜" + e;
+      return naik(deg) + "√" + e;
+    }
+    case "d": {
+      const beg = nilaiProp(el, "dPr", "begChr", "(");
+      const end = nilaiProp(el, "dPr", "endChr", ")");
+      const sep = nilaiProp(el, "dPr", "sepChr", "|");
+      const bagianE = Array.from(el.children)
+        .filter((c) => c.namespaceURI === NS_M && c.localName === "e")
+        .map(rumus);
+      return beg + bagianE.join(sep) + end;
+    }
+    case "nary": {
+      const chr = nilaiProp(el, "naryPr", "chr", "∫");
+      const sub = benar(nilaiProp(el, "naryPr", "subHide", "0")) ? "" : bagian(el, "sub");
+      const sup = benar(nilaiProp(el, "naryPr", "supHide", "0")) ? "" : bagian(el, "sup");
+      return `${chr}${turun(sub)}${naik(sup)} ${bagian(el, "e")}`.trim();
+    }
+    case "func": {
+      const nama = bagian(el, "fName");
+      const e = bagian(el, "e");
+      return e.startsWith("(") ? nama + e : `${nama} ${e}`;
+    }
+    case "limLow":
+      return bagian(el, "e") + turun(bagian(el, "lim"));
+    case "limUpp":
+      return bagian(el, "e") + naik(bagian(el, "lim"));
+    case "acc":
+      return bagian(el, "e") + nilaiProp(el, "accPr", "chr", "̂");
+    case "bar": {
+      const bawah = nilaiProp(el, "barPr", "pos", "top") === "bot";
+      const tanda = bawah ? "̲" : "̅";
+      return Array.from(bagian(el, "e")).map((c) => c + tanda).join("");
+    }
+    case "eqArr":
+      return Array.from(el.children)
+        .filter((c) => c.namespaceURI === NS_M && c.localName === "e")
+        .map(rumus)
+        .join(" ; ");
+    case "m": {
+      const baris = Array.from(el.children)
+        .filter((c) => c.namespaceURI === NS_M && c.localName === "mr")
+        .map((mr) =>
+          Array.from(mr.children)
+            .filter((c) => c.namespaceURI === NS_M && c.localName === "e")
+            .map(rumus)
+            .join(", "),
+        );
+      return `[${baris.join("; ")}]`;
+    }
+    default:
+      return isiRumus(el);
+  }
+}
+
+function escapeXml(t: string): string {
+  return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Ganti tiap blok rumus <m:oMath>/<m:oMathPara> dengan teks linearnya.
+ * Bila ada yang gagal dibaca, blok itu dibiarkan (jatuh ke perilaku lama:
+ * tag dibuang) — impor tidak pernah gagal gara-gara rumus.
+ */
+function rumusKeTeks(xml: string): string {
+  if (typeof DOMParser === "undefined" || !/<m:oMath[\s>]/.test(xml)) return xml;
+  return xml.replace(
+    /<m:oMathPara>[\s\S]*?<\/m:oMathPara>|<m:oMath>[\s\S]*?<\/m:oMath>/g,
+    (blok) => {
+      try {
+        // Properti font (w:rPr) tidak berisi teks rumus — buang agar parser
+        // tidak tersangkut atribut namespace tambahan (w14, dll).
+        const bersih = blok
+          .replace(/<w:rPr\s*\/>/g, "")
+          .replace(/<w:rPr>[\s\S]*?<\/w:rPr>/g, "");
+        const doc = new DOMParser().parseFromString(
+          `<r xmlns:m="${NS_M}" xmlns:w="${NS_W}">${bersih}</r>`,
+          "application/xml",
+        );
+        if (doc.getElementsByTagName("parsererror").length > 0) return blok;
+        const teks = isiRumus(doc.documentElement).replace(/\s+/g, " ").trim();
+        return teks ? escapeXml(` ${teks} `) : blok;
+      } catch {
+        return blok;
+      }
+    },
+  );
+}
+
 /** XML word/document.xml → teks biasa (paragraf & sel tabel jadi baris). */
-function xmlKeTeks(xml: string): string {
+function xmlKeTeks(xmlMentah: string): string {
+  const xml = rumusKeTeks(xmlMentah);
   let t = xml
     .replace(/<w:tab[^>]*\/>/g, "\t")
     .replace(/<w:(?:br|cr)[^>]*\/>/g, "\n")
@@ -459,7 +684,7 @@ function xmlKeTeks(xml: string): string {
     )
     .replace(/&#(\d+);/g, (_, n: string) => String.fromCodePoint(Number(n)))
     .replace(/&amp;/g, "&");
-  return t.replace(/\n{3,}/g, "\n\n").trim();
+  return t.replace(/ {2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** Baca file .docx menjadi teks. */
@@ -478,131 +703,7 @@ export async function bacaDocx(file: File): Promise<string> {
   }
   return xmlKeTeks(new TextDecoder("utf-8").decode(xml));
 }
-/**
- * BERI NOMOR SOAL + PILIHAN A-E OTOMATIS
- * 
- * Cara pakai:
- * 1. Paste teks dari Word ke textarea
- * 2. Blok teks yang mau dinomori (misal soal 1-5)
- * 3. Klik tombol "Beri Nomor Otomatis"
- * 4. Sistem otomatis tambah "1.", "2.", dst. dan "A.", "B.", dst.
- * 
- * Logika:
- * - Deteksi paragraf yang terlihat seperti pertanyaan (panjang > 20 char, tidak mulai dengan A-E)
- * - Deteksi paragraf yang terlihat seperti pilihan (pendek, mulai dengan A-E atau hanya teks)
- * - Tambahkan nomor urut untuk pertanyaan
- * - Tambahkan A. B. C. D. E. untuk 5 baris berikutnya
- */
-export function beriNomorDanPilihanOtomatis(teks: string): string {
-  if (!teks.trim()) return teks;
-  
-  const baris = teks.split(/\r?\n/);
-  const hasil: string[] = [];
-  let nomorSoal = 1;
-  let status: 'cari-soal' | 'cari-pilihan' = 'cari-soal';
-  let pilihanIndex = 0;
-  const HURUF_PILIHAN = ['A', 'B', 'C', 'D', 'E'];
-  
-  // Regex untuk deteksi nomor soal yang sudah ada
-  const regexNomorAda = /^\d{1,3}[\.\)\-\s]/;
-  // Regex untuk deteksi pilihan yang sudah ada
-  const regexPilihanAda = /^[A-Ea-e][\.\)\-\s]/;
-  
-  for (let i = 0; i < baris.length; i++) {
-    const barisAsli = baris[i];
-    const barisTrim = barisAsli.trim();
-    
-    // Skip baris kosong
-    if (barisTrim === '') {
-      hasil.push(barisAsli);
-      continue;
-    }
-    
-    // Jika baris sudah punya nomor soal (1., 2., dst), reset status
-    if (regexNomorAda.test(barisTrim)) {
-      // Extract nomor dari teks yang sudah ada
-      const match = barisTrim.match(/^(\d{1,3})/);
-      if (match) {
-        nomorSoal = parseInt(match[1]);
-      }
-      status = 'cari-pilihan';
-      pilihanIndex = 0;
-      hasil.push(barisAsli);
-      continue;
-    }
-    
-    // Jika baris sudah punya pilihan (A., B., dst), skip
-    if (regexPilihanAda.test(barisTrim)) {
-      pilihanIndex++;
-      hasil.push(barisAsli);
-      continue;
-    }
-    
-    // LOGIKA AUTO-NOMORING
-    if (status === 'cari-soal') {
-      // Baris ini kemungkinan adalah pertanyaan
-      // Tambahkan nomor soal
-      hasil.push(`${nomorSoal}. ${barisTrim}`);
-      status = 'cari-pilihan';
-      pilihanIndex = 0;
-      nomorSoal++;
-    } else {
-      // status === 'cari-pilihan'
-      // Tambahkan huruf pilihan
-      if (pilihanIndex < 5) {
-        const huruf = HURUF_PILIHAN[pilihanIndex];
-        hasil.push(`${huruf}. ${barisTrim}`);
-        pilihanIndex++;
-        
-        // Jika sudah 5 pilihan, kembali ke mode cari soal
-        if (pilihanIndex === 5) {
-          status = 'cari-soal';
-        }
-      } else {
-        // Sudah lebih dari 5 baris, kemungkinan ini soal baru atau teks tambahan
-        // Anggap sebagai soal baru
-        hasil.push(`${nomorSoal}. ${barisTrim}`);
-        status = 'cari-pilihan';
-        pilihanIndex = 0;
-        nomorSoal++;
-      }
-    }
-  }
-  
-  return hasil.join('\n');
-}
 
-/**
- * HAPUS SEMUA NOMOR DAN PILIHAN
- * Berguna untuk reset sebelum auto-numbering
- */
-/**
- * HAPUS SEMUA NOMOR DAN PILIHAN
- * Berguna untuk reset sebelum auto-numbering
- */
-export function hapusNomorDanPilihan(teks: string): string {
-  // PERBAIKAN: Ganti nama variabel jadi 'barisList'
-  const barisList = teks.split(/\r?\n/);
-  const hasil: string[] = [];
-  
-  // PERBAIKAN: Ganti 'for (const baris of baris)' jadi 'for (const b of barisList)'
-  for (const b of barisList) {
-    const trim = b.trim();
-    if (trim === '') {
-      hasil.push(b);
-      continue;
-    }
-    
-    // Hapus nomor soal di awal (1., 2., 1), dst.)
-    let bersih = trim.replace(/^\d{1,3}[\.\)\-\s]+\s*/, '');
-    // Hapus pilihan di awal (A., B., a), dst.)
-    bersih = bersih.replace(/^[A-Ea-e][\.\)\-\s]+\s*/, '');
-    
-    hasil.push(bersih);
-  }
-  
-  return hasil.join('\n');
-}
 /**
  * Baca file soal apa pun yang didukung → teks.
  * .docx dibaca otomatis; .doc/RTF lama diminta disalin-tempel.
@@ -623,130 +724,4 @@ export async function bacaFileSoal(file: File): Promise<string> {
     throw new Error("File RTF tidak didukung — salin-tempel isinya ke kotak teks.");
   }
   return teks;
-}
-import * as XLSX from 'xlsx';
-
-/**
- * Generate template Excel untuk import soal
- */
-export function downloadTemplateExcel(): void {
-  // Header template
-  const headers = ['pertanyaan', 'opsi_a', 'opsi_b', 'opsi_c', 'opsi_d', 'opsi_e', 'kunci_jawaban', 'tipe'];
-  
-  // Contoh data
-  const contoh = [
-    [
-      'Apa ibu kota Indonesia?',
-      'Jakarta',
-      'Bandung',
-      'Surabaya',
-      'Semarang',
-      'Medan',
-      'A',
-      'pg'
-    ],
-    [
-      'Berapa hasil 2 + 2?',
-      '3',
-      '4',
-      '5',
-      '6',
-      '7',
-      'B',
-      'pg'
-    ],
-    [
-      'Jelaskan pengertian fotosintesis!',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      'essay'
-    ],
-  ];
-  
-  // Buat worksheet
-  const wsData = [headers, ...contoh];
-  const ws = XLSX.utils.aoa_to_sheet(wsData);
-  
-  // Atur lebar kolom
-  ws['!cols'] = [
-    { wch: 50 }, // pertanyaan
-    { wch: 20 }, // opsi_a
-    { wch: 20 }, // opsi_b
-    { wch: 20 }, // opsi_c
-    { wch: 20 }, // opsi_d
-    { wch: 20 }, // opsi_e
-    { wch: 15 }, // kunci_jawaban
-    { wch: 10 }, // tipe
-  ];
-  
-  // Buat workbook
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Template Soal');
-  
-  // Download
-  XLSX.writeFile(wb, 'Template_Impor_Soal.xlsx');
-}
-
-/**
- * Parse file Excel menjadi array soal
- */
-export function parseExcelFile(file: File): Promise<Array<{
-  pertanyaan: string;
-  opsi_a: string;
-  opsi_b: string;
-  opsi_c: string;
-  opsi_d: string;
-  opsi_e: string;
-  kunci_jawaban: string;
-  tipe: string;
-}>> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    
-    reader.onload = (e) => {
-      try {
-        const data = e.target?.result;
-        const workbook = XLSX.read(data, { type: 'array' });
-        
-        // Ambil sheet pertama
-        const firstSheet = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[firstSheet];
-        
-        // Convert ke JSON
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-        
-        if (jsonData.length < 2) {
-          reject(new Error('File Excel kosong atau tidak ada data.'));
-          return;
-        }
-        
-        // Baris pertama adalah header, data mulai dari baris kedua
-        const rows = jsonData.slice(1) as any[][];
-        
-        const soal = rows
-          .filter(row => row[0] && String(row[0]).trim() !== '') // Filter baris kosong
-          .map(row => ({
-            pertanyaan: String(row[0] || '').trim(),
-            opsi_a: String(row[1] || '').trim(),
-            opsi_b: String(row[2] || '').trim(),
-            opsi_c: String(row[3] || '').trim(),
-            opsi_d: String(row[4] || '').trim(),
-            opsi_e: String(row[5] || '').trim(),
-            kunci_jawaban: String(row[6] || '').trim().toUpperCase(),
-            tipe: String(row[7] || 'pg').trim().toLowerCase(),
-          }));
-        
-        resolve(soal);
-      } catch (err) {
-        reject(new Error('Gagal membaca file Excel. Pastikan format benar.'));
-      }
-    };
-    
-    reader.onerror = () => reject(new Error('Gagal membaca file.'));
-    reader.readAsArrayBuffer(file);
-  });
 }
