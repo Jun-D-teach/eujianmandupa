@@ -498,116 +498,230 @@ export async function bacaDocx(file: File): Promise<string> {
  * - Tambahkan nomor urut untuk pertanyaan
  * - Tambahkan A. B. C. D. E. untuk 5 baris berikutnya
  */
-export function beriNomorDanPilihanOtomatis(teks: string): string {
+// ============================================================================
+// FITUR PENOMORAN OTOMATIS CANGGIH (Smart Heuristic)
+// ============================================================================
+
+export interface OpsiPenomoran {
+  /** Jumlah pilihan per soal pilihan ganda (maks 8). Default 5 (A-E). */
+  jumlahPilihan?: number;
+  /** Sisipkan baris kosong antar soal. Default true. */
+  spasiAntarSoal?: boolean;
+  /** Indentasi tiap pilihan. Default 3 spasi. */
+  indentPilihan?: string;
+}
+
+const HURUF = ["A", "B", "C", "D", "E", "F", "G", "H"];
+
+// "1. teks", "2) teks" — tapi BUKAN "3.5 kg" atau "20.000"
+const RE_NOMOR = /^(\d{1,3})\s*(?:[.)]\s+|[.)](?=[^\d]))(.*)$/;
+// "A. teks", "b) teks", "(c) teks"
+const RE_HURUF = /^\(?([A-Ha-h])[.)]\s+(.*)$/;
+// bullet hasil copy dari Word/markdown: "- ", "• ", "* "
+const RE_BULLET = /^[-•●▪◦*]\s+/;
+
+// berakhir ? … …. ... : atau ____
+const RE_AKHIRAN_KUAT = /(\?|…+\.?|\.{3,}\.?|:|_{2,})\s*$/;
+const RE_AKHIRAN_TUTUP = /(\?|…+\.?|\.{3,}\.?|_{2,})\s*$/;
+// stem belum selesai: berakhir ":" atau kata sambung
+const RE_STEM_TERBUKA = /(:|\b(dan|maka|diketahui|dengan|yaitu|jika|atau|sehingga))\s*$/i;
+const RE_KATA_TANYA = /^(apa|berapa|tentukan|hitung|carilah|manakah|bagaimana|mengapa|kapan|di\s*mana|siapa|jelaskan|uraikan|sebutkan|tuliskan|perhatikan|diketahui|diberikan)\b/i;
+const RE_KATA_SOAL = /\b(adalah|merupakan|berikut|dimaksud|diketahui|jika|maka)\b/i;
+
+// Judul bagian
+const RE_BAGIAN_PG = /^(pilihan\s+ganda)\s*:?$/i;
+const RE_BAGIAN_NON_PG = /^(essay|esai|uraian|isian\s+singkat|benar\s*[-/]?\s*salah)\s*:?$/i;
+
+const adalahBarisTabel = (t: string) => t.includes("\t") || t.startsWith("|");
+
+/** Apakah baris ini tampak seperti kalimat soal (bukan pilihan jawaban)? */
+function adalahPertanyaan(t: string): boolean {
+  if (!t) return false;
+  if (RE_AKHIRAN_KUAT.test(t)) return true;
+  if (RE_KATA_TANYA.test(t)) return true;
+  if (t.length >= 25 && RE_KATA_SOAL.test(t)) return true;
+  if (t.length >= 60) return true;
+  return false;
+}
+
+/**
+ * BERI NOMOR SOAL + PILIHAN A-E OTOMATIS (VERSI CANGGIH)
+ * Mampu menangani:
+ * 1. Mencegah "3.5 cm" terbaca sebagai soal no 3.
+ * 2. Menangani pertanyaan multi-baris (diakhiri ":" lalu ada tabel/rumus).
+ * 3. Mengabaikan baris tabel agar tidak dianggap pilihan.
+ * 4. Membedakan bagian "Pilihan Ganda" dan "Essay/Uraian".
+ */
+export function beriNomorDanPilihanOtomatis(
+  teks: string,
+  opsi: OpsiPenomoran = {}
+): string {
   if (!teks.trim()) return teks;
-  
+
+  const jumlahPG = Math.min(opsi.jumlahPilihan ?? 5, HURUF.length);
+  const spasiAntarSoal = opsi.spasiAntarSoal ?? true;
+  const indent = opsi.indentPilihan ?? "   ";
+
   const baris = teks.split(/\r?\n/);
   const hasil: string[] = [];
-  let nomorSoal = 1;
-  let status: 'cari-soal' | 'cari-pilihan' = 'cari-soal';
-  let pilihanIndex = 0;
-  const HURUF_PILIHAN = ['A', 'B', 'C', 'D', 'E'];
-  
-  // Regex untuk deteksi nomor soal yang sudah ada
-  const regexNomorAda = /^\d{1,3}[\.\)\-\s]/;
-  // Regex untuk deteksi pilihan yang sudah ada
-  const regexPilihanAda = /^[A-Ea-e][\.\)\-\s]/;
-  
-  for (let i = 0; i < baris.length; i++) {
-    const barisAsli = baris[i];
-    const barisTrim = barisAsli.trim();
-    
-    // Skip baris kosong
-    if (barisTrim === '') {
-      hasil.push(barisAsli);
-      continue;
-    }
-    
-    // Jika baris sudah punya nomor soal (1., 2., dst), reset status
-    if (regexNomorAda.test(barisTrim)) {
-      // Extract nomor dari teks yang sudah ada
-      const match = barisTrim.match(/^(\d{1,3})/);
-      if (match) {
-        nomorSoal = parseInt(match[1]);
-      }
-      status = 'cari-pilihan';
-      pilihanIndex = 0;
-      hasil.push(barisAsli);
-      continue;
-    }
-    
-    // Jika baris sudah punya pilihan (A., B., dst), skip
-    if (regexPilihanAda.test(barisTrim)) {
-      pilihanIndex++;
-      hasil.push(barisAsli);
-      continue;
-    }
-    
-    // LOGIKA AUTO-NOMORING
-    if (status === 'cari-soal') {
-      // Baris ini kemungkinan adalah pertanyaan
-      // Tambahkan nomor soal
-      hasil.push(`${nomorSoal}. ${barisTrim}`);
-      status = 'cari-pilihan';
-      pilihanIndex = 0;
-      nomorSoal++;
-    } else {
-      // status === 'cari-pilihan'
-      // Tambahkan huruf pilihan
-      if (pilihanIndex < 5) {
-        const huruf = HURUF_PILIHAN[pilihanIndex];
-        hasil.push(`${huruf}. ${barisTrim}`);
-        pilihanIndex++;
-        
-        // Jika sudah 5 pilihan, kembali ke mode cari soal
-        if (pilihanIndex === 5) {
-          status = 'cari-soal';
-        }
-      } else {
-        // Sudah lebih dari 5 baris, kemungkinan ini soal baru atau teks tambahan
-        // Anggap sebagai soal baru
-        hasil.push(`${nomorSoal}. ${barisTrim}`);
-        status = 'cari-pilihan';
-        pilihanIndex = 0;
-        nomorSoal++;
-      }
-    }
+
+  // Lewati kop soal sampai menemukan judul "PILIHAN GANDA" (jika ada)
+  const idxMulai = baris.findIndex((b) => RE_BAGIAN_PG.test(b.trim()));
+  for (let k = 0; k < (idxMulai >= 0 ? idxMulai :0); k++) {
+    hasil.push(baris[k]);
   }
-  
-  return hasil.join('\n');
+
+  let batasPilihan = jumlahPG; // 0 untuk bagian essay/uraian
+  let nomor = 1;
+  let sedangPilihan = false;
+  let terisi = 0;
+
+  const terakhirKosong = () =>
+    hasil.length === 0 || hasil[hasil.length - 1].trim() === "";
+
+  const tulisSoal = (n: number, isi: string) => {
+    if (spasiAntarSoal && !terakhirKosong()) hasil.push("");
+    hasil.push(`${n}. ${isi}`);
+    sedangPilihan = batasPilihan > 0;
+    terisi = 0;
+  };
+
+  /**
+   * Stem yang terpecah beberapa baris (mis. "Nilai m dan n memenuhi:" 
+   * diikuti persamaan di baris berikutnya). Mengembalikan indeks baris terakhir yang terpakai.
+   */
+  const sambungStem = (dari: number, stem: string): number => {
+    if (batasPilihan === 0 || !RE_STEM_TERBUKA.test(stem)) return dari;
+    const kandidat: string[] = [];
+    let idx = dari + 1;
+    let akhir = -1;
+    while (idx < baris.length && kandidat.length < 3) {
+      const u = baris[idx].trim().replace(RE_BULLET, "");
+      if (u !== "") {
+        if (
+          adalahBarisTabel(u) ||
+          RE_NOMOR.test(u) ||
+          RE_HURUF.test(u) ||
+          RE_BAGIAN_PG.test(u) ||
+          RE_BAGIAN_NON_PG.test(u)
+        ) {
+          break;
+        }
+        kandidat.push(u);
+        if (RE_AKHIRAN_TUTUP.test(u)) {
+          akhir = kandidat.length;
+          break;
+        }
+      }
+      idx++;
+    }
+    if (akhir < 0) return dari;
+    kandidat.slice(0, akhir).forEach((u) => hasil.push(u));
+    return idx;
+  };
+
+  for (let k = Math.max(idxMulai >= 0 ? idxMulai : 0, 0); k < baris.length; k++) {
+    const mentah = baris[k];
+    let t = mentah.trim().replace(RE_BULLET, "");
+
+    if (t === "") {
+      if (!sedangPilihan && !terakhirKosong()) hasil.push("");
+      continue;
+    }
+
+    // Judul bagian
+    if (RE_BAGIAN_PG.test(t)) {
+      batasPilihan = jumlahPG;
+      nomor = 1;
+      sedangPilihan = false;
+      if (!terakhirKosong()) hasil.push("");
+      hasil.push(t);
+      continue;
+    }
+    if (RE_BAGIAN_NON_PG.test(t)) {
+      batasPilihan = 0;
+      nomor = 1;
+      sedangPilihan = false;
+      if (!terakhirKosong()) hasil.push("");
+      hasil.push(t);
+      continue;
+    }
+
+    // Tabel: biarkan utuh, jangan dihitung sebagai pilihan
+    if (adalahBarisTabel(t)) {
+      hasil.push(t);
+      continue;
+    }
+
+    const m = t.match(RE_NOMOR);
+    const h = t.match(RE_HURUF);
+
+    // --- Sedang mengumpulkan pilihan ---
+    if (sedangPilihan) {
+      const soalBaru =
+        terisi >= 2 && (m !== null || (!h && RE_AKHIRAN_KUAT.test(t)));
+
+      if (!soalBaru) {
+        hasil.push(`${indent}${HURUF[terisi]}. ${h ? h[2] : t}`);
+        terisi++;
+        if (terisi >= batasPilihan) sedangPilihan = false;
+        continue;
+      }
+      sedangPilihan = false;
+    }
+
+    // --- Mencari soal ---
+    if (m) {
+      nomor = parseInt(m[1], 10);
+      tulisSoal(nomor, m[2]);
+      nomor++;
+      k = sambungStem(k, m[2]);
+      continue;
+    }
+
+    if (h && batasPilihan > 0) {
+      hasil.push(`${indent}${h[1].toUpperCase()}. ${h[2]}`);
+      continue;
+    }
+
+    if (adalahPertanyaan(t)) {
+      tulisSoal(nomor, t);
+      nomor++;
+      k = sambungStem(k, t);
+      continue;
+    }
+
+    // Fallback: jika tidak terdeteksi sebagai apa-apa, biarkan apa adanya
+    hasil.push(t);
+  }
+
+  return hasil.join("\n").trimEnd();
 }
 
 /**
  * HAPUS SEMUA NOMOR DAN PILIHAN
  * Berguna untuk reset sebelum auto-numbering
  */
-/**
- * HAPUS SEMUA NOMOR DAN PILIHAN
- * Berguna untuk reset sebelum auto-numbering
- */
 export function hapusNomorDanPilihan(teks: string): string {
-  // PERBAIKAN: Ganti nama variabel jadi 'barisList'
   const barisList = teks.split(/\r?\n/);
   const hasil: string[] = [];
   
-  // PERBAIKAN: Ganti 'for (const baris of baris)' jadi 'for (const b of barisList)'
   for (const b of barisList) {
     const trim = b.trim();
     if (trim === '') {
       hasil.push(b);
       continue;
     }
-    
-    // Hapus nomor soal di awal (1., 2., 1), dst.)
+    // Hapus nomor soal di awal (1., 2), dst.)
     let bersih = trim.replace(/^\d{1,3}[\.\)\-\s]+\s*/, '');
-    // Hapus pilihan di awal (A., B., a), dst.)
-    bersih = bersih.replace(/^[A-Ea-e][\.\)\-\s]+\s*/, '');
-    
+    // Hapus pilihan di awal (A., B), a), dst.)
+    bersih = bersih.replace(/^[A-Ha-h][\.\)\-\s]+\s*/, '');
     hasil.push(bersih);
   }
   
   return hasil.join('\n');
 }
+
 /**
  * Baca file soal apa pun yang didukung → teks.
  * .docx dibaca otomatis; .doc/RTF lama diminta disalin-tempel.
