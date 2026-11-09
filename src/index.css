@@ -150,3 +150,10 @@
     cursor: pointer;
   }
 }
+/* Kelas khusus untuk mendeteksi dan mempercantik teks Arab */
+.soal-arab {
+  direction: rtl; /* Mengatur arah baca dari kanan ke kiri */
+  text-align: right;
+  font-family: "Amiri", "Scheherazade New", "Traditional Arabic", "Arial", sans-serif;
+  line-height: 2.2; /* Memberi jarak antar baris agar harakat tidak bertumpuk */
+}
