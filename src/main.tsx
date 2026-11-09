@@ -9,6 +9,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-route
 import "./index.css";
 import { registerServiceWorker } from "./lib/pwa";
 import { InstallPwa } from "./components/InstallPwa";
+import { inisialisasiPenyimpanan } from "./lib/app-storage";
 // ExamPage diimpor STATIS (bukan lazy) — kode ujian harus sudah ikut terbaca
 // begitu shell aplikasi terbuka, supaya tombol "Kerjakan" tetap jalan saat
 // internet dimatikan. Lazy import = fetch chunk = gagal saat offline.
@@ -156,55 +157,77 @@ function RouteSyncer() {
   return null;
 }
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <RootErrorBoundary>
-      <ToolbarErrorBoundary>
-        <VlyToolbar />
-      </ToolbarErrorBoundary>
-      <AuthProvider>
-        <BrowserRouter basename={hitungRouterBasename()}>
-          <RouteSyncer />
-          <Suspense fallback={<RouteLoading />}>
-            <Routes>
-              <Route path="/" element={<Landing />} />
-              {/* URL lama .../dashboard/auth -> halaman login (jaga-jaga bila
-                  skrip normalisasi di index.html belum sempat jalan). */}
-              <Route
-                path="/dashboard/auth"
-                element={<Navigate to="/auth" replace />}
-              />
-              <Route
-                path="/auth"
-                element={<AuthPage redirectAfterAuth="/dashboard" />}
-              />
-              <Route
-                path="/dashboard"
-                element={
-                  <RequireAuth>
-                    <Dashboard />
-                  </RequireAuth>
-                }
-              />
-              <Route
-                path="/ujian/:ujianId"
-                element={
-                  <RequireAuth
-                    title="Masuk untuk mengerjakan ujian"
-                    description="Unduh soal dan pengerjaan ujian memerlukan akun siswa."
-                  >
-                    <ExamPage />
-                  </RequireAuth>
-                }
-              />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
-          {/* InstallPwa memakai useLocation() → wajib di DALAM BrowserRouter. */}
-          <InstallPwa />
-        </BrowserRouter>
-        <Toaster />
-      </AuthProvider>
-    </RootErrorBoundary>
-  </StrictMode>,
-);
+const rootElement = document.getElementById("root");
+if (!rootElement) throw new Error("Elemen root aplikasi tidak ditemukan.");
+const root = rootElement;
+
+async function mulaiAplikasi() {
+  try {
+    await inisialisasiPenyimpanan();
+  } catch (err) {
+    console.error("Gagal menginisialisasi IndexedDB:", err);
+    root.replaceChildren();
+    const message = document.createElement("p");
+    message.textContent =
+      "Penyimpanan IndexedDB tidak dapat dibuka. Aktifkan penyimpanan situs di browser, lalu muat ulang aplikasi.";
+    message.className =
+      "mx-auto mt-20 max-w-lg px-6 text-center text-sm text-red-600";
+    root.append(message);
+    return;
+  }
+
+  createRoot(root).render(
+    <StrictMode>
+      <RootErrorBoundary>
+        <ToolbarErrorBoundary>
+          <VlyToolbar />
+        </ToolbarErrorBoundary>
+        <AuthProvider>
+          <BrowserRouter basename={hitungRouterBasename()}>
+            <RouteSyncer />
+            <Suspense fallback={<RouteLoading />}>
+              <Routes>
+                <Route path="/" element={<Landing />} />
+                {/* URL lama .../dashboard/auth -> halaman login (jaga-jaga bila
+                    skrip normalisasi di index.html belum sempat jalan). */}
+                <Route
+                  path="/dashboard/auth"
+                  element={<Navigate to="/auth" replace />}
+                />
+                <Route
+                  path="/auth"
+                  element={<AuthPage redirectAfterAuth="/dashboard" />}
+                />
+                <Route
+                  path="/dashboard"
+                  element={
+                    <RequireAuth>
+                      <Dashboard />
+                    </RequireAuth>
+                  }
+                />
+                <Route
+                  path="/ujian/:ujianId"
+                  element={
+                    <RequireAuth
+                      title="Masuk untuk mengerjakan ujian"
+                      description="Unduh soal dan pengerjaan ujian memerlukan akun siswa."
+                    >
+                      <ExamPage />
+                    </RequireAuth>
+                  }
+                />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+            {/* InstallPwa memakai useLocation() → wajib di DALAM BrowserRouter. */}
+            <InstallPwa />
+          </BrowserRouter>
+          <Toaster />
+        </AuthProvider>
+      </RootErrorBoundary>
+    </StrictMode>,
+  );
+}
+
+void mulaiAplikasi();

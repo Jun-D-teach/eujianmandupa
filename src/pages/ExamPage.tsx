@@ -169,10 +169,41 @@ export default function ExamPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const online = useOnline();
+const [sesi, setSesi] = useState<SesiUjian | null>(null);
 
-  const [sesi, setSesi] = useState<SesiUjian | null>(() =>
-    ujianId ? muatSesi(ujianId) : null,
-  );
+  // Ambil username dari user yang login
+  const username = user?.username ?? user?.id ?? "";
+  const kunciSesiAktif = `${ujianId}:${username}`;
+  const [kunciSesiDimuat, setKunciSesiDimuat] = useState("");
+  const [galatMuatSesi, setGalatMuatSesi] = useState<string | null>(null);
+  const memuatSesi = Boolean(ujianId && username && kunciSesiDimuat !== kunciSesiAktif);
+
+  // Muat sesi dari IndexedDB saat komponen mount
+  useEffect(() => {
+    if (!ujianId || !username) return;
+  let hidup = true;
+    muatSesi(ujianId, username)
+      .then((data) => {
+        if (hidup) {
+          setSesi(data);
+          setGalatMuatSesi(null);
+          setKunciSesiDimuat(kunciSesiAktif);
+      }
+    })
+      .catch((err) => {
+        if (hidup) {
+          setGalatMuatSesi(
+            err instanceof Error
+              ? err.message
+              : "Gagal membaca sesi ujian dari IndexedDB.",
+          );
+          setKunciSesiDimuat(kunciSesiAktif);
+        }
+      });
+    return () => {
+      hidup = false;
+    };
+  }, [ujianId, username, kunciSesiAktif]);
   // Metadata ujian dari server (tanpa token). undefined = memuat.
   const [meta, setMeta] = useState<UjianGas | null | undefined>(undefined);
 
@@ -206,6 +237,7 @@ export default function ExamPage() {
   const graceRef = useRef(0);
   /** Waktu pelanggaran terakhir — dedupe agar satu kejadian cukup satu strike. */
   const lastViolationRef = useRef(0);
+  const gagalSimpanRef = useRef(false);
 
   useEffect(() => {
     faseRef.current = sesi?.fase;
@@ -213,9 +245,23 @@ export default function ExamPage() {
   useEffect(() => {
     strikeRef.current = sesi?.strike ?? 0;
   }, [sesi?.strike]);
-  useEffect(() => {
-    if (sesi) simpanSesi(sesi);
-  }, [sesi]);
+ useEffect(() => {
+  if (sesi && username) {
+    void simpanSesi(sesi, username)
+      .then(() => {
+        gagalSimpanRef.current = false;
+      })
+      .catch((err) => {
+        console.error("Gagal menyimpan sesi ujian di IndexedDB:", err);
+        if (!gagalSimpanRef.current) {
+          gagalSimpanRef.current = true;
+          toast.error(
+            "Jawaban gagal disimpan di perangkat. Jangan tutup halaman dan periksa penyimpanan browser.",
+          );
+        }
+      });
+  }
+}, [sesi, username]);
 
   const terkunci = sesi?.fase === "ujian" && sesi.strike >= 3;
   const fase: Fase = sesi?.fase ?? "setup";
@@ -501,7 +547,7 @@ export default function ExamPage() {
         >("getSoal", { id: ujianId, kelas: sesi.kelas });
         if (!hidup) return;
         if (typeof data.pin_pengawas === "string" && /^\d{6}$/.test(data.pin_pengawas)) {
-          simpanPinTersimpan(data.pin_pengawas);
+          await simpanPinTersimpan(data.pin_pengawas);
         }
         const idBaru = new Set(data.soal.map((s) => s.id));
         const jawaban: SesiUjian["jawaban"] = {};
@@ -533,20 +579,20 @@ export default function ExamPage() {
           jawabanTeks,
           indeks: Math.max(0, Math.min(sesi.indeks, data.soal.length - 1)),
         };
+        await simpanSesi(baru, username);
         setSesi(baru);
-        simpanSesi(baru);
         toast.success(
-          `Guru memperbarui soal — ${baru.soal.length} soal terbaru tersimpan di HP.`,
+          `Soal diperbarui — ${baru.soal.length} soal terbaru tersimpan di HP.`,
         );
-      } catch {
-        /* offline / izin ditutup — biarkan; guard Mulai Ujian yang mengingatkan */
+      } catch (err) {
+        console.error("Gagal menyinkronkan sesi ujian:", err);
       }
     };
     void sinkron();
     return () => {
       hidup = false;
     };
-  }, [fase, sesi, meta?.revisi, online, ujianId]);
+  }, [fase, sesi, meta?.revisi, online, ujianId, username]);
 
   // --- Aksi fase -------------------------------------------------------
   /** Unduh soal (online) — TANPA token; izin bagikan admin + kelas sasaran
@@ -568,7 +614,7 @@ export default function ExamPage() {
       // Cache PIN pengawas terbaru (dari sheet Pengaturan) agar layar kunci
       // tetap bisa dibuka offline dengan PIN terkini.
       if (typeof data.pin_pengawas === "string" && /^\d{6}$/.test(data.pin_pengawas)) {
-        simpanPinTersimpan(data.pin_pengawas);
+        await simpanPinTersimpan(data.pin_pengawas);
       }
       if (data.soal.length === 0) {
         throw new Error("Ujian ini belum memiliki soal.");
@@ -604,8 +650,8 @@ export default function ExamPage() {
         strike: 0,
         pelanggaran: [],
       };
+      await simpanSesi(baru, username);
       setSesi(baru);
-      simpanSesi(baru);
       toast.success(`${data.soal.length} soal tersimpan di HP.`);
     } catch (err) {
       setPesan(
@@ -821,6 +867,26 @@ export default function ExamPage() {
       </Shell>
     );
   }
+  if (galatMuatSesi) {
+    return (
+      <Shell>
+        <p className="text-sm text-destructive">{galatMuatSesi}</p>
+        <Button className="mt-4" onClick={() => window.location.reload()}>
+          Muat ulang
+        </Button>
+      </Shell>
+    );
+  }
+  if (memuatSesi) {
+    return (
+      <Shell>
+        <div className="space-y-4">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-64 w-full" />
+        </div>
+      </Shell>
+    );
+  }
   if (sesi === null && meta === undefined) {
     return (
       <Shell>
@@ -1003,10 +1069,20 @@ export default function ExamPage() {
             }}
             pesanToken={tokenSalah}
             onMulai={mulaiUjian}
-            onUlang={() => {
-              hapusSesi(sesi.ujianId);
-              setSesi(null);
-              setToken("");
+            onUlang={async () => {
+              try {
+                if (sesi && username) {
+                  await hapusSesi(sesi.ujianId, username);
+                }
+                setSesi(null);
+                setToken("");
+              } catch (err) {
+                toast.error(
+                  err instanceof Error
+                    ? err.message
+                    : "Gagal menghapus sesi ujian.",
+                );
+              }
             }}
           />
         )}

@@ -11,6 +11,12 @@
  * ============================================================================
  */
 
+import {
+  bacaPenyimpanan,
+  hapusPenyimpanan,
+  simpanPenyimpanan,
+} from "@/lib/app-storage";
+
 export type Role = "admin" | "guru" | "siswa";
 
 export type UserGas = {
@@ -210,7 +216,7 @@ export function urlServer(): string {
 
 export function muatUser(): UserGas | null {
   try {
-    const raw = window.localStorage.getItem(KUNCI_USER);
+    const raw = bacaPenyimpanan(KUNCI_USER);
     if (!raw) return null;
     const user = JSON.parse(raw) as UserGas;
     if (!user || !user.username) return null;
@@ -220,20 +226,12 @@ export function muatUser(): UserGas | null {
   }
 }
 
-export function simpanUser(user: UserGas): void {
-  try {
-    window.localStorage.setItem(KUNCI_USER, JSON.stringify(user));
-  } catch {
-    /* noop */
-  }
+export function simpanUser(user: UserGas): Promise<void> {
+  return simpanPenyimpanan(KUNCI_USER, JSON.stringify(user));
 }
 
-export function hapusUser(): void {
-  try {
-    window.localStorage.removeItem(KUNCI_USER);
-  } catch {
-    /* noop */
-  }
+export function hapusUser(): Promise<void> {
+  return hapusPenyimpanan(KUNCI_USER);
 }
 
 /* ------------------------------------------------------------------ */
@@ -242,26 +240,20 @@ export function hapusUser(): void {
 
 export function muatSesiToken(): string {
   try {
-    return (window.localStorage.getItem(KUNCI_SESI) ?? "").trim();
+    return (bacaPenyimpanan(KUNCI_SESI) ?? "").trim();
   } catch {
     return "";
   }
 }
 
-export function simpanSesiToken(token: string): void {
-  try {
-    if (token) window.localStorage.setItem(KUNCI_SESI, token);
-  } catch {
-    /* noop */
-  }
+export function simpanSesiToken(token: string): Promise<void> {
+  return token
+    ? simpanPenyimpanan(KUNCI_SESI, token)
+    : Promise.resolve();
 }
 
-export function hapusSesiToken(): void {
-  try {
-    window.localStorage.removeItem(KUNCI_SESI);
-  } catch {
-    /* noop */
-  }
+export function hapusSesiToken(): Promise<void> {
+  return hapusPenyimpanan(KUNCI_SESI);
 }
 
 /* ------------------------------------------------------------------ */
@@ -272,9 +264,8 @@ export function hapusSesiToken(): void {
 export const EVENT_PERLU_LOGIN = "ujianaman:perlu-login";
 
 /** Bersihkan kredensial lokal + beri tahu provider auth, lalu gagalkan call. */
-function tanganiPerluLogin(pesan: string): never {
-  hapusSesiToken();
-  hapusUser();
+async function tanganiPerluLogin(pesan: string): Promise<never> {
+  await Promise.all([hapusSesiToken(), hapusUser()]);
   try {
     window.dispatchEvent(new CustomEvent(EVENT_PERLU_LOGIN, { detail: pesan }));
   } catch {
@@ -328,7 +319,7 @@ export async function apiCall<T = Record<string, unknown>>(
     throw err;
   }
   if (res && res.perlu_login) {
-    tanganiPerluLogin(res.message || "Sesi habis — silakan login ulang.");
+    await tanganiPerluLogin(res.message || "Sesi habis — silakan login ulang.");
   }
   if (res && res.success === false) {
     throw new Error(res.message || "Permintaan gagal di server.");
@@ -350,19 +341,15 @@ const KUNCI_PIN = "ujianaman:pinPengawas";
 /** PIN aktif: cache dari server (ikut unduh soal), fallback 123456. */
 export function pinPengawas(): string {
   try {
-    return window.localStorage.getItem(KUNCI_PIN) || PIN_BAWAAN;
+    return bacaPenyimpanan(KUNCI_PIN) || PIN_BAWAAN;
   } catch {
     return PIN_BAWAAN;
   }
 }
 
 /** Simpan PIN hasil unduhan soal / dari menu admin (cache lokal, offline-safe). */
-export function simpanPinTersimpan(pin: string): void {
-  try {
-    window.localStorage.setItem(KUNCI_PIN, pin);
-  } catch {
-    /* noop */
-  }
+export function simpanPinTersimpan(pin: string): Promise<void> {
+  return simpanPenyimpanan(KUNCI_PIN, pin);
 }
 
 /** Verifikasi PIN pengawas — dilakukan LOKAL agar layar kunci bisa dibuka offline. */

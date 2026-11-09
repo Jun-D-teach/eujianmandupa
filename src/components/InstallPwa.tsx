@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Download, X } from "lucide-react";
+import { bacaPenyimpanan, simpanPenyimpanan } from "@/lib/app-storage";
 
 /** Event `beforeinstallprompt` (Chromium) — API resmi, belum ada di TS DOM. */
 type EventPasang = Event & {
@@ -21,20 +22,12 @@ function sudahTerpasang(): boolean {
 }
 
 function pernahTolak(): boolean {
-  try {
-    const t = Number(localStorage.getItem(KUNCI_TOLAK) ?? "0");
-    return t > 0 && Date.now() - t < JEDA_ULANG_MS;
-  } catch {
-    return false;
-  }
+  const t = Number(bacaPenyimpanan(KUNCI_TOLAK) ?? "0");
+  return t > 0 && Date.now() - t < JEDA_ULANG_MS;
 }
 
-function catatTolak(): void {
-  try {
-    localStorage.setItem(KUNCI_TOLAK, String(Date.now()));
-  } catch {
-    /* storage penuh/diizinkan — abaikan */
-  }
+function catatTolak(): Promise<void> {
+  return simpanPenyimpanan(KUNCI_TOLAK, String(Date.now()));
 }
 
 /** iOS/iPadOS tidak pernah mengirim beforeinstallprompt. */
@@ -82,9 +75,13 @@ export function InstallPwa() {
     return () => window.clearTimeout(id);
   }, []);
 
-  const tutup = () => {
+  const tutup = async () => {
     setBuka(false);
-    catatTolak();
+    try {
+      await catatTolak();
+    } catch (err) {
+      console.error("Gagal menyimpan preferensi ajakan instalasi:", err);
+    }
   };
 
   const pasang = async () => {
@@ -95,9 +92,9 @@ export function InstallPwa() {
     try {
       await p.prompt();
       const { outcome } = await p.userChoice;
-      if (outcome === "dismissed") catatTolak();
-    } catch {
-      /* browser menolak memicu dialog — diamkan */
+      if (outcome === "dismissed") await catatTolak();
+    } catch (err) {
+      console.error("Gagal menyimpan preferensi instalasi aplikasi:", err);
     }
   };
 
@@ -129,7 +126,7 @@ export function InstallPwa() {
         <button
           type="button"
           aria-label="Tutup saran pemasangan"
-          onClick={tutup}
+          onClick={() => void tutup()}
           className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <X className="size-4" />

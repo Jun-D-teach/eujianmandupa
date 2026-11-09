@@ -118,8 +118,8 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
         username: username.trim(),
         password,
       });
-      simpanSesiToken(res.sesi ?? "");
-      simpanUser(res.user);
+      await simpanSesiToken(res.sesi ?? "");
+      await simpanUser(res.user);
       toast.success("Admin pertama dibuat. Selamat datang!");
       navigate(redirect);
     } catch (err) {

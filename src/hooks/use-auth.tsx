@@ -15,13 +15,14 @@ import {
   simpanUser,
   type UserGas,
 } from "@/lib/api";
+import { dengarkanPerubahanPenyimpanan } from "@/lib/app-storage";
 
 type AuthContext = {
   user: UserGas | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   signIn: (username: string, password: string) => Promise<UserGas>;
-  signOut: () => void;
+  signOut: () => Promise<void>;
 };
 
 const Ctx = createContext<AuthContext | null>(null);
@@ -29,7 +30,7 @@ const Ctx = createContext<AuthContext | null>(null);
 /**
  * Auth UjianAman — tanpa penyedia auth eksternal (Convex Auth dilepas).
  * Login dicocokkan ke tabel "pengguna" di database MySQL (dikelola admin),
- * sesi disimpan di LocalStorage perangkat.
+ * sesi disimpan di IndexedDB perangkat.
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserGas | null>(() => muatUser());
@@ -37,17 +38,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Sinkronkan antar-tab (mis. logout di tab lain).
   useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === "ujianaman:user") setUser(muatUser());
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    return dengarkanPerubahanPenyimpanan((key) => {
+      if (key === "ujianaman:user") setUser(muatUser());
+    });
   }, []);
 
   // Server menolak karena sesi kedaluwarsa/tidak sah → logout paksa.
   useEffect(() => {
     const onPerluLogin = () => {
-      hapusUser();
       setUser(null);
     };
     window.addEventListener(EVENT_PERLU_LOGIN, onPerluLogin);
@@ -70,8 +68,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           "Server tidak mengembalikan sesi login. Pastikan folder api ter-upload dan versi terbaru.",
         );
       }
-      simpanSesiToken(res.sesi ?? "");
-      simpanUser(res.user);
+      await simpanSesiToken(res.sesi);
+      await simpanUser(res.user);
       setUser(res.user);
       return res.user;
     } finally {
@@ -79,9 +77,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signOut = () => {
-    hapusSesiToken();
-    hapusUser();
+  const signOut = async () => {
+    await Promise.all([hapusSesiToken(), hapusUser()]);
     setUser(null);
   };
 

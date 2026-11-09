@@ -25,15 +25,20 @@ export function PengaturanPin() {
   useEffect(() => {
     let hidup = true;
     gasCall<{ pin_pengawas: string }>("getPengaturan")
-      .then((res) => {
+      .then(async (res) => {
         if (hidup) {
           setPinSekarang(res.pin_pengawas);
           // Sinkronkan cache lokal perangkat admin juga.
-          simpanAman(res.pin_pengawas);
+          await simpanAman(res.pin_pengawas);
         }
       })
-      .catch(() => {
-        if (hidup) setPinSekarang(null);
+      .catch((err) => {
+        if (hidup) {
+          setPinSekarang(null);
+          toast.error(
+            err instanceof Error ? err.message : "Gagal memuat PIN pengawas.",
+          );
+        }
       });
     return () => {
       hidup = false;
@@ -54,7 +59,7 @@ export function PengaturanPin() {
     try {
       await gasCall("aturPin", { pin: pin.trim(), pin_ulang: pinUlang.trim() });
       setPinSekarang(pin.trim());
-      simpanAman(pin.trim());
+      await simpanAman(pin.trim());
       setPin("");
       setPinUlang("");
       toast.success("PIN buka blokir diperbarui. Siswa mendapat PIN baru saat unduh soal berikutnya.");

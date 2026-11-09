@@ -118,6 +118,10 @@ export function SiswaUjian() {
   const navigate = useNavigate();
   const online = useOnline();
   const [ujian, setUjian] = useState<UjianGas[] | null>(null); // null = memuat
+  const [sesiLokal, setSesiLokal] = useState<{
+    daftar: UjianGas[];
+    data: Record<string, SesiUjian | null>;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [versi, setVersi] = useState(0); // memicu muat ulang daftar/sesi
   const [sinkronBusy, setSinkronBusy] = useState<string | null>(null);
@@ -140,13 +144,42 @@ export function SiswaUjian() {
     };
   }, [versi, user?.kelas]);
 
+  useEffect(() => {
+    if (!ujian) return;
+    let hidup = true;
+    Promise.all(
+      ujian.map(async (u) => [
+        u.id,
+        await muatSesi(u.id, user?.username ?? ""),
+      ] as const),
+    )
+      .then((entries) => {
+        if (hidup) {
+          setSesiLokal({ daftar: ujian, data: Object.fromEntries(entries) });
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (hidup) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Gagal membaca sesi ujian di perangkat.",
+          );
+        }
+      });
+    return () => {
+      hidup = false;
+    };
+  }, [ujian, user?.username]);
+
   /**
    * Sinkron ulang soal — dipakai saat guru memperbaiki soal setelah siswa
    * mengunduh. Hanya untuk sesi yang BELUM dimulai; jawaban yang sudah ada
    * tetap dipertahankan untuk id soal yang tidak berubah.
    */
   const sinkronUlang = async (u: UjianGas) => {
-    const sesiLama = muatSesi(u.id);
+    const sesiLama = await muatSesi(u.id, user?.username ?? "");
     if (!sesiLama) return;
     if (!online) {
       toast.error("Nyalakan internet sementara untuk sinkron ulang soal.");
@@ -164,7 +197,7 @@ export function SiswaUjian() {
         typeof data.pin_pengawas === "string" &&
         /^\d{6}$/.test(data.pin_pengawas)
       ) {
-        simpanPinTersimpan(data.pin_pengawas);
+        await simpanPinTersimpan(data.pin_pengawas);
       }
       const idBaru = new Set(data.soal.map((s) => s.id));
       const jawaban: SesiUjian["jawaban"] = {};
@@ -196,7 +229,7 @@ export function SiswaUjian() {
         jawabanTeks,
         indeks: Math.max(0, Math.min(sesiLama.indeks, data.soal.length - 1)),
       };
-      simpanSesi(baru);
+      await simpanSesi(baru, user?.username ?? "");
       toast.success(
         `Soal diperbarui — ${baru.soal.length} soal terbaru tersimpan di HP.`,
       );
@@ -236,12 +269,15 @@ export function SiswaUjian() {
         typeof data.pin_pengawas === "string" &&
         /^\d{6}$/.test(data.pin_pengawas)
       ) {
-        simpanPinTersimpan(data.pin_pengawas);
+        await simpanPinTersimpan(data.pin_pengawas);
       }
       if (data.soal.length === 0) {
         throw new Error("Ujian ini belum memiliki soal.");
       }
-      simpanSesi(baruSesiUnduh(u.id, data, nama, kelas));
+      await simpanSesi(
+        baruSesiUnduh(u.id, data, nama, kelas),
+        user?.username ?? "",
+      );
       toast.success(`${data.soal.length} soal tersimpan di HP — lampu hijau.`);
       setVersi((v) => v + 1);
     } catch (err) {
@@ -272,7 +308,7 @@ export function SiswaUjian() {
     );
   }
 
-  if (ujian === null) {
+  if (ujian === null || sesiLokal?.daftar !== ujian) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-24 w-full" />
@@ -321,7 +357,7 @@ export function SiswaUjian() {
         ) : (
           <div className="mt-6 grid gap-5 sm:grid-cols-2">
             {ujian.map((u) => {
-              const sesi: SesiUjian | null = muatSesi(u.id);
+              const sesi = sesiLokal.data[u.id] ?? null;
               const lanjut =
                 sesi && (sesi.fase === "ujian" || sesi.fase === "kirim");
               const takBoleh = u.boleh === false; // server: kelas tidak termasuk sasaran
@@ -485,10 +521,25 @@ export function SiswaUjian() {
                         <Button
                           variant="ghost"
                           className="gap-2 text-muted-foreground"
-                          onClick={() => {
-                            hapusSesi(u.id);
-                            toast.success("Sesi dihapus, mulai dari awal.");
-                            setVersi((v) => v + 1);
+                          onClick={async () => {
+                            try {
+                              await hapusSesi(u.id, user?.username ?? "");
+                              setSesiLokal((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      data: { ...prev.data, [u.id]: null },
+                                    }
+                                  : prev,
+                              );
+                              toast.success("Sesi dihapus, mulai dari awal.");
+                            } catch (err) {
+                              toast.error(
+                                err instanceof Error
+                                  ? err.message
+                                  : "Gagal menghapus sesi ujian.",
+                              );
+                            }
                           }}
                         >
                           <Pencil className="size-4" /> Mulai ulang

@@ -14,6 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import { useNavigate } from "react-router";
+import { toast } from "sonner";
 import {
   SiswaUjian,
   SiswaRiwayat,
@@ -73,9 +74,13 @@ export default function Dashboard() {
   // Tab aktif selalu salah satu yang valid untuk peran ini.
   const tabAktif: TabId = tabs.includes(tab) ? tab : tabs[0];
 
-  const handleSignOut = () => {
-    signOut();
-    navigate("/");
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      navigate("/");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal keluar.");
+    }
   };
 
   if (!user) {
