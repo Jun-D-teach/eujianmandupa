@@ -48,21 +48,22 @@ const RATA: Record<string, string> = {
  * yang diketik guru tampil persis seperti yang ditulis.
  */
 export function soalHTML(teks: string): string {
-  if (!teks) return "";
-  let s = escapeHTML(teks.replace(/\r\n?/g, "\n"));
+  let html = teks
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/__(.*?)__/g, '<u>$1</u>');
 
-  // Penanda rata paragraf — diproses dulu karena boleh lintas baris.
-  s = s.replace(
-    /\[(tengah|kanan|kiri)\]([\s\S]*?)\[\/\1\]/g,
-    (_m, nama: string, isi: string) =>
-      `<span style="display:block;text-align:${RATA[nama] ?? "center"}">${isi.replace(/\n/g, "<br/>")}</span>`,
-  );
+  // 1. DETEKSI OTOMATIS: Cek apakah ada karakter Arab (\u0600-\u06FF)
+  const adaKarakterArab = /[\u0600-\u06FF]/.test(html);
+  
+  // Jika ada karakter Arab ATAU guru memakai tag [kanan], bungkus dengan kelas khusus
+  if (adaKarakterArab || html.includes('[kanan]')) {
+    // Bersihkan tag manual [kanan] jika ada
+    html = html.replace(/\[kanan\]/g, '').replace(/\[\/kanan\]/g, '');
+    return `<div class="soal-arab">${html}</div>`;
+  }
 
-  return s
-    .split("\n")
-    .filter((b) => b.trim() !== "")
-    .map((b) => `<p style="margin:0.3em 0;text-align:justify">${inlineHTML(b)}</p>`)
-    .join("");
+  return html;
 }
 
 /**

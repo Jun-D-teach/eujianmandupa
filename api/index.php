@@ -1918,22 +1918,73 @@ function a_getSoal(array $d): array
     );
 
     $daftar = [];
-    $peta = petaBacaan($id);
-    foreach (semua('SELECT * FROM soal WHERE ujian_id = ?', [$id]) as $s) {
-        $daftar[] = barisSoal($s, false, $peta);
-    }
-    if (!$daftar) return galat('Ujian ini belum memiliki soal.');
-
-    return [
-        'success' => true,
-        'ujian' => $meta,
-        'soal' => $daftar,
-        // Komitmen token — siswa memasukkan token pengawas saat Mulai Ujian,
-        // lalu SHA-256 input dicocokkan secara LOKAL (bisa offline).
-        'token_hash' => hash('sha256', strtoupper(bersih($r['token']))),
-        'pin_pengawas' => pinPengawas(),
-    ];
+$peta = petaBacaan($id);
+foreach (semua('SELECT * FROM soal WHERE ujian_id = ?', [$id]) as $s) {
+    $daftar[] = barisSoal($s, false, $peta);
 }
+if (!$daftar) return galat('Ujian ini belum memiliki soal.');
+
+/* ============================================================
+   ACAK URUTAN SOAL & PILIHAN A-E PER SISWA
+   Seed = username + ujian_id, jadi urutan konsisten untuk
+   siswa yang sama (jika unduh ulang, urutan tetap sama).
+   ============================================================ */
+$username = bersih($d['sesi_user'] ?? '');
+$seed = crc32($username . ':' . $id);
+
+// 1. Acak urutan soal
+srand($seed);
+shuffle($daftar);
+
+// 2. Acak urutan pilihan A-E per soal (tapi kunci jawaban ikut disesuaikan)
+foreach ($daftar as &$soal) {
+    if (($soal['tipe'] ?? 'pg') !== 'pg') continue;
+    
+    // Kumpulkan opsi yang ada
+    $opsiAsli = [];
+    $hurufAsli = ['a', 'b', 'c', 'd', 'e'];
+    foreach ($hurufAsli as $h) {
+        $kunci = 'opsi_' . $h;
+        if (!empty($soal[$kunci])) {
+            $opsiAsli[$h] = $soal[$kunci];
+        }
+    }
+    
+    // Acak urutan huruf
+    $hurufAcak = array_keys($opsiAsli);
+    shuffle($hurufAcak);
+    
+    // Peta huruf lama -> huruf baru
+    $petaHuruf = [];
+    $hurufBaru = ['a', 'b', 'c', 'd', 'e'];
+    foreach ($hurufAcak as $i => $hLama) {
+        $petaHuruf[$hLama] = $hurufBaru[$i];
+    }
+    
+    // Isi ulang opsi dengan urutan baru
+    foreach ($hurufBaru as $hBaru) {
+        $kunciBaru = 'opsi_' . $hBaru;
+        $hLama = array_search($hBaru, $petaHuruf);
+        $soal[$kunciBaru] = $opsiAsli[$hLama] ?? '';
+    }
+    
+    // Sesuaikan kunci jawaban
+    if (!empty($soal['kunci_jawaban'])) {
+        $kunciLama = strtolower($soal['kunci_jawaban']);
+        if (isset($petaHuruf[$kunciLama])) {
+            $soal['kunci_jawaban'] = strtoupper($petaHuruf[$kunciLama]);
+        }
+    }
+}
+unset($soal);
+
+return [
+    'success' => true,
+    'ujian' => $meta,
+    'soal' => $daftar,
+    'token_hash' => hash('sha256', strtoupper(bersih($r['token']))),
+    'pin_pengawas' => pinPengawas(),
+];
 
 /** Soal untuk petugas: DENGAN kunci jawaban + daftar teks bacaan. */
 function a_getSoalAdmin(array $d): array

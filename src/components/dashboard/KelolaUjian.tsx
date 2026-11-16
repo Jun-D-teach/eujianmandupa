@@ -1448,25 +1448,47 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       setForm((f) => ({ ...f, [field]: e.target.value }));
 
   /** Isi form dari soal terpilih → mode ubah. */
-  const mulaiEdit = (s: SoalGas) => {
-    setEditId(s.id);
-    setForm({
-      pertanyaan: s.pertanyaan,
-      opsi_a: s.opsi_a,
-      opsi_b: s.opsi_b,
-      opsi_c: s.opsi_c,
-      opsi_d: s.opsi_d,
-      opsi_e: s.opsi_e || "",
-      gambar: s.gambar || "",
-    });
-    setKunci(((s.kunci_jawaban || "A").toUpperCase() as Kunci) || "A");
-    setTipe(s.tipe ?? "pg");
-    setKunciTeks(s.kunci_teks || "");
-    setBacaanId(s.bacaan_id || "");
-    setBacaanJudul("");
-    setBacaanTeks("");
-    setTempel("");
-  };
+  /** Isi form dari soal terpilih → mode ubah. */
+const mulaiEdit = (s: SoalGas) => {
+  setEditId(s.id);
+  setForm({
+    pertanyaan: s.pertanyaan,
+    opsi_a: s.opsi_a,
+    opsi_b: s.opsi_b,
+    opsi_c: s.opsi_c,
+    opsi_d: s.opsi_d,
+    opsi_e: s.opsi_e || " ",
+    gambar: s.gambar || " ",
+  });
+  setKunci(((s.kunci_jawaban || "A ").toUpperCase() as Kunci) || "A ");
+   setTipe((s.tipe ?? "pg") as TipeSoal);  // ✅ PERBAIKAN DI SINI
+  setKunciTeks(s.kunci_teks || " ");
+  setBacaanId(s.bacaan_id || " ");
+  setBacaanJudul(" ");
+  setBacaanTeks(" ");
+
+  // 🔥 PERBAIKAN: Susun ulang teks asli ke kotak "Tulis soal" (tempel)
+  // agar tombol format (Rata Kanan, Tebal, dll) bisa langsung digunakan.
+  let teksUtama = s.pertanyaan;
+  
+  if (s.tipe === "pg") {
+    const opsi = [];
+    if (s.opsi_a) opsi.push(`A. ${s.opsi_a}`);
+    if (s.opsi_b) opsi.push(`B. ${s.opsi_b}`);
+    if (s.opsi_c) opsi.push(`C. ${s.opsi_c}`);
+    if (s.opsi_d) opsi.push(`D. ${s.opsi_d}`);
+    if (s.opsi_e) opsi.push(`E. ${s.opsi_e}`);
+    
+    if (opsi.length > 0) {
+      teksUtama += "\n" + opsi.join("\n");
+    }
+    if (s.kunci_jawaban) {
+      teksUtama += `\nKunci: ${s.kunci_jawaban}`;
+    }
+  }
+  
+  setTempel(teksUtama);
+};
 
   const batalEdit = () => {
     setEditId(null);
@@ -1686,9 +1708,53 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       el.setSelectionRange(awal + buka.length, awal + buka.length);
       return;
     }
-    tulisTextarea(el, buka + pilih + tutup, awal, akhir, setTempel);
+     tulisTextarea(el, buka + pilih + tutup, awal, akhir, setTempel);
   };
+/** 
+ * RAPIKAN SOAL COPY-PASTE: 
+ * Menambahkan "1." di awal baris pertama, dan "A.", "B.", "C.", "D.", "E." 
+ * di 5 baris berikutnya secara otomatis.
+ */
+const rapikanSoalOtomatis = () => {
+  const el = refTempel.current;
+  if (!el || !tempel.trim()) return;
 
+  // Pecah teks menjadi baris-baris
+  const barisAsli = tempel.split('\n').map(b => b.trim()).filter(b => b !== '');
+  
+  if (barisAsli.length < 2) {
+    toast.warning("Teks terlalu pendek. Pastikan ada pertanyaan dan minimal 1 pilihan.");
+    return;
+  }
+
+  // Ambil pertanyaan (baris pertama)
+  const pertanyaan = barisAsli[0];
+  
+  // Ambil 5 baris berikutnya sebagai pilihan (jika kurang dari 5, sisanya kosong)
+  const opsi = [];
+  for (let i = 1; i <= 5; i++) {
+    // Jika baris ke-i ada, pakai isinya. Jika tidak ada, pakai string kosong.
+    // Kita juga bersihkan huruf A-E yang mungkin sudah ada tapi salah ketik
+    let isiOpsi = barisAsli[i] || "";
+    // Bersihkan prefix huruf lama jika ada (misal user paste "a. jakarta")
+    isiOpsi = isiOpsi.replace(/^[A-Ea-e][\.\)\-\s]+/i, "").trim();
+    opsi.push(isiOpsi);
+  }
+
+  // Susun ulang teks dengan format rapi
+  const teksRapi = [
+    `1. ${pertanyaan}`,
+    `A. ${opsi[0]}`,
+    `B. ${opsi[1]}`,
+    `C. ${opsi[2]}`,
+    `D. ${opsi[3]}`,
+    `E. ${opsi[4]}`
+  ].join('\n');
+
+  // Update state textarea
+  setTempel(teksRapi);
+  toast.success("Soal berhasil dirapikan! Nomor dan pilihan A-E telah ditambahkan.");
+};
   /** Pecah kotak tempel (satu soal lengkap) menjadi kolom pertanyaan & A–E. */
   const pecahTempel = () => {
     const hasil = parseTeksSoal(tempel);
@@ -2133,6 +2199,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
               >
                 <ListOrdered className="size-3.5" />
               </TombolFormat>
+              
               <TombolFormat
                 label="Paragraf baru"
                 onClick={sisipParagraf}
@@ -2141,6 +2208,13 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
                 <Pilcrow className="size-3.5" />
               </TombolFormat>
               <span className="mx-1 h-5 w-px bg-border" />
+              <TombolFormat
+  label="Rapikan Nomor & Pilihan (1. A. B. C. D. E.)"
+  onClick={rapikanSoalOtomatis}
+  disabled={tempel === ""}
+>
+  <Wand2 className="size-3.5" />
+</TombolFormat>
               <TombolFormat
                 label="Rata kiri-kanan (rata paragraph)"
                 onClick={() => aturRata("rata")}

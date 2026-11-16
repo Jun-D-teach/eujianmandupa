@@ -173,6 +173,31 @@ export function SiswaUjian() {
     };
   }, [ujian, user?.username]);
 
+
+  useEffect(() => {
+  if (!ujian || !user) return;
+  
+  const username = user.username ?? user.id ?? "";
+  let dibersihkan = 0;
+
+  // Cek semua ujian yang dimuat
+  ujian.forEach(async (u) => {
+    const sesi = await muatSesi(u.id, username);
+    
+    // Jika sesi ada DAN statusnya sudah 'selesai' (sudah dikirim)
+    if (sesi && sesi.fase === "selesai") {
+      // Hapus dari IndexedDB untuk menghemat storage
+      await hapusSesi(u.id, username);
+      dibersihkan++;
+    }
+  });
+
+  if (dibersihkan > 0) {
+    toast.info(`Membersihkan ${dibersihkan} data ujian yang sudah selesai untuk menghemat memori HP.`);
+    // Refresh tampilan agar kartu ujian yang sudah selesai hilang/berubah status
+    setVersi((v) => v + 1); 
+  }
+}, [ujian, user]);
   /**
    * Sinkron ulang soal — dipakai saat guru memperbaiki soal setelah siswa
    * mengunduh. Hanya untuk sesi yang BELUM dimulai; jawaban yang sudah ada
@@ -335,13 +360,39 @@ export function SiswaUjian() {
               </p>
             )}
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setVersi((v) => v + 1)}
-          >
-            Muat ulang
-          </Button>
+          
+          {/* Gabungkan tombol di sini */}
+          <div className="flex items-center gap-2">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="text-xs text-muted-foreground"
+              onClick={async () => {
+                const username = user?.username ?? user?.id ?? "";
+                let count = 0;
+                // Asumsi 'ujian' adalah array daftar ujian yang punya status selesai
+                for (const u of ujian) {
+                  const sesi = await muatSesi(u.id, username);
+                  if (sesi?.fase === "selesai") {
+                    await hapusSesi(u.id, username);
+                    count++;
+                  }
+                }
+                toast.success(`${count} data ujian lama dihapus. Memori HP lebih lega!`);
+                setVersi(v => v + 1);
+              }}
+            >
+              🧹 Bersihkan Memori Ujian Selesai
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setVersi((v) => v + 1)}
+            >
+              Muat ulang
+            </Button>
+          </div>
         </div>
 
         {ujian.length === 0 ? (
