@@ -362,7 +362,7 @@ export function UjianFase(props: {
           </div>
 
           <div
-            className="mt-4 text-base font-semibold leading-7 sm:text-lg"
+            className="question-copy mt-4 text-base font-semibold sm:text-lg"
             dangerouslySetInnerHTML={{ __html: soalHTML(soal?.pertanyaan ?? "") }}
           />
 
@@ -381,10 +381,9 @@ export function UjianFase(props: {
                 <BookOpen className="size-3.5" /> Bacaan
               </p>
               <div
-                className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground"
-              >
-                {soal.bacaan}
-              </div>
+                className="question-copy mt-2 text-sm text-foreground"
+                dangerouslySetInnerHTML={{ __html: soalHTML(soal.bacaan) }}
+              />
             </div>
           )}
 

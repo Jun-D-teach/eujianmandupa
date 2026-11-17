@@ -150,57 +150,30 @@
     cursor: pointer;
   }
 }
-/* Kelas khusus untuk mendeteksi dan mempercantik teks Arab */
-.soal-arab {
-  direction: rtl; /* Mengatur arah baca dari kanan ke kiri */
+.question-copy .soal-paragraf {
+  margin: 0;
+  line-height: 1.9;
+  text-align: justify;
+  overflow-wrap: anywhere;
+}
+
+.question-copy .soal-paragraf + .soal-paragraf {
+  margin-top: 0.85em;
+}
+
+.question-copy .soal-paragraf-indent {
+  text-indent: 2em;
+}
+
+.question-copy .soal-paragraf-arab,
+.opsi-teks-arab {
+  direction: rtl;
   text-align: right;
-  font-family: "Amiri", "Scheherazade New", "Traditional Arabic", "Arial", sans-serif;
-  line-height: 2.2; /* Memberi jarak antar baris agar harakat tidak bertumpuk */
-}
-/* Import font Arab yang cantik dari Google Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&display=swap');
-
-/* ========================================================= */
-/* KHUSUS SOAL & PILIHAN GANDA BAHASA ARAB / RATA KANAN      */
-/* ========================================================= */
-.soal-arab,
-.rtl-text {
-  direction: rtl !important;
-  text-align: right !important;
-  font-family: 'Amiri', 'Scheherazade New', 'Traditional Arabic', 'Arial', sans-serif !important;
-  line-height: 2 !important; /* Jarak antar baris lega agar harakat tidak bertabrakan */
+  font-family: "Noto Naskh Arabic", "Amiri", "Traditional Arabic", serif;
+  line-height: 2.2;
 }
 
-/* Agar pilihan A, B, C, D, E tetap rapi di sebelah KIRI teks Arab */
-.soal-arab .opsi-label,
-.soal-arab ul li, 
-.soal-arab ol li,
-.rtl-text ul li, 
-.rtl-text ol li {
-  display: flex;
-  justify-content: flex-start; /* Memaksa opsi mulai dari sisi kanan-ke-kiri container */
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-/* Styling kotak huruf A-E agar kontras, tetap font Latin, dan tidak penyok */
-.soal-arab .opsi-label span:first-child,
-.soal-arab ul li span:first-child,
-.soal-arab ol li span:first-child,
-.rtl-text ul li span:first-child,
-.rtl-text ol li span:first-child {
-  font-family: system-ui, -apple-system, sans-serif; /* Kembali ke font Latin untuk A, B, C */
-  font-weight: bold;
-  min-width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background-color: #f0fdf4; /* Hijau muda lembut */
-  color: #15803d;
-  border-radius: 6px;
-  border: 1px solid #bbf7d0;
-  font-size: 0.875rem;
-  flex-shrink: 0; /* Mencegah kotak huruf mengecil/penyok */
+.arab-segmen {
+  unicode-bidi: isolate;
+  font-family: "Noto Naskh Arabic", "Amiri", "Traditional Arabic", serif;
 }

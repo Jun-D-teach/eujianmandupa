@@ -223,7 +223,7 @@ function uraikanBlok(blok: Blok): BarisSoalOtomat {
   const jumlahOpsi = () => slot.filter((s) => s !== "").length;
 
   const tambah = (teks: string) => {
-    const t = teks.trim();
+    const t = teks.replace(/^[ ]+|[ \t]+$/g, "");
     if (t === "") return;
     if (opsiTerakhir >= 0) {
       slot[opsiTerakhir] = slot[opsiTerakhir] ? `${slot[opsiTerakhir]} ${t}` : t;
@@ -236,6 +236,11 @@ function uraikanBlok(blok: Blok): BarisSoalOtomat {
   };
 
   for (const b of baris) {
+    if (b.trim() === "" && opsiTerakhir < 0) {
+      tanya.push("");
+      continue;
+    }
+
     // 1) Baris kunci keyword: "Kunci: B" / "Jawaban: (C)".
     const mK = b.match(RE_KUNCI_EKOR);
     if (mK && !kunci) {
@@ -291,10 +296,13 @@ function uraikanBlok(blok: Blok): BarisSoalOtomat {
   // Baris baru dari guru = paragraf baru saat ditampilkan — jangan diratakan
   // jadi satu baris (lihat src/lib/soal-format.ts).
   let pertanyaan = tanya
-    .map((t) => t.replace(/[ \t]+/g, " "))
+    .map((t) => {
+      const indent = t.match(/^\t+/)?.[0] ?? "";
+      return indent.slice(0, 1) + t.slice(indent.length).replace(/[ \t]+/g, " ");
+    })
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    .replace(/^\n+|\n+$/g, "");
 
   // Kunci tertempel di ekor pertanyaan: "… adalah (C)".
   if (!kunci && jumlahOpsi() >= 2) {
@@ -329,7 +337,15 @@ function pecahNomor(line: string): { nomor: string; sisa: string } | null {
   const polos = line.slice(penanda.length);
   const m = polos.match(RE_SOAL) ?? polos.match(RE_SOAL_LABEL);
   if (!m) return null;
-  return { nomor: m[1] ?? "", sisa: (penanda + (m[2] ?? "")).trim() };
+  const isiSetelahNomor =
+    polos.match(/^\s*(?:soal\s*)?\d{1,3}[.)\-–—:](.*)$/i)?.[1] ?? "";
+  const indent = /^[ \t]*/.exec(isiSetelahNomor)?.[0].includes("\t")
+    ? "\t"
+    : "";
+  return {
+    nomor: m[1] ?? "",
+    sisa: (penanda + indent + (m[2] ?? "")).replace(/^ +| +$/g, ""),
+  };
 }
 
 /** Pecah teks (dokumen Word hasil salin-tempel / .docx terurai) jadi daftar soal. */
@@ -849,7 +865,7 @@ export function parseExcelFile(file: File): Promise<Array<{
         const soal = rows
           .filter(row => row[0] && String(row[0]).trim() !== '') // Filter baris kosong
           .map(row => ({
-            pertanyaan: String(row[0] || '').trim(),
+            pertanyaan: String(row[0] || '').trimEnd(),
             opsi_a: String(row[1] || '').trim(),
             opsi_b: String(row[2] || '').trim(),
             opsi_c: String(row[3] || '').trim(),

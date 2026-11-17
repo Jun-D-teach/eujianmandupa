@@ -200,14 +200,20 @@ table.data td.val { font-weight: 600; }
 .bawah { flex: 1; display: flex; justify-content: space-between;
   align-items: flex-end; gap: 1.5mm; }
 table.ujian { width: auto; max-width: 45mm; table-layout: fixed; }
-.ttd { flex: none; width: 34mm; text-align: center; font-size: 5.2pt;
-  line-height: 1.3; }
+.ttd { flex: none; width: 34mm; display: flex; flex-direction: column;
+  gap: 0.25mm; text-align: center; font-size: 5.2pt; line-height: 1.3; }
+.ttd-kota { white-space: nowrap; }
 .ttd-jabatan { font-weight: 700; }
-.ttd-foto { height: 7.5mm; display: flex; align-items: center;
-  justify-content: center; }
-.ttd-foto img { max-height: 7.5mm; max-width: 30mm; object-fit: contain; }
-.ttd-nama { font-weight: 700; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; }
+.ttd-paraf { position: relative; height: 8.5mm; display: flex;
+  align-items: flex-end; justify-content: center; overflow: hidden; }
+.ttd-foto { position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; pointer-events: none; }
+.ttd-foto img { display: block; flex: none; width: auto; height: auto;
+  max-height: 8.5mm; max-width: 30mm; object-fit: contain; opacity: 0.48;
+  mix-blend-mode: multiply; }
+.ttd-nama { position: relative; z-index: 1; max-width: 100%;
+  font-weight: 700; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; text-shadow: 0 0 0.6mm #fff, 0 0 0.6mm #fff; }
 .ttd-nip { color: #333; }
 `;
 }
@@ -269,8 +275,10 @@ export function kartuHTML(set: SetKartu, k: IsiKartu): string {
       <div class="ttd">
         <div class="ttd-kota">${esc(set.kota)}, ${tanggalPanjang()}</div>
         <div class="ttd-jabatan">Kepala Madrasah</div>
-        <div class="ttd-foto">${ttd}</div>
-        <div class="ttd-nama">${esc(set.kepala) || "&nbsp;"}</div>
+        <div class="ttd-paraf">
+          <div class="ttd-foto">${ttd}</div>
+          <div class="ttd-nama">${esc(set.kepala) || "&nbsp;"}</div>
+        </div>
         <div class="ttd-nip">${set.nip ? `NIP. ${esc(set.nip)}` : "&nbsp;"}</div>
       </div>
     </div>

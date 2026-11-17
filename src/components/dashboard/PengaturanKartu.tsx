@@ -189,7 +189,7 @@ export function PengaturanKartu() {
             <p className="text-[11px] leading-4 text-muted-foreground">
               {kunci === "logo"
                 ? "Ditempatkan di kiri kop kartu. JPG/PNG, otomatis dikompres."
-                : "Dicetak di atas nama Kepala Madrasah. JPG/PNG, otomatis dikompres."}
+                : "Dicetak transparan di belakang teks nama dan NIP Kepala Madrasah. JPG/PNG, otomatis dikompres."}
             </p>
           </div>
         </div>

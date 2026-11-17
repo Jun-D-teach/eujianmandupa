@@ -19,7 +19,12 @@ import {
   parseTeksSoal,
   type BarisSoalOtomat,
 } from "@/lib/soal-import";
-import { adaFormat, opsiHTML, soalHTML } from "@/lib/soal-format";
+import {
+  opsiHTML,
+  pertanyaanUntukEdit,
+  siapkanPertanyaanUntukSimpan,
+  soalHTML,
+} from "@/lib/soal-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -171,6 +176,19 @@ function tulisTextarea(
     sukses = false;
   }
   if (!sukses) el.setRangeText(teks, mulai, akhir, "end");
+  set(el.value);
+}
+
+function tanganiTabTextarea(
+  e: React.KeyboardEvent<HTMLTextAreaElement>,
+  set: (value: string) => void,
+) {
+  if (e.key !== "Tab") return;
+  e.preventDefault();
+  const el = e.currentTarget;
+  const mulai = el.selectionStart;
+  const akhir = el.selectionEnd;
+  el.setRangeText("\t", mulai, akhir, "end");
   set(el.value);
 }
 
@@ -1412,7 +1430,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
       const opsi = [s.opsi_a, s.opsi_b, s.opsi_c, s.opsi_d, s.opsi_e || ""];
       return {
         nomor: String(index + 1),
-        pertanyaan: s.pertanyaan,
+        pertanyaan: pertanyaanUntukEdit(s.pertanyaan),
         opsi,
         opsiMentah: opsi,
         kunci: (s.kunci_jawaban || "") as "A" | "B" | "C" | "D" | "E" | "",
@@ -1452,7 +1470,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
 const mulaiEdit = (s: SoalGas) => {
   setEditId(s.id);
   setForm({
-    pertanyaan: s.pertanyaan,
+    pertanyaan: pertanyaanUntukEdit(s.pertanyaan),
     opsi_a: s.opsi_a,
     opsi_b: s.opsi_b,
     opsi_c: s.opsi_c,
@@ -1469,7 +1487,7 @@ const mulaiEdit = (s: SoalGas) => {
 
   // 🔥 PERBAIKAN: Susun ulang teks asli ke kotak "Tulis soal" (tempel)
   // agar tombol format (Rata Kanan, Tebal, dll) bisa langsung digunakan.
-  let teksUtama = s.pertanyaan;
+  let teksUtama = pertanyaanUntukEdit(s.pertanyaan);
   
   if (s.tipe === "pg") {
     const opsi = [];
@@ -1549,7 +1567,7 @@ const mulaiEdit = (s: SoalGas) => {
       }
       const muatan = {
         ujian_id: ujianId,
-        pertanyaan: form.pertanyaan.trim(),
+        pertanyaan: siapkanPertanyaanUntukSimpan(form.pertanyaan),
         opsi_a: tipe === "pg" ? form.opsi_a.trim() : "",
         opsi_b: tipe === "pg" ? form.opsi_b.trim() : "",
         opsi_c: tipe === "pg" ? form.opsi_c.trim() : "",
@@ -1929,7 +1947,7 @@ const rapikanSoalOtomatis = () => {
       const res = await gasCall<{ message?: string }>("imporSoal", {
         ujian_id: ujianId,
         soal: barisSiap.map((b) => ({
-          pertanyaan: b.pertanyaan.trim(),
+          pertanyaan: siapkanPertanyaanUntukSimpan(b.pertanyaan),
           opsi_a: b.opsi[0].trim(),
           opsi_b: b.opsi[1].trim(),
           opsi_c: b.opsi[2].trim(),
@@ -2024,7 +2042,7 @@ const rapikanSoalOtomatis = () => {
                     </Badge>
                   </p>
                   <div
-                    className="mt-1 text-sm font-semibold leading-6"
+                    className="question-copy mt-1 text-sm font-semibold"
                     dangerouslySetInnerHTML={{ __html: soalHTML(s.pertanyaan) }}
                   />
                   {s.gambar && (
@@ -2241,6 +2259,7 @@ const rapikanSoalOtomatis = () => {
               ref={refTempel}
               value={tempel}
               onChange={(e) => setTempel(e.target.value)}
+              onKeyDown={(e) => tanganiTabTextarea(e, setTempel)}
               rows={6}
               placeholder="Tulis atau tempel satu soal lengkap di sini: pertanyaan, lalu pilihan A. B. C. D. (kunci seperti “Kunci: B” terdeteksi otomatis). Pilih teks lalu klik tombol di atas untuk tebal, miring, numbering, atau rata paragraph."
             />
@@ -2256,7 +2275,9 @@ const rapikanSoalOtomatis = () => {
                 <Wand2 className="size-3.5" /> Pecah otomatis ke kolom A–E
               </Button>
               <p className="text-[11px] leading-4 text-muted-foreground">
-                Pertanyaan harus <strong>baris pertama</strong> di atas huruf
+                Tekan <kbd>Tab</kbd> di awal baris untuk menjorokkan paragraf.
+                Pisahkan paragraf dengan baris kosong. Pertanyaan harus{" "}
+                <strong>baris pertama</strong> di atas huruf
                 A. Setelah diklik: soal tampil di <strong>kolom soal</strong>,
                 jawaban di <strong>kolom A–E</strong> di bawah. Huruf A., B., …
                 dirapikan otomatis.
@@ -2271,16 +2292,21 @@ const rapikanSoalOtomatis = () => {
               id="kolom-soal"
               value={form.pertanyaan}
               onChange={set("pertanyaan")}
+              onKeyDown={(e) =>
+                tanganiTabTextarea(e, (value) =>
+                  setForm((f) => ({ ...f, pertanyaan: value })),
+                )
+              }
               rows={3}
               placeholder="Pertanyaan muncul di sini setelah klik “Pecah otomatis ke kolom A–E” — boleh dikoreksi langsung."
             />
-            {adaFormat(form.pertanyaan) && (
+            {form.pertanyaan.trim() !== "" && (
               <div className="rounded-xl border border-border/70 bg-background/60 px-3 py-2">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   Pratinjau tampilan ke siswa
                 </p>
                 <div
-                  className="mt-1 text-sm leading-6"
+                  className="question-copy mt-1 text-sm"
                   dangerouslySetInnerHTML={{ __html: soalHTML(form.pertanyaan) }}
                 />
               </div>
@@ -2664,8 +2690,9 @@ const rapikanSoalOtomatis = () => {
           <Textarea
             value={teksImpor}
             onChange={(e) => setTeksImpor(e.target.value)}
+            onKeyDown={(e) => tanganiTabTextarea(e, setTeksImpor)}
             rows={7}
-            placeholder="… atau tempel langsung isi dokumen Word di sini."
+            placeholder="… atau tempel langsung isi dokumen Word di sini. Pisahkan paragraf dengan baris kosong; tekan Tab di awal baris untuk inden."
           />
 
           <div className="flex flex-wrap gap-2">
@@ -2707,18 +2734,19 @@ const rapikanSoalOtomatis = () => {
                     className="rounded-xl border border-border/70 bg-background/60 p-3"
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <p className="min-w-0 text-xs font-semibold leading-5">
+                      <div className="min-w-0 flex-1 text-xs font-semibold leading-5">
                         <span className="text-muted-foreground">
                           {b.nomor ? `${b.nomor}. ` : ""}
                         </span>
-                        <span
+                        <div
+                          className="question-copy mt-1"
                           dangerouslySetInnerHTML={{
-                            __html: opsiHTML(
+                            __html: soalHTML(
                               b.pertanyaan || "(pertanyaan kosong)",
                             ),
                           }}
                         />
-                      </p>
+                      </div>
                       <Button
                         type="button"
                         variant="ghost"
