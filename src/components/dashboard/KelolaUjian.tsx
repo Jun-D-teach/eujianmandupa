@@ -850,6 +850,7 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
     filterUnduh,
   ]);
 
+  const opsiGuruFilter = opsiFilter.guru;
   const kelompokUjian = useMemo(() => {
     const grup = new Map<string, UjianGas[]>();
     for (const u of ujianTersaring) {
@@ -876,7 +877,7 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
 
     const labelGrup = (key: string) => {
       if (kelompokkan === "guru") {
-        const row = opsiFilter.guru.find(([nip]) => nip === key);
+        const row = opsiGuruFilter.find(([nip]) => nip === key);
         return row?.[1] ?? "Belum ditugaskan";
       }
       if (kelompokkan === "tanggal") {
@@ -903,7 +904,7 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
       }
       return a.label.localeCompare(b.label, "id", { numeric: true });
     });
-  }, [ujianTersaring, kelompokkan, opsiFilter.guru]);
+  }, [ujianTersaring, kelompokkan, opsiGuruFilter]);
 
   const resetFilterUjian = () => {
     setCariUjian("");
@@ -1076,6 +1077,174 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
         </div>
       )}
 
+      {isAdmin && ujian.length > 0 && (
+        <Card className="border-border/70">
+          <CardContent className="space-y-4 p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-bold">Cari & kelompokkan ujian</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Cari judul, mapel, guru, atau tanggal; gunakan filter status untuk
+                  menemukan ujian yang perlu ditindaklanjuti.
+                </p>
+              </div>
+              <Badge variant="outline">
+                {ujianTersaring.length} dari {ujian.length} ujian
+              </Badge>
+            </div>
+
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={cariUjian}
+                onChange={(e) => setCariUjian(e.target.value)}
+                placeholder="Cari judul ujian, mapel, nama/NIP guru, atau tanggal…"
+                aria-label="Cari ujian"
+                className="pl-9"
+              />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">
+                Mapel
+                <select
+                  value={filterMapel}
+                  onChange={(e) => setFilterMapel(e.target.value)}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground"
+                >
+                  <option value="semua">Semua mapel</option>
+                  {opsiFilter.mapel.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">
+                Guru penanggung jawab
+                <select
+                  value={filterGuru}
+                  onChange={(e) => setFilterGuru(e.target.value)}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground"
+                >
+                  <option value="semua">Semua guru</option>
+                  {opsiFilter.guru.map(([nip, nama]) => (
+                    <option key={nip} value={nip}>{nama}</option>
+                  ))}
+                  <option value="tanpa-guru">Belum ditugaskan</option>
+                </select>
+              </label>
+              <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">
+                Tanggal pelaksanaan
+                <select
+                  value={filterTanggal}
+                  onChange={(e) => setFilterTanggal(e.target.value)}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground"
+                >
+                  <option value="semua">Semua tanggal</option>
+                  {opsiFilter.tanggal.map((tgl) => (
+                    <option key={tgl} value={tgl}>
+                      {new Date(`${tgl}T00:00:00`).toLocaleDateString("id-ID", {
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric",
+                      })}
+                    </option>
+                  ))}
+                  <option value="tanpa-tanggal">Tanpa jadwal</option>
+                </select>
+              </label>
+              <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">
+                Pengelompokan
+                <select
+                  value={kelompokkan}
+                  onChange={(e) => setKelompokkan(e.target.value)}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground"
+                >
+                  <option value="tidak">Tanpa kelompok</option>
+                  <option value="mapel">Kelompokkan menurut mapel</option>
+                  <option value="guru">Kelompokkan menurut guru</option>
+                  <option value="tanggal">Kelompokkan menurut tanggal</option>
+                  <option value="status">Kelompokkan menurut status</option>
+                </select>
+              </label>
+              <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">
+                Status ujian
+                <select
+                  value={filterAktif}
+                  onChange={(e) => setFilterAktif(e.target.value)}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground"
+                >
+                  <option value="semua">Aktif & draft</option>
+                  <option value="aktif">Aktif</option>
+                  <option value="draft">Draft / nonaktif</option>
+                </select>
+              </label>
+              <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">
+                Konfirmasi soal
+                <select
+                  value={filterKonfirmasi}
+                  onChange={(e) => setFilterKonfirmasi(e.target.value)}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground"
+                >
+                  <option value="semua">Sudah & belum konfirmasi</option>
+                  <option value="sudah">Sudah konfirmasi</option>
+                  <option value="belum">Belum konfirmasi</option>
+                </select>
+              </label>
+              <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">
+                Izin unduh siswa
+                <select
+                  value={filterUnduh}
+                  onChange={(e) => setFilterUnduh(e.target.value)}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground"
+                >
+                  <option value="semua">Izin unduh dibuka & ditutup</option>
+                  <option value="dibuka">Izin unduh dibuka</option>
+                  <option value="ditutup">Izin unduh ditutup</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3 text-xs">
+              <span className="font-semibold text-muted-foreground">Ringkasan:</span>
+              <Badge variant="outline">
+                {ujian.filter((u) => u.aktif).length} aktif
+              </Badge>
+              <Badge variant="outline">
+                {ujian.filter((u) => !u.aktif).length} draft / nonaktif
+              </Badge>
+              <Badge variant="outline" className="border-emerald-600 text-emerald-700">
+                {ujian.filter((u) => u.konfirmasi_guru).length} soal terkonfirmasi
+              </Badge>
+              <Badge variant="outline" className="border-red-500 text-red-600">
+                {ujian.filter((u) => !u.konfirmasi_guru).length} belum konfirmasi
+              </Badge>
+              <Badge variant="outline" className="border-amber-500 text-amber-700">
+                {ujian.filter((u) => u.aktif && u.boleh_unduh).length} izin unduh dibuka
+              </Badge>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="ml-auto"
+                onClick={resetFilterUjian}
+                disabled={
+                  !cariUjian &&
+                  filterMapel === "semua" &&
+                  filterGuru === "semua" &&
+                  filterTanggal === "semua" &&
+                  filterAktif === "semua" &&
+                  filterKonfirmasi === "semua" &&
+                  filterUnduh === "semua" &&
+                  kelompokkan === "tidak"
+                }
+              >
+                Reset filter
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {ujian.length === 0 ? (
         <Empty className="rounded-3xl border border-dashed border-border/70 py-14">
           <EmptyContent>
@@ -1085,9 +1254,32 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
             </EmptyDescription>
           </EmptyContent>
         </Empty>
+      ) : ujianTersaring.length === 0 ? (
+        <Empty className="rounded-3xl border border-dashed border-border/70 py-14">
+          <EmptyContent>
+            <EmptyTitle>Tidak ada ujian yang cocok</EmptyTitle>
+            <EmptyDescription>
+              Coba ubah kata pencarian atau reset filter ujian.
+            </EmptyDescription>
+            {isAdmin && (
+              <Button variant="outline" size="sm" onClick={resetFilterUjian}>
+                Reset filter
+              </Button>
+            )}
+          </EmptyContent>
+        </Empty>
       ) : (
-        <Accordion type="multiple" className="space-y-4">
-          {ujian.map((u) => (
+        <div className="space-y-5">
+        {kelompokUjian.map((kelompok) => (
+          <section key={kelompok.key} className="space-y-3">
+            {kelompokkan !== "tidak" && (
+              <div className="flex items-center justify-between gap-3 border-b border-border/70 pb-2">
+                <h2 className="text-sm font-bold">{kelompok.label}</h2>
+                <Badge variant="secondary">{kelompok.daftar.length} ujian</Badge>
+              </div>
+            )}
+            <Accordion type="multiple" className="space-y-4">
+          {kelompok.daftar.map((u) => (
             <AccordionItem
               key={u.id}
               value={u.id}
@@ -1282,7 +1474,10 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
               </AccordionContent>
             </AccordionItem>
           ))}
-        </Accordion>
+            </Accordion>
+          </section>
+        ))}
+        </div>
       )}
 
       <AlertDialog
