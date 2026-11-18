@@ -597,12 +597,14 @@ export function SelesaiFase(props: {
         minute: "2-digit",
       })
     : "—";
-  const jumlahPelanggaran = props.sesi.pelanggaran.length;
   const hasil = props.sesi.hasil;
-  const jumlahPg = props.sesi.soal.filter(
-    (soal) => (soal.tipe ?? "pg") === "pg",
-  ).length;
-  const jumlahUraian = props.sesi.soal.length - jumlahPg;
+  const jumlahPelanggaran =
+    hasil?.total_pelanggaran ?? props.sesi.pelanggaran.length;
+  const jumlahPg =
+    hasil?.jumlah_pg ??
+    props.sesi.soal.filter((soal) => (soal.tipe ?? "pg") === "pg").length;
+  const jumlahUraian =
+    hasil?.jumlah_uraian ?? props.sesi.soal.length - jumlahPg;
 
   return (
     <div className="space-y-5">

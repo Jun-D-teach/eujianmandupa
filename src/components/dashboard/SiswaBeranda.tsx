@@ -172,32 +172,6 @@ export function SiswaUjian() {
       hidup = false;
     };
   }, [ujian, user?.username]);
-
-
-  useEffect(() => {
-  if (!ujian || !user) return;
-  
-  const username = user.username ?? user.id ?? "";
-  let dibersihkan = 0;
-
-  // Cek semua ujian yang dimuat
-  ujian.forEach(async (u) => {
-    const sesi = await muatSesi(u.id, username);
-    
-    // Jika sesi ada DAN statusnya sudah 'selesai' (sudah dikirim)
-    if (sesi && sesi.fase === "selesai") {
-      // Hapus dari IndexedDB untuk menghemat storage
-      await hapusSesi(u.id, username);
-      dibersihkan++;
-    }
-  });
-
-  if (dibersihkan > 0) {
-    toast.info(`Membersihkan ${dibersihkan} data ujian yang sudah selesai untuk menghemat memori HP.`);
-    // Refresh tampilan agar kartu ujian yang sudah selesai hilang/berubah status
-    setVersi((v) => v + 1); 
-  }
-}, [ujian, user]);
   /**
    * Sinkron ulang soal — dipakai saat guru memperbaiki soal setelah siswa
    * mengunduh. Hanya untuk sesi yang BELUM dimulai; jawaban yang sudah ada
@@ -360,31 +334,7 @@ export function SiswaUjian() {
               </p>
             )}
           </div>
-          
-          {/* Gabungkan tombol di sini */}
           <div className="flex items-center gap-2">
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="text-xs text-muted-foreground"
-              onClick={async () => {
-                const username = user?.username ?? user?.id ?? "";
-                let count = 0;
-                // Asumsi 'ujian' adalah array daftar ujian yang punya status selesai
-                for (const u of ujian) {
-                  const sesi = await muatSesi(u.id, username);
-                  if (sesi?.fase === "selesai") {
-                    await hapusSesi(u.id, username);
-                    count++;
-                  }
-                }
-                toast.success(`${count} data ujian lama dihapus. Memori HP lebih lega!`);
-                setVersi(v => v + 1);
-              }}
-            >
-              🧹 Bersihkan Memori Ujian Selesai
-            </Button>
-
             <Button
               variant="outline"
               size="sm"
@@ -409,6 +359,7 @@ export function SiswaUjian() {
           <div className="mt-6 grid gap-5 sm:grid-cols-2">
             {ujian.map((u) => {
               const sesi = sesiLokal.data[u.id] ?? null;
+              const sudahSelesai = sesi?.fase === "selesai";
               const lanjut =
                 sesi && (sesi.fase === "ujian" || sesi.fase === "kirim");
               const takBoleh = u.boleh === false; // server: kelas tidak termasuk sasaran
@@ -418,7 +369,8 @@ export function SiswaUjian() {
               const terkunciJadwal = belumWaktunya(u.tgl_mulai);
               // Guru memperbaiki soal setelah unduhan dibuat → wajib sinkron ulang.
               const revisiBeda = Boolean(
-                sesi &&
+                !sudahSelesai &&
+                  sesi &&
                   typeof u.revisi === "number" &&
                   (sesi.revisi ?? 1) !== u.revisi,
               );
@@ -441,20 +393,24 @@ export function SiswaUjian() {
                       <div className="flex flex-wrap justify-end gap-2">
                         <LampuStatus
                           warna={
-                            takBoleh || !izin
-                              ? "mati"
-                              : adaSoalLokal
-                                ? "hijau"
-                                : "kuning"
+                            sudahSelesai
+                              ? "hijau"
+                              : takBoleh || !izin
+                                ? "mati"
+                                : adaSoalLokal
+                                  ? "hijau"
+                                  : "kuning"
                           }
                           teks={
-                            takBoleh
-                              ? "Di luar sasaran"
-                              : !izin
-                                ? "Belum dibagikan"
-                                : adaSoalLokal
-                                  ? "Sudah diunduh"
-                                  : "Siap diunduh"
+                            sudahSelesai
+                              ? "Selesai"
+                              : takBoleh
+                                ? "Di luar sasaran"
+                                : !izin
+                                  ? "Belum dibagikan"
+                                  : adaSoalLokal
+                                    ? "Sudah diunduh"
+                                    : "Siap diunduh"
                           }
                         />
                         <Badge variant="secondary">
@@ -491,7 +447,13 @@ export function SiswaUjian() {
                       </p>
                     )}
 
-                    {takBoleh ? (
+                    {sudahSelesai ? (
+                      <p className="mt-2 text-xs font-semibold text-emerald-700">
+                        Jawaban sudah dikirim
+                        {sesi?.hasil ? ` · Nilai ${sesi.hasil.nilai}` : ""}. Ujian
+                        tidak dapat dikerjakan ulang.
+                      </p>
+                    ) : takBoleh ? (
                       <p className="mt-2 rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-700">
                         Kelasmu tidak terdaftar untuk ujian ini.
                       </p>
@@ -515,7 +477,11 @@ export function SiswaUjian() {
                     )}
 
                     <div className="mt-5 flex flex-wrap items-center gap-2">
-                      {takBoleh ? (
+                      {sudahSelesai ? (
+                        <Button disabled className="gap-2">
+                          Ujian Selesai
+                        </Button>
+                      ) : takBoleh ? (
                         <Button disabled>Kerjakan</Button>
                       ) : !izin ? (
                         <Button disabled className="gap-2">

@@ -45,6 +45,8 @@ export type HasilAkhir = {
   benar: number;
   total_soal: number;
   total_pelanggaran: number;
+  jumlah_pg?: number;
+  jumlah_uraian?: number;
 };
 
 export type SesiUjian = {

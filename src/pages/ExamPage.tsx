@@ -247,7 +247,20 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
   }, [sesi?.strike]);
  useEffect(() => {
   if (sesi && username) {
-    void simpanSesi(sesi, username)
+    const dataTersimpan =
+      sesi.fase === "selesai"
+        ? {
+            ...sesi,
+            soal: [],
+            jawaban: {},
+            jawabanTeks: {},
+            pelanggaran: [],
+            token: undefined,
+            tokenHash: undefined,
+            sirene: false,
+          }
+        : sesi;
+    void simpanSesi(dataTersimpan, username)
       .then(() => {
         gagalSimpanRef.current = false;
       })
@@ -599,6 +612,10 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
    *  divalidasi server. Token justru dimasukkan saat Mulai Ujian. */
   const unduhSoal = async () => {
     if (!ujianId) return;
+    if (sesi?.fase === "selesai") {
+      toast.error("Ujian ini sudah selesai dan tidak dapat diunduh ulang.");
+      return;
+    }
     const n = nama.trim();
     const k = kelas.trim();
     if (!n || !k) {
@@ -804,7 +821,7 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
   };
 
   const kirimJawaban = async () => {
-    if (!sesi || !ujianId) return;
+    if (!sesi || sesi.fase !== "kirim" || !ujianId) return;
     setBusy(true);
     try {
       const res = await gasCall<{
@@ -828,22 +845,48 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
               : sesi.jawabanTeks?.[s.id] ?? "",
         })),
       });
-      setSesi((prev) =>
-        prev
-          ? {
-              ...prev,
-              fase: "selesai",
-            kirimPada: Date.now(),
+      const sesiSelesai: SesiUjian = {
+        ...sesi,
+        fase: "selesai",
+        kirimPada: Date.now(),
+        sirene: false,
+        hasil: {
+          nilai: res.nilai,
+          benar: res.benar,
+          total_soal: res.total_soal,
+          total_pelanggaran: res.total_pelanggaran,
+          jumlah_pg: sesi.soal.filter((soal) => (soal.tipe ?? "pg") === "pg")
+            .length,
+          jumlah_uraian: sesi.soal.filter(
+            (soal) => (soal.tipe ?? "pg") !== "pg",
+          ).length,
+        },
+      };
+      setSesi(sesiSelesai);
+      try {
+        await simpanSesi(
+          {
+            ...sesiSelesai,
+            soal: [],
+            jawaban: {},
+            jawabanTeks: {},
+            pelanggaran: [],
+            token: undefined,
+            tokenHash: undefined,
             sirene: false,
-            hasil: {
-                nilai: res.nilai,
-                benar: res.benar,
-                total_soal: res.total_soal,
-                total_pelanggaran: res.total_pelanggaran,
-              },
-            }
-          : prev,
-      );
+          },
+          username,
+        );
+      } catch (err) {
+        console.error("Jawaban terkirim, tetapi status selesai gagal disimpan:", err);
+        toast.error(
+          "Jawaban sudah terkirim, tetapi status selesai gagal disimpan di HP. Jangan refresh halaman dan hubungi pengawas.",
+          { duration: 10000 },
+        );
+        hentikanSirene();
+        setSireneNyala(false);
+        return;
+      }
       hentikanSirene();
       setSireneNyala(false);
       toast.success("Jawaban berhasil dikirim.");

@@ -11,6 +11,7 @@ function escapeHTML(teks: string): string {
 
 function inlineHTML(teks: string): string {
   return teks
+    .replace(/~~([^~]+)~~/g, "<s>$1</s>")
     .replace(/__([^_]+)__/g, "<u>$1</u>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
@@ -18,7 +19,7 @@ function inlineHTML(teks: string): string {
     // KIMIA/MATEMATIKA: ~x~ = indeks bawah (a~2~ → a₂),
     // ^x^ = indeks atas (x^2^ → x²), => = panah reaksi
     .replace(/~([^~\n]+)~/g, "<sub>$1</sub>")
-    .replace(/\^([^\^\n]+)\^/g, "<sup>$1</sup>")
+    .replace(/\^([^^\n]+)\^/g, "<sup>$1</sup>")
     .replace(/=&gt;/g, "→");
 }
 
@@ -112,5 +113,5 @@ export function opsiHTML(teks: string): string {
 }
 
 export function adaFormat(teks: string): boolean {
-  return /\n|\t|\u2060|\*\*|\*|__|\[(?:\/)?(?:tengah|kanan|kiri)\]/.test(teks);
+  return /\n|\t|\u2060|~~|\*\*|\*|__|\[(?:\/)?(?:tengah|kanan|kiri)\]/.test(teks);
 }

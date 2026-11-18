@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 // Tambahkan import di bagian atas file
 import { downloadTemplateExcel, parseExcelFile } from '@/lib/soal-import';
@@ -61,6 +61,7 @@ import {
 import {
   AlignCenter,
   AlignJustify,
+  AlignLeft,
   AlignRight,
   Bold,
   BookOpen,
@@ -72,6 +73,7 @@ import {
   ImagePlus,
   Italic,
   KeyRound,
+  List,
   ListOrdered,
   PenLine,
   Pencil,
@@ -84,6 +86,7 @@ import {
   Share2,
   Sparkles,
     Subscript,
+  Strikethrough,
   Superscript,
   Target,
   Trash2,
@@ -433,6 +436,14 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
 
   const [ujian, setUjian] = useState<UjianGas[] | null>(null);
   const [versi, setVersi] = useState(0);
+  const [cariUjian, setCariUjian] = useState("");
+  const [filterMapel, setFilterMapel] = useState("semua");
+  const [filterGuru, setFilterGuru] = useState("semua");
+  const [filterTanggal, setFilterTanggal] = useState("semua");
+  const [filterAktif, setFilterAktif] = useState("semua");
+  const [filterKonfirmasi, setFilterKonfirmasi] = useState("semua");
+  const [filterUnduh, setFilterUnduh] = useState("semua");
+  const [kelompokkan, setKelompokkan] = useState("tidak");
 
   const [judul, setJudul] = useState("");
   const [deskripsi, setDeskripsi] = useState("");
@@ -765,6 +776,144 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
     } finally {
       setHapusTarget(null);
     }
+  };
+
+  const opsiFilter = useMemo(() => {
+    const daftar = ujian ?? [];
+    const mapel = Array.from(
+      new Set(daftar.map((u) => u.mapel?.trim() || u.judul.trim()).filter(Boolean)),
+    ).sort((a, b) => a.localeCompare(b, "id"));
+    const guru = Array.from(
+      new Map(
+        daftar
+          .filter((u) => u.guru_nip || u.guru_nama)
+          .map((u) => [
+            u.guru_nip || u.guru_nama || "",
+            `${u.guru_nama || "Guru"}${u.guru_nip ? ` (${u.guru_nip})` : ""}`,
+          ]),
+      ),
+    ).sort((a, b) => a[1].localeCompare(b[1], "id"));
+    const tanggal = Array.from(
+      new Set(
+        daftar
+          .map((u) => u.tgl_mulai?.slice(0, 10) ?? "")
+          .filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+    return { mapel, guru, tanggal };
+  }, [ujian]);
+
+  const ujianTersaring = useMemo(() => {
+    const q = cariUjian.trim().toLocaleLowerCase("id");
+    return (ujian ?? []).filter((u) => {
+      const mapel = u.mapel?.trim() || u.judul.trim();
+      const cocokCari =
+        !q ||
+        [
+          u.judul,
+          u.mapel,
+          u.guru_nama,
+          u.guru_nip,
+          u.tgl_mulai ? jadwalLabel(u.tgl_mulai) : "",
+        ].some((nilai) => nilai?.toLocaleLowerCase("id").includes(q));
+      return (
+        cocokCari &&
+        (filterMapel === "semua" || mapel === filterMapel) &&
+        (filterGuru === "semua" ||
+          (filterGuru === "tanpa-guru"
+            ? !u.guru_nip && !u.guru_nama
+            : (u.guru_nip || u.guru_nama) === filterGuru)) &&
+        (filterTanggal === "semua" ||
+          (filterTanggal === "tanpa-tanggal"
+            ? !u.tgl_mulai
+            : u.tgl_mulai?.slice(0, 10) === filterTanggal)) &&
+        (filterAktif === "semua" ||
+          (filterAktif === "aktif" ? u.aktif : !u.aktif)) &&
+        (filterKonfirmasi === "semua" ||
+          (filterKonfirmasi === "sudah"
+            ? Boolean(u.konfirmasi_guru)
+            : !u.konfirmasi_guru)) &&
+        (filterUnduh === "semua" ||
+          (filterUnduh === "dibuka"
+            ? Boolean(u.boleh_unduh)
+            : !u.boleh_unduh))
+      );
+    });
+  }, [
+    ujian,
+    cariUjian,
+    filterMapel,
+    filterGuru,
+    filterTanggal,
+    filterAktif,
+    filterKonfirmasi,
+    filterUnduh,
+  ]);
+
+  const kelompokUjian = useMemo(() => {
+    const grup = new Map<string, UjianGas[]>();
+    for (const u of ujianTersaring) {
+      let key = "";
+      if (kelompokkan === "mapel") {
+        key = u.mapel?.trim() || u.judul.trim() || "Tanpa mapel";
+      } else if (kelompokkan === "guru") {
+        key = u.guru_nip || u.guru_nama || "tanpa-guru";
+      } else if (kelompokkan === "tanggal") {
+        key = u.tgl_mulai?.slice(0, 10) || "tanpa-tanggal";
+      } else if (kelompokkan === "status") {
+        key = !u.aktif
+          ? "Nonaktif"
+          : !u.konfirmasi_guru
+            ? "Aktif · belum konfirmasi"
+            : u.boleh_unduh
+              ? "Aktif · izin unduh dibuka"
+              : "Aktif · izin unduh ditutup";
+      } else {
+        key = "semua";
+      }
+      grup.set(key, [...(grup.get(key) ?? []), u]);
+    }
+
+    const labelGrup = (key: string) => {
+      if (kelompokkan === "guru") {
+        const row = opsiFilter.guru.find(([nip]) => nip === key);
+        return row?.[1] ?? "Belum ditugaskan";
+      }
+      if (kelompokkan === "tanggal") {
+        if (key === "tanpa-tanggal") return "Tanpa tanggal pelaksanaan";
+        const d = new Date(`${key}T00:00:00`);
+        return `Tanggal ${d.toLocaleDateString("id-ID", {
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+        })}`;
+      }
+      return key;
+    };
+
+    return Array.from(grup, ([key, daftar]) => ({
+      key,
+      label: labelGrup(key),
+      daftar,
+    })).sort((a, b) => {
+      if (kelompokkan === "tanggal") {
+        if (a.key === "tanpa-tanggal") return 1;
+        if (b.key === "tanpa-tanggal") return -1;
+        return a.key.localeCompare(b.key);
+      }
+      return a.label.localeCompare(b.label, "id", { numeric: true });
+    });
+  }, [ujianTersaring, kelompokkan, opsiFilter.guru]);
+
+  const resetFilterUjian = () => {
+    setCariUjian("");
+    setFilterMapel("semua");
+    setFilterGuru("semua");
+    setFilterTanggal("semua");
+    setFilterAktif("semua");
+    setFilterKonfirmasi("semua");
+    setFilterUnduh("semua");
+    setKelompokkan("tidak");
   };
 
   if (ujian === null) {
@@ -1408,6 +1557,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
   const refTempel = useRef<HTMLTextAreaElement | null>(null);
   /** id soal yang sedang diperbaiki (null = mode tambah). */
   const [editId, setEditId] = useState<string | null>(null);
+  const refDialogEdit = useRef<HTMLDivElement | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Dialog impor soal dari Word (.docx / tempel teks).
@@ -1478,7 +1628,7 @@ const mulaiEdit = (s: SoalGas) => {
     opsi_c: s.opsi_c,
     opsi_d: s.opsi_d,
     opsi_e: s.opsi_e || " ",
-    gambar: s.gambar || " ",
+    gambar: s.gambar?.trim() ? s.gambar : "",
   });
   setKunci(((s.kunci_jawaban || "A ").toUpperCase() as Kunci) || "A ");
    setTipe((s.tipe ?? "pg") as TipeSoal);  // ✅ PERBAIKAN DI SINI
@@ -1510,7 +1660,7 @@ const mulaiEdit = (s: SoalGas) => {
   setTempel(teksUtama);
 };
 
-  const batalEdit = () => {
+  const batalEdit = useCallback(() => {
     setEditId(null);
     setForm(FORM_KOSONG);
     setKunci("A");
@@ -1520,7 +1670,22 @@ const mulaiEdit = (s: SoalGas) => {
     setBacaanJudul("");
     setBacaanTeks("");
     setTempel("");
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!editId) return;
+    refDialogEdit.current?.focus();
+    const sebelumnya = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const tutupDenganEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busy) batalEdit();
+    };
+    window.addEventListener("keydown", tutupDenganEscape);
+    return () => {
+      document.body.style.overflow = sebelumnya;
+      window.removeEventListener("keydown", tutupDenganEscape);
+    };
+  }, [editId, busy, batalEdit]);
 
   const simpan = async () => {
     if (!form.pertanyaan.trim()) {
@@ -1697,7 +1862,7 @@ const mulaiEdit = (s: SoalGas) => {
 
   /** Rata paragraf: "rata" = kiri-kanan (default, tanpa penanda), selain itu
    *  pasang/lepas penanda [tengah]…[/tengah] atau [kanan]…[/kanan]. */
-  const aturRata = (mode: "tengah" | "kanan" | "rata") => {
+  const aturRata = (mode: "kiri" | "tengah" | "kanan" | "rata") => {
     const el = refTempel.current;
     if (!el) return;
     const nilai = el.value;
@@ -1729,6 +1894,24 @@ const mulaiEdit = (s: SoalGas) => {
       return;
     }
      tulisTextarea(el, buka + pilih + tutup, awal, akhir, setTempel);
+  };
+
+  /** Ubah baris terpilih menjadi daftar berpoin, atau lepas poinnya. */
+  const daftarBerpoin = () => {
+    const el = refTempel.current;
+    if (!el) return;
+    const nilai = el.value;
+    const awal = nilai.lastIndexOf("\n", Math.max(0, el.selectionStart - 1)) + 1;
+    const akhirBaris = nilai.indexOf("\n", el.selectionEnd);
+    const akhir = akhirBaris === -1 ? nilai.length : akhirBaris;
+    const baris = nilai.slice(awal, akhir).split("\n");
+    const hapusPoin = baris.every((b) => !b.trim() || /^[-•]\s/.test(b));
+    const hasil = baris
+      .map((b) =>
+        !b.trim() ? b : hapusPoin ? b.replace(/^[-•]\s/, "") : `• ${b}`,
+      )
+      .join("\n");
+    tulisTextarea(el, hasil, awal, akhir, setTempel);
   };
 /** 
  * RAPIKAN SOAL COPY-PASTE: 
@@ -2134,21 +2317,55 @@ const rapikanSoalOtomatis = () => {
         </ol>
       )}
 
-      {/* Tambah soal */}
-      <div className="rounded-2xl border border-border/70 bg-background/60 p-4">
+      {/* Form tambah / edit soal */}
+      {editId && (
+        <button
+          type="button"
+          aria-label="Tutup editor soal"
+          className="fixed inset-0 z-40 cursor-default bg-black/50 backdrop-blur-sm"
+          disabled={busy}
+          onClick={batalEdit}
+        />
+      )}
+      <div
+        ref={refDialogEdit}
+        tabIndex={editId ? -1 : undefined}
+        role={editId ? "dialog" : undefined}
+        aria-modal={editId ? true : undefined}
+        aria-labelledby={editId ? "editor-soal-title" : undefined}
+        className={`rounded-2xl border border-border/70 bg-background/60 p-4 ${
+          editId
+            ? "fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[calc(100%-1.5rem)] max-w-4xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto bg-background p-4 shadow-2xl sm:p-6"
+            : ""
+        }`}
+      >
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-bold">
+          <p id="editor-soal-title" className="text-sm font-bold">
             {editId ? "Ubah / perbaiki soal" : "Tambah soal"}
           </p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5"
-            onClick={bukaImpor}
-            disabled={busy || imporBusy}
-          >
-            <FileText className="size-3.5" /> Impor dari Word
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={bukaImpor}
+              disabled={busy || imporBusy}
+            >
+              <FileText className="size-3.5" /> Impor dari Word
+            </Button>
+            {editId && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Tutup editor soal"
+                onClick={batalEdit}
+                disabled={busy}
+              >
+                <X className="size-4" />
+              </Button>
+            )}
+          </div>
         </div>
         {editId && (
           <p className="mt-1 text-xs leading-5 text-amber-700">
@@ -2212,6 +2429,13 @@ const rapikanSoalOtomatis = () => {
                 <Underline className="size-3.5" />
               </TombolFormat>
               <TombolFormat
+                label="Coret"
+                onClick={() => bungkusFormat("~~")}
+                disabled={tempel === ""}
+              >
+                <Strikethrough className="size-3.5" />
+              </TombolFormat>
+              <TombolFormat
   label="Indeks bawah — kimia (a~2~ → a₂)"
   onClick={() => bungkusFormat("~")}
   disabled={tempel === ""}
@@ -2233,7 +2457,13 @@ const rapikanSoalOtomatis = () => {
               >
                 <ListOrdered className="size-3.5" />
               </TombolFormat>
-              
+              <TombolFormat
+                label="Daftar berpoin"
+                onClick={daftarBerpoin}
+                disabled={tempel === ""}
+              >
+                <List className="size-3.5" />
+              </TombolFormat>
               <TombolFormat
                 label="Paragraf baru"
                 onClick={sisipParagraf}
@@ -2257,6 +2487,13 @@ const rapikanSoalOtomatis = () => {
                 <AlignJustify className="size-3.5" />
               </TombolFormat>
               <TombolFormat
+                label="Rata kiri"
+                onClick={() => aturRata("kiri")}
+                disabled={tempel === ""}
+              >
+                <AlignLeft className="size-3.5" />
+              </TombolFormat>
+              <TombolFormat
                 label="Rata tengah"
                 onClick={() => aturRata("tengah")}
                 disabled={tempel === ""}
@@ -2277,7 +2514,7 @@ const rapikanSoalOtomatis = () => {
               onChange={(e) => setTempel(e.target.value)}
               onKeyDown={(e) => tanganiTabTextarea(e, setTempel)}
               rows={6}
-              placeholder="Tulis atau tempel satu soal lengkap di sini: pertanyaan, lalu pilihan A. B. C. D. (kunci seperti “Kunci: B” terdeteksi otomatis). Pilih teks lalu klik tombol di atas untuk tebal, miring, numbering, atau rata paragraph."
+              placeholder="Tulis atau tempel satu soal lengkap di sini. Pilih teks lalu gunakan toolbar untuk tebal, miring, garis bawah/coret, subskrip, superskrip, daftar, paragraf, indentasi, dan perataan."
             />
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Button
@@ -2369,11 +2606,11 @@ const rapikanSoalOtomatis = () => {
               <ImagePlus className="size-3.5" />
               {prosesGambar
                 ? "Memproses…"
-                : form.gambar
+                : form.gambar.trim()
                   ? "Ganti gambar"
                   : "Tambah gambar soal"}
             </Button>
-            {form.gambar && (
+            {form.gambar.trim() && (
               <span className="relative inline-block">
                 <img
                   src={form.gambar}
@@ -2391,7 +2628,7 @@ const rapikanSoalOtomatis = () => {
                 </button>
               </span>
             )}
-            {form.gambar && (
+            {form.gambar.trim() && (
               <span className="text-[11px] leading-4 text-muted-foreground">
                 Gambar otomatis dikompres & ikut tersimpan di HP siswa.
               </span>
