@@ -209,7 +209,7 @@ table.ujian { width: auto; max-width: 45mm; table-layout: fixed; }
 .ttd-foto { position: absolute; inset: 0; display: flex; align-items: center;
   justify-content: center; pointer-events: none; }
 .ttd-foto img { display: block; flex: none; width: auto; height: auto;
-  max-height: 8.5mm; max-width: 30mm; object-fit: contain; opacity: 0.48;
+  max-height: 9.5mm; max-width: 31mm; object-fit: contain; opacity: 0.48;
   mix-blend-mode: multiply; }
 .ttd-nama { position: relative; z-index: 1; max-width: 100%;
   font-weight: 700; overflow: hidden; text-overflow: ellipsis;

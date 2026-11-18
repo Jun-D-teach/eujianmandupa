@@ -598,9 +598,43 @@ export function SelesaiFase(props: {
       })
     : "—";
   const jumlahPelanggaran = props.sesi.pelanggaran.length;
+  const hasil = props.sesi.hasil;
+  const jumlahPg = props.sesi.soal.filter(
+    (soal) => (soal.tipe ?? "pg") === "pg",
+  ).length;
+  const jumlahUraian = props.sesi.soal.length - jumlahPg;
 
   return (
     <div className="space-y-5">
+      {hasil && (
+        <Card className="overflow-hidden border-emerald-500/30">
+          <div className="bg-emerald-500/10 px-5 py-5 text-center sm:px-6">
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-800">
+              {jumlahUraian > 0 ? "Nilai sementara" : "Nilai ujian"}
+            </p>
+            <p className="mt-1 text-5xl font-black tracking-tight text-emerald-800">
+              {hasil.nilai}
+              <span className="ml-1 text-xl font-bold">/100</span>
+            </p>
+            {jumlahUraian > 0 && (
+              <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-muted-foreground">
+                Nilai dapat berubah setelah {jumlahUraian} soal essay/uraian
+                dikoreksi guru.
+              </p>
+            )}
+          </div>
+          {jumlahPg > 0 && (
+            <CardContent className="flex items-center justify-between gap-3 px-5 py-3.5 text-sm">
+              <span className="text-muted-foreground">
+                Benar pilihan ganda
+              </span>
+              <span className="font-bold">
+                {hasil.benar} / {jumlahPg}
+              </span>
+            </CardContent>
+          )}
+        </Card>
+      )}
       <Card className="overflow-hidden border-border/70">
         <div className="bg-ink px-6 py-8 text-center text-white">
           <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-emerald-500/15 ring-1 ring-emerald-400/40">
@@ -613,8 +647,9 @@ export function SelesaiFase(props: {
             Anda sudah menyelesaikan ujian
           </p>
           <p className="mt-2 text-sm leading-6 text-white/60">
-            Jawaban berhasil dikirim dan tersimpan. Hasil akan diumumkan oleh
-            pengawas atau guru.
+            {hasil
+              ? "Jawaban berhasil dikirim dan tersimpan."
+              : "Jawaban berhasil dikirim dan tersimpan. Nilai dapat dilihat di riwayat ujian setelah tersinkron."}
           </p>
         </div>
         <CardContent className="divide-y divide-border/60 p-0">

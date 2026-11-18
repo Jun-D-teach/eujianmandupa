@@ -83,6 +83,8 @@ import {
   Search,
   Share2,
   Sparkles,
+    Subscript,
+  Superscript,
   Target,
   Trash2,
   TriangleAlert,
@@ -2209,6 +2211,20 @@ const rapikanSoalOtomatis = () => {
               >
                 <Underline className="size-3.5" />
               </TombolFormat>
+              <TombolFormat
+  label="Indeks bawah — kimia (a~2~ → a₂)"
+  onClick={() => bungkusFormat("~")}
+  disabled={tempel === ""}
+>
+  <Subscript className="size-3.5" />
+</TombolFormat>
+<TombolFormat
+  label="Indeks atas — muatan/pangkat (x^2^ → x²)"
+  onClick={() => bungkusFormat("^")}
+  disabled={tempel === ""}
+>
+  <Superscript className="size-3.5" />
+</TombolFormat>
               <span className="mx-1 h-5 w-px bg-border" />
               <TombolFormat
                 label="Numbering otomatis (1. 2. 3.)"

@@ -14,7 +14,12 @@ function inlineHTML(teks: string): string {
     .replace(/__([^_]+)__/g, "<u>$1</u>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
-    .replace(/(^|[^_])_([^_]+)_/g, "$1<em>$2</em>");
+    .replace(/(^|[^_])_([^_]+)_/g, "$1<em>$2</em>")
+    // KIMIA/MATEMATIKA: ~x~ = indeks bawah (a~2~ → a₂),
+    // ^x^ = indeks atas (x^2^ → x²), => = panah reaksi
+    .replace(/~([^~\n]+)~/g, "<sub>$1</sub>")
+    .replace(/\^([^\^\n]+)\^/g, "<sup>$1</sup>")
+    .replace(/=&gt;/g, "→");
 }
 
 const RE_ARAB = /\p{Script=Arabic}/u;
