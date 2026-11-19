@@ -579,11 +579,14 @@ export function KelolaUjian({ bukaCetakNonce = 0 }: { bukaCetakNonce?: number } 
 
   const ubahIzin = async (id: string, boleh: boolean, judulUjian: string) => {
     try {
-      await gasCall("setIzinUnduh", { id, boleh });
+      const res = await gasCall<{ message?: string }>("setIzinUnduh", {
+        id,
+        boleh,
+      });
       segarkan();
       toast.success(
         boleh
-          ? `"${judulUjian}" — siswa boleh mengunduh soal (izin dibuka).`
+          ? `"${judulUjian}" — ${res.message ?? "izin unduh otomatis ditutup sesuai durasi ujian."}`
           : `"${judulUjian}" — izin unduh ke siswa ditutup.`,
       );
     } catch (err) {
@@ -2423,6 +2426,14 @@ const rapikanSoalOtomatis = () => {
     if (!hapusTarget || hapusBusy) return;
     setHapusBusy(true);
     try {
+      if (hapusTarget.ids.length === 1) {
+        await gasCall("hapusSoal", { id: hapusTarget.ids[0] });
+        setHapusTarget(null);
+        muat();
+        toast.success(`Soal nomor ${hapusTarget.nomor[0]} dihapus.`);
+        return;
+      }
+
       const res = await gasCall<{ message?: string }>("hapusSoalMassal", {
         ujian_id: ujianId,
         ids: hapusTarget.ids,

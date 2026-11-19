@@ -19,6 +19,44 @@ import {
 
 export type Role = "admin" | "guru" | "siswa";
 
+export type StatusJadwalUjian = "tanpa-jadwal" | "belum" | "hari-ini" | "lewat";
+
+export function tanggalJadwalDate(tglMulai?: string): Date | null {
+  if (!tglMulai) return null;
+  const cocok = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(tglMulai);
+  if (!cocok) return null;
+  const tanggal = new Date(`${cocok[1]}T${cocok[2]}:${cocok[3]}:00+07:00`);
+  return Number.isNaN(tanggal.getTime()) ? null : tanggal;
+}
+
+/** Jadwal menggunakan waktu WIB, sama dengan zona waktu server ujian. */
+export function statusJadwalUjian(
+  tglMulai?: string,
+  sekarang = new Date(),
+): StatusJadwalUjian {
+  if (!tglMulai) return "tanpa-jadwal";
+  const cocok = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(tglMulai);
+  if (!cocok) return "lewat";
+
+  const [, tanggal, jam, menit] = cocok;
+  const waktuWib = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(sekarang);
+  const nilaiWib = (jenis: string) =>
+    waktuWib.find((bagian) => bagian.type === jenis)?.value ?? "";
+  const tanggalHariIni = `${nilaiWib("year")}-${nilaiWib("month")}-${nilaiWib("day")}`;
+  if (tanggalHariIni < tanggal) return "belum";
+  if (tanggalHariIni > tanggal) return "lewat";
+  const waktuSekarang = `${nilaiWib("hour")}:${nilaiWib("minute")}`;
+  return waktuSekarang < `${jam}:${menit}` ? "belum" : "hari-ini";
+}
+
 export type UserGas = {
   id: string;
   username: string;
@@ -50,6 +88,8 @@ export type UjianGas = {
   sudah_unduh?: boolean;
   /** Server: akun siswa ini sudah berhasil mengirim ujian ini dari perangkat mana pun. */
   sudah_selesai?: boolean;
+  /** Server: admin memberi izin satu kali untuk mengulang ujian ini. */
+  boleh_ujian_ulang?: boolean;
   /** Nomor revisi isi soal — naik tiap guru menambah/mengubah/menghapus soal.
    *  Bila berbeda dengan salinan di HP, siswa wajib sinkron ulang. */
   revisi?: number;
@@ -124,6 +164,20 @@ export type HasilGas = {
   ujian_judul: string;
   nama: string;
   kelas: string;
+  username?: string;
+  percobaan?: number;
+  nilai_tertinggi?: number;
+  nilai_resmi?: boolean;
+  izin_ulang_menunggu?: boolean;
+  izin_ulang_pending?: {
+    diberikan_oleh: string;
+    diberikan_pada: string;
+  } | null;
+  izin_ulang?: {
+    diberikan_oleh: string;
+    diberikan_pada: string;
+    digunakan_pada: string;
+  } | null;
   token: string;
   benar: number;
   total_soal: number;
@@ -294,6 +348,7 @@ export async function apiCall<T = Record<string, unknown>>(
   try {
     const r = await fetch(url, {
       method: "POST",
+      cache: "no-store",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, sesi: muatSesiToken(), ...data }),
       signal: AbortSignal.timeout(timeoutMs),

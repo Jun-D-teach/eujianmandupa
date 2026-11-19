@@ -23,6 +23,7 @@ date_default_timezone_set(defined('APP_ZONE') ? APP_ZONE : 'Asia/Jakarta');
 
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
 /* ------------------------------------------------------------------ */
 /* Database (PDO)                                                      */
@@ -132,6 +133,7 @@ function pastikanStruktur(): void
             durasi_menit INT NOT NULL DEFAULT 60,
             aktif TINYINT(1) NOT NULL DEFAULT 0,
             boleh_unduh TINYINT(1) NOT NULL DEFAULT 0,
+            boleh_unduh_sampai DATETIME NULL DEFAULT NULL,
             revisi INT NOT NULL DEFAULT 1,
             dibuat DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             tgl_mulai VARCHAR(16) NOT NULL DEFAULT '',
@@ -166,6 +168,7 @@ function pastikanStruktur(): void
             nama VARCHAR(160) NOT NULL DEFAULT '',
             kelas VARCHAR(64) NOT NULL DEFAULT '',
             siswa_username VARCHAR(64) NULL DEFAULT NULL,
+            percobaan INT NOT NULL DEFAULT 1,
             token VARCHAR(12) NOT NULL DEFAULT '',
             benar INT NOT NULL DEFAULT 0,
             total_soal INT NOT NULL DEFAULT 0,
@@ -173,7 +176,7 @@ function pastikanStruktur(): void
             poin INT NOT NULL DEFAULT 0,
             total_pelanggaran INT NOT NULL DEFAULT 0,
             timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE KEY uq_hasil_siswa_ujian (ujian_id, siswa_username),
+            UNIQUE KEY uq_hasil_siswa_ujian_percobaan (ujian_id, siswa_username, percobaan),
             KEY idx_hasil_ujian (ujian_id),
             KEY idx_hasil_nama (nama)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
@@ -182,6 +185,16 @@ function pastikanStruktur(): void
             username VARCHAR(64) NOT NULL,
             waktu DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (ujian_id, username)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS izin_ujian_ulang (
+            id VARCHAR(40) NOT NULL PRIMARY KEY,
+            ujian_id VARCHAR(40) NOT NULL,
+            siswa_username VARCHAR(64) NOT NULL,
+            diberikan_oleh VARCHAR(64) NOT NULL,
+            diberikan_pada DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            digunakan_pada DATETIME NULL DEFAULT NULL,
+            hasil_id VARCHAR(40) NULL DEFAULT NULL,
+            KEY idx_izin_ulang_siswa (ujian_id, siswa_username, digunakan_pada)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE IF NOT EXISTS buka_kunci (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -239,6 +252,14 @@ function pastikanStruktur(): void
     if ($st->fetch() === false) {
         db()->exec("ALTER TABLE ujian ADD COLUMN boleh_unduh TINYINT(1) NOT NULL DEFAULT 0 AFTER aktif");
     }
+    $st = db()->query("SHOW COLUMNS FROM ujian LIKE 'boleh_unduh_sampai'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE ujian ADD COLUMN boleh_unduh_sampai DATETIME NULL DEFAULT NULL AFTER boleh_unduh");
+        db()->exec(
+            'UPDATE ujian SET boleh_unduh_sampai = DATE_ADD(NOW(), INTERVAL durasi_menit MINUTE)
+             WHERE boleh_unduh = 1 AND boleh_unduh_sampai IS NULL'
+        );
+    }
     $st = db()->query("SHOW COLUMNS FROM ujian LIKE 'revisi'");
     if ($st->fetch() === false) {
         db()->exec("ALTER TABLE ujian ADD COLUMN revisi INT NOT NULL DEFAULT 1 AFTER boleh_unduh");
@@ -283,13 +304,18 @@ function pastikanStruktur(): void
         ['soal', 'bacaan_id', "ALTER TABLE soal ADD COLUMN bacaan_id VARCHAR(40) NOT NULL DEFAULT '' AFTER kunci_teks"],
         ['hasil', 'poin', 'ALTER TABLE hasil ADD COLUMN poin INT NOT NULL DEFAULT 0 AFTER nilai'],
         ['hasil', 'siswa_username', 'ALTER TABLE hasil ADD COLUMN siswa_username VARCHAR(64) NULL DEFAULT NULL AFTER kelas'],
+        ['hasil', 'percobaan', 'ALTER TABLE hasil ADD COLUMN percobaan INT NOT NULL DEFAULT 1 AFTER siswa_username'],
     ] as $mig) {
         $st = db()->query("SHOW COLUMNS FROM {$mig[0]} LIKE '{$mig[1]}'");
         if ($st->fetch() === false) db()->exec($mig[2]);
     }
     $st = db()->query("SHOW INDEX FROM hasil WHERE Key_name = 'uq_hasil_siswa_ujian'");
+    if ($st->fetch() !== false) {
+        db()->exec('ALTER TABLE hasil DROP INDEX uq_hasil_siswa_ujian');
+    }
+    $st = db()->query("SHOW INDEX FROM hasil WHERE Key_name = 'uq_hasil_siswa_ujian_percobaan'");
     if ($st->fetch() === false) {
-        db()->exec('ALTER TABLE hasil ADD UNIQUE KEY uq_hasil_siswa_ujian (ujian_id, siswa_username)');
+        db()->exec('ALTER TABLE hasil ADD UNIQUE KEY uq_hasil_siswa_ujian_percobaan (ujian_id, siswa_username, percobaan)');
     }
 
     // Teks bacaan bersama (dipakai beberapa soal) + jawaban essay/uraian
@@ -376,6 +402,7 @@ const AKSES = [
        'getDaftarJadwal' => 2,      // admin only
     'hapusJadwalHarian' => 2,    // admin only
     'getUjian' => 1, 'getSoalAdmin' => 1, 'getHasil' => 1, 'getLaporan' => 1, 'getSiswa' => 1,
+    'izinkanUjianUlang' => 2,
     'getKelasList' => 1, 'tambahSiswa' => 1, 'ubahSiswa' => 1, 'hapusSiswa' => 1,
     'hapusSiswaMassal' => 1, 'importSiswa' => 1, 'buatAkunSiswa' => 1,
     'konfirmasiUjian' => 1,
@@ -504,6 +531,7 @@ if ($aksi === '') $aksi = 'ping';
 
 try {
     pastikanStruktur();
+    tutupIzinUnduhKedaluwarsa();
 
     if (isset(AKSES[$aksi])) {
         $cek = validasiSesi($data['sesi'] ?? '', AKSES[$aksi]);
@@ -543,6 +571,36 @@ function kirim(array $payload): void
 function galat(string $pesan): array
 {
     return ['success' => false, 'message' => $pesan];
+}
+
+function jadwalUjianSudahLewat(string $tglMulai): bool
+{
+    if ($tglMulai === '') return false;
+    $tanggal = substr($tglMulai, 0, 10);
+    $zona = new DateTimeZone(defined('APP_ZONE') ? APP_ZONE : 'Asia/Jakarta');
+    $terjadwal = DateTimeImmutable::createFromFormat('!Y-m-d', $tanggal, $zona);
+    if (!$terjadwal) return true;
+    $hariIni = new DateTimeImmutable('today', $zona);
+    return $terjadwal < $hariIni;
+}
+
+function tutupIzinUnduhKedaluwarsa(): void
+{
+    jalan(
+        'UPDATE ujian SET boleh_unduh = 0, boleh_unduh_sampai = NULL
+         WHERE boleh_unduh = 1
+           AND (boleh_unduh_sampai IS NULL OR boleh_unduh_sampai <= NOW())'
+    );
+}
+
+function izinUnduhMasihAktif(string $ujianId): bool
+{
+    $r = satu(
+        'SELECT (boleh_unduh = 1 AND boleh_unduh_sampai IS NOT NULL AND boleh_unduh_sampai > NOW()) AS aktif
+         FROM ujian WHERE id = ?',
+        [$ujianId]
+    );
+    return (int) ($r['aktif'] ?? 0) === 1;
 }
 /**
  * Buat jadwal pengawas otomatis berdasarkan jadwal harian yang sudah ada.
@@ -663,6 +721,7 @@ function jalankan(string $action, array $d): array
         case 'hapusJadwalHarian': return a_hapusJadwalHarian($d);
         case 'getSoalAdmin': return a_getSoalAdmin($d);
         case 'getHasil': return a_getHasil($d);
+        case 'izinkanUjianUlang': return a_izinkanUjianUlang($d);
         case 'buatJadwalPengawasOtomatis': return a_buatJadwalPengawasOtomatis($d);
         case 'getLaporan': return a_getLaporan($d);
         case 'getHasilSaya': return a_getHasilSaya($d);
@@ -1532,7 +1591,7 @@ function barisUjian(array $r, ?string $kelasSiswa, bool $sertakanToken = false):
         'deskripsi' => (string) ($r['deskripsi'] ?? ''),
         'durasi_menit' => (int) $r['durasi_menit'],
         'aktif' => $aktif,
-        'boleh_unduh' => (int) ($r['boleh_unduh'] ?? 0) === 1,
+        'boleh_unduh' => izinUnduhMasihAktif((string) $r['id']),
         'revisi' => (int) ($r['revisi'] ?? 1),
         'konfirmasi_guru' => (int) ($r['konfirmasi_guru'] ?? 0) === 1,
         'konfirmasi_pada' => (string) ($r['konfirmasi_pada'] ?? ''),
@@ -1612,8 +1671,19 @@ function tolakBilaBukanMilik(array $d, string $ujianId, string $pesan = ''): ?ar
 }
 
 /** Daftar ujian aktif untuk siswa + kelayakan, izin unduh & status selesai. */
+function adaIzinUlang(string $ujianId, string $username): bool
+{
+    return satu(
+        'SELECT id FROM izin_ujian_ulang
+         WHERE ujian_id = ? AND siswa_username = ? AND digunakan_pada IS NULL
+         ORDER BY diberikan_pada, id LIMIT 1',
+        [$ujianId, strtolower($username)]
+    ) !== null;
+}
+
 function a_getUjianSiswa(array $d): array
 {
+    tutupIzinUnduhKedaluwarsa();
     $kelas = bersih($d['kelas'] ?? '');
     $username = bersih($d['sesi_user'] ?? '');
     $unduh = [];
@@ -1624,12 +1694,21 @@ function a_getUjianSiswa(array $d): array
     foreach (semua('SELECT ujian_id FROM hasil WHERE siswa_username = ?', [$username]) as $r) {
         $selesai[$r['ujian_id']] = true;
     }
+    $izinUlang = [];
+    foreach (semua(
+        'SELECT DISTINCT ujian_id FROM izin_ujian_ulang
+         WHERE siswa_username = ? AND digunakan_pada IS NULL',
+        [$username]
+    ) as $r) {
+        $izinUlang[$r['ujian_id']] = true;
+    }
     $daftar = [];
     foreach (semua('SELECT * FROM ujian WHERE aktif = 1 ORDER BY dibuat') as $r) {
         $u = barisUjian($r, $kelas);
         if (!$u['aktif']) continue;
         $u['sudah_unduh'] = isset($unduh[$u['id']]);
-        $u['sudah_selesai'] = isset($selesai[$u['id']]);
+        $u['boleh_ujian_ulang'] = isset($izinUlang[$u['id']]);
+        $u['sudah_selesai'] = isset($selesai[$u['id']]) && !$u['boleh_ujian_ulang'];
         $daftar[] = $u;
     }
     return ['success' => true, 'ujian' => $daftar];
@@ -1768,11 +1847,29 @@ function a_setAktifUjian(array $d): array
 /** Izin bagikan: admin membuka/menutup unduh soal per mapel. */
 function a_setIzinUnduh(array $d): array
 {
-    $boleh = !empty($d['boleh']) ? 1 : 0;
-    $n = jalan('UPDATE ujian SET boleh_unduh = ? WHERE id = ?', [$boleh, bersih($d['id'] ?? '')]);
-    return $n > 0
-        ? ['success' => true, 'message' => $boleh ? 'Siswa boleh mengunduh soal.' : 'Izin unduh ditutup.']
-        : galat('Ujian tidak ditemukan.');
+    $id = bersih($d['id'] ?? '');
+    $boleh = !empty($d['boleh']);
+    $ujian = satu('SELECT aktif, durasi_menit FROM ujian WHERE id = ?', [$id]);
+    if (!$ujian) return galat('Ujian tidak ditemukan.');
+    if ($boleh && (int) $ujian['aktif'] !== 1) {
+        return galat('Aktifkan ujian dulu sebelum membuka izin unduh.');
+    }
+
+    if ($boleh) {
+        jalan(
+            'UPDATE ujian SET boleh_unduh = 1,
+             boleh_unduh_sampai = DATE_ADD(NOW(), INTERVAL durasi_menit MINUTE)
+             WHERE id = ?',
+            [$id]
+        );
+        return [
+            'success' => true,
+            'message' => 'Izin unduh dibuka selama ' . (int) $ujian['durasi_menit'] . ' menit, lalu ditutup otomatis.',
+        ];
+    }
+
+    jalan('UPDATE ujian SET boleh_unduh = 0, boleh_unduh_sampai = NULL WHERE id = ?', [$id]);
+    return ['success' => true, 'message' => 'Izin unduh ditutup.'];
 }
 
 /** Konfirmasi guru: soal sudah selesai & siap dibagikan (lampu status admin). */
@@ -1902,6 +1999,9 @@ function a_getSoal(array $d): array
     $r = cariUjian($id);
     if (!$r) return galat('Ujian tidak ditemukan.');
     if ((int) $r['aktif'] !== 1) return galat('Ujian belum diaktifkan admin.');
+    if (jadwalUjianSudahLewat((string) ($r['tgl_mulai'] ?? ''))) {
+        return galat('Tanggal ujian telah lewat. Soal tidak dapat diunduh untuk pengerjaan baru.');
+    }
 
     // Izin bagikan mengatur unduh PERTAMA; siswa yang PERNAH mengunduh tetap
     // boleh sinkron ulang (mis. setelah guru memperbaiki soal) walau izin
@@ -1911,7 +2011,7 @@ function a_getSoal(array $d): array
         'SELECT id FROM hasil WHERE ujian_id = ? AND siswa_username = ? LIMIT 1',
         [$id, strtolower($username)]
     );
-    if ($hasilSelesai) {
+    if ($hasilSelesai && !adaIzinUlang($id, $username)) {
         return galat('Ujian ini sudah selesai di akunmu dan tidak dapat diunduh ulang.');
     }
     $pernahUnduh = false;
@@ -1919,7 +2019,7 @@ function a_getSoal(array $d): array
         $p = satu('SELECT username FROM unduhan WHERE ujian_id = ? AND username = ?', [$id, $username]);
         $pernahUnduh = $p !== null;
     }
-    if ((int) ($r['boleh_unduh'] ?? 0) !== 1 && !$pernahUnduh) {
+    if (!izinUnduhMasihAktif($id) && !$pernahUnduh) {
         return galat('Admin belum membuka izin unduh soal untuk mapel ini. Tunggu info pengawas.');
     }
 
@@ -2350,15 +2450,41 @@ function a_submitJawaban(array $d): array
 
     $nilai = $totalSoal > 0 ? (int) round($poin / $totalSoal) : 0;
     $benar = (int) round($poin / 100);
+    $izinUlangId = null;
+    $percobaan = 1;
     try {
         db()->beginTransaction();
-        $sudahAda = satu(
-            'SELECT id FROM hasil WHERE ujian_id = ? AND siswa_username = ? LIMIT 1',
+        satu('SELECT username FROM pengguna WHERE username = ? FOR UPDATE', [$username]);
+        $hasilSebelumnya = semua(
+            'SELECT id, percobaan, nilai FROM hasil
+             WHERE ujian_id = ? AND siswa_username = ?
+             ORDER BY percobaan DESC FOR UPDATE',
             [$ujianId, $username]
         );
-        if ($sudahAda) {
+        if ($hasilSebelumnya) {
+            $izinUlang = satu(
+                'SELECT id FROM izin_ujian_ulang
+                 WHERE ujian_id = ? AND siswa_username = ? AND digunakan_pada IS NULL
+                 ORDER BY diberikan_pada, id LIMIT 1 FOR UPDATE',
+                [$ujianId, $username]
+            );
+            if (!$izinUlang) {
+                db()->rollBack();
+                return galat('Ujian ini sudah selesai di akunmu. Kiriman ulang belum diizinkan admin.');
+            }
+            $izinUlangId = (string) $izinUlang['id'];
+            $percobaan = ((int) $hasilSebelumnya[0]['percobaan']) + 1;
+        } else {
+            $percobaan = 1;
+        }
+        $nilaiTertinggi = $nilai;
+        foreach ($hasilSebelumnya as $hasilLama) {
+            $nilaiTertinggi = max($nilaiTertinggi, (int) $hasilLama['nilai']);
+        }
+
+        if ($izinUlangId !== null && $percobaan < 2) {
             db()->rollBack();
-            return galat('Ujian ini sudah selesai di akunmu. Kembali ke beranda dan muat ulang; kiriman ulang tidak diterima.');
+            return galat('Nomor percobaan ujian tidak valid.');
         }
 
         foreach ($jawabanPg as $idSoalPg => $pilihanPg) {
@@ -2385,8 +2511,8 @@ function a_submitJawaban(array $d): array
         }
 
         jalan(
-            'INSERT INTO hasil (id, ujian_id, ujian_judul, nama, kelas, siswa_username, token, benar, total_soal, nilai, poin, total_pelanggaran)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO hasil (id, ujian_id, ujian_judul, nama, kelas, siswa_username, percobaan, token, benar, total_soal, nilai, poin, total_pelanggaran)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [
                 $hasilId,
                 $ujianId,
@@ -2394,6 +2520,7 @@ function a_submitJawaban(array $d): array
                 $nama,
                 $kelas,
                 $username,
+                $percobaan,
                 $token,
                 $benar,
                 $totalSoal,
@@ -2402,6 +2529,13 @@ function a_submitJawaban(array $d): array
                 $totalPelanggaran,
             ]
         );
+        if ($izinUlangId !== null) {
+            jalan(
+                'UPDATE izin_ujian_ulang SET digunakan_pada = NOW(), hasil_id = ?
+                 WHERE id = ? AND digunakan_pada IS NULL',
+                [$hasilId, $izinUlangId]
+            );
+        }
         db()->commit();
     } catch (Throwable $e) {
         if (db()->inTransaction()) db()->rollBack();
@@ -2418,7 +2552,11 @@ function a_submitJawaban(array $d): array
         'poin' => $poin,
         'total_soal' => $totalSoal,
         'total_pelanggaran' => $totalPelanggaran,
-        'message' => 'Jawaban tersimpan.',
+        'percobaan' => $percobaan,
+        'nilai_tertinggi' => $nilaiTertinggi,
+        'message' => $percobaan > 1
+            ? 'Jawaban ujian ulang tersimpan. Semua percobaan tercatat; nilai tertinggi menjadi nilai resmi.'
+            : 'Jawaban tersimpan.',
     ];
 }
 
@@ -2482,6 +2620,8 @@ function barisHasil(array $r): array
         'ujian_judul' => (string) $r['ujian_judul'],
         'nama' => (string) $r['nama'],
         'kelas' => (string) $r['kelas'],
+        'username' => (string) ($r['siswa_username'] ?? ''),
+        'percobaan' => max(1, (int) ($r['percobaan'] ?? 1)),
         'token' => (string) $r['token'],
         'benar' => (int) $r['benar'],
         'total_soal' => (int) $r['total_soal'],
@@ -2499,7 +2639,112 @@ function a_getHasil(array $d): array
     $tolak = tolakBilaBukanMilik($d, $ujianId);
     if ($tolak) return $tolak;
     $rows = semua('SELECT * FROM hasil WHERE ujian_id = ? ORDER BY timestamp DESC', [$ujianId]);
-    return ['success' => true, 'hasil' => array_map('barisHasil', $rows)];
+    $nilaiTertinggi = [];
+    $hasilResmi = [];
+    foreach ($rows as $row) {
+        $username = strtolower(bersih($row['siswa_username'] ?? ''));
+        if ($username === '') continue;
+        $nilai = (int) $row['nilai'];
+        $percobaan = (int) ($row['percobaan'] ?? 1);
+        $tertinggiSebelumnya = $nilaiTertinggi[$username] ?? PHP_INT_MIN;
+        $percobaanResmi = (int) ($hasilResmi[$username]['percobaan'] ?? 0);
+        if ($nilai > $tertinggiSebelumnya || ($nilai === $tertinggiSebelumnya && $percobaan > $percobaanResmi)) {
+            $nilaiTertinggi[$username] = $nilai;
+            $hasilResmi[$username] = ['id' => (string) $row['id'], 'percobaan' => $percobaan];
+        }
+    }
+    $izinMenunggu = [];
+    foreach (semua(
+        'SELECT siswa_username, diberikan_oleh, diberikan_pada FROM izin_ujian_ulang
+         WHERE ujian_id = ? AND digunakan_pada IS NULL',
+        [$ujianId]
+    ) as $izin) {
+        $izinMenunggu[strtolower((string) $izin['siswa_username'])] = [
+            'diberikan_oleh' => (string) $izin['diberikan_oleh'],
+            'diberikan_pada' => (string) $izin['diberikan_pada'],
+        ];
+    }
+    $izinTerpakai = [];
+    foreach (semua(
+        'SELECT hasil_id, diberikan_oleh, diberikan_pada, digunakan_pada
+         FROM izin_ujian_ulang WHERE ujian_id = ? AND hasil_id IS NOT NULL',
+        [$ujianId]
+    ) as $izin) {
+        $izinTerpakai[(string) $izin['hasil_id']] = [
+            'diberikan_oleh' => (string) $izin['diberikan_oleh'],
+            'diberikan_pada' => (string) $izin['diberikan_pada'],
+            'digunakan_pada' => (string) $izin['digunakan_pada'],
+        ];
+    }
+    $hasil = [];
+    foreach ($rows as $row) {
+        $item = barisHasil($row);
+        $username = strtolower($item['username']);
+        $tertinggi = $nilaiTertinggi[$username] ?? $item['nilai'];
+        $item['nilai_tertinggi'] = $tertinggi;
+        $item['nilai_resmi'] = isset($hasilResmi[$username])
+            ? $item['id'] === $hasilResmi[$username]['id']
+            : $item['nilai'] === $tertinggi;
+        $item['izin_ulang_menunggu'] = isset($izinMenunggu[$username]);
+        $item['izin_ulang_pending'] = $izinMenunggu[$username] ?? null;
+        $item['izin_ulang'] = $izinTerpakai[$item['id']] ?? null;
+        $hasil[] = $item;
+    }
+    return ['success' => true, 'hasil' => $hasil];
+}
+
+function a_izinkanUjianUlang(array $d): array
+{
+    $ujianId = bersih($d['ujian_id'] ?? '');
+    $username = strtolower(bersih($d['username'] ?? ''));
+    $admin = strtolower(bersih($d['sesi_user'] ?? ''));
+    if ($ujianId === '' || $username === '') return galat('Ujian dan akun siswa wajib dipilih.');
+    if (!satu('SELECT id FROM ujian WHERE id = ?', [$ujianId])) {
+        return galat('Ujian tidak ditemukan.');
+    }
+    try {
+        db()->beginTransaction();
+        $siswa = satu(
+            "SELECT username FROM pengguna WHERE username = ? AND role = 'siswa' FOR UPDATE",
+            [$username]
+        );
+        if (!$siswa) {
+            db()->rollBack();
+            return galat('Akun siswa tidak ditemukan atau bukan akun siswa.');
+        }
+        if (!satu(
+            'SELECT id FROM hasil WHERE ujian_id = ? AND siswa_username = ? LIMIT 1',
+            [$ujianId, $username]
+        )) {
+            db()->rollBack();
+            return galat('Siswa belum memiliki hasil ujian untuk mapel ini.');
+        }
+        $sudahAda = satu(
+            'SELECT id FROM izin_ujian_ulang
+             WHERE ujian_id = ? AND siswa_username = ? AND digunakan_pada IS NULL LIMIT 1',
+            [$ujianId, $username]
+        );
+        if ($sudahAda) {
+            db()->rollBack();
+            return galat('Izin ujian ulang untuk siswa ini masih tersedia dan belum digunakan.');
+        }
+
+        $izinId = idBaru('izin');
+        jalan(
+            'INSERT INTO izin_ujian_ulang (id, ujian_id, siswa_username, diberikan_oleh)
+             VALUES (?, ?, ?, ?)',
+            [$izinId, $ujianId, $username, $admin]
+        );
+        db()->commit();
+    } catch (Throwable $e) {
+        if (db()->inTransaction()) db()->rollBack();
+        throw $e;
+    }
+    return [
+        'success' => true,
+        'message' => 'Izin ujian ulang diberikan. Percobaan sebelumnya tetap tersimpan.',
+        'izin_id' => $izinId,
+    ];
 }
 
 /**
@@ -2548,9 +2793,31 @@ function a_getLaporan(array $d): array
         $teksByHasil[(string) $j['hasil_id']][(string) $j['soal_id']] = (string) $j['teks'];
     }
 
+    $hasilRows = semua('SELECT * FROM hasil WHERE ujian_id = ? ORDER BY kelas, nama, percobaan', [$ujianId]);
+    $hasilResmi = [];
+    foreach ($hasilRows as $h) {
+        $username = strtolower(bersih($h['siswa_username'] ?? ''));
+        if ($username === '') continue;
+        $nilai = (int) $h['nilai'];
+        $percobaan = (int) ($h['percobaan'] ?? 1);
+        $resmiLama = $hasilResmi[$username] ?? null;
+        if (
+            $resmiLama === null
+            || $nilai > $resmiLama['nilai']
+            || ($nilai === $resmiLama['nilai'] && $percobaan > $resmiLama['percobaan'])
+        ) {
+            $hasilResmi[$username] = [
+                'id' => (string) $h['id'],
+                'nilai' => $nilai,
+                'percobaan' => $percobaan,
+            ];
+        }
+    }
+
     $baris = [];
-    foreach (semua('SELECT * FROM hasil WHERE ujian_id = ? ORDER BY kelas, nama', [$ujianId]) as $h) {
+    foreach ($hasilRows as $h) {
         $hid = (string) $h['id'];
+        $username = strtolower(bersih($h['siswa_username'] ?? ''));
         $nama = strtoupper(bersih($h['nama']));
         $nisn = $nisnByKelas[$nama . '|' . strtoupper(bersih($h['kelas']))]
             ?? (($hitungNama[$nama] ?? 0) === 1 ? $nisnByNama[$nama] : '');
@@ -2569,6 +2836,11 @@ function a_getLaporan(array $d): array
             'kelas' => (string) $h['kelas'],
             'nisn' => $nisn,
             'nilai' => (int) $h['nilai'],
+            'nilai_tertinggi' => $hasilResmi[$username]['nilai'] ?? (int) $h['nilai'],
+            'nilai_resmi' => isset($hasilResmi[$username])
+                ? $hasilResmi[$username]['id'] === $hid
+                : true,
+            'percobaan' => max(1, (int) ($h['percobaan'] ?? 1)),
             'benar' => (int) $h['benar'],
             'total_soal' => (int) $h['total_soal'],
             'total_pelanggaran' => (int) $h['total_pelanggaran'],
@@ -2581,11 +2853,32 @@ function a_getLaporan(array $d): array
 
 function a_getHasilSaya(array $d): array
 {
-    $cari = strtolower(bersih($d['nama'] ?? ''));
-    $rows = semua('SELECT * FROM hasil ORDER BY timestamp DESC');
+    $username = strtolower(bersih($d['sesi_user'] ?? ''));
+    $rows = semua(
+        'SELECT * FROM hasil WHERE siswa_username = ? ORDER BY timestamp DESC',
+        [$username]
+    );
+    $tertinggi = [];
+    $resmi = [];
+    foreach ($rows as $row) {
+        $ujianId = (string) $row['ujian_id'];
+        $nilai = (int) $row['nilai'];
+        $percobaan = (int) ($row['percobaan'] ?? 1);
+        $nilaiLama = $tertinggi[$ujianId] ?? PHP_INT_MIN;
+        $percobaanLama = (int) ($resmi[$ujianId]['percobaan'] ?? 0);
+        if ($nilai > $nilaiLama || ($nilai === $nilaiLama && $percobaan > $percobaanLama)) {
+            $tertinggi[$ujianId] = $nilai;
+            $resmi[$ujianId] = ['id' => (string) $row['id'], 'percobaan' => $percobaan];
+        }
+    }
     $daftar = [];
-    foreach ($rows as $r) {
-        if (strtolower(bersih($r['nama'])) === $cari) $daftar[] = barisHasil($r);
+    foreach ($rows as $row) {
+        $item = barisHasil($row);
+        $item['nilai_tertinggi'] = $tertinggi[$item['ujian_id']] ?? $item['nilai'];
+        $item['nilai_resmi'] = isset($resmi[$item['ujian_id']])
+            ? $item['id'] === $resmi[$item['ujian_id']]['id']
+            : $item['nilai'] === $item['nilai_tertinggi'];
+        $daftar[] = $item;
     }
     return ['success' => true, 'hasil' => $daftar];
 }

@@ -8,6 +8,8 @@ import {
   tokenValid,
   cocokToken,
   simpanPinTersimpan,
+  statusJadwalUjian,
+  tanggalJadwalDate,
   type UjianGas,
 } from "@/lib/api";
 import {
@@ -54,20 +56,16 @@ import {
   SelesaiFase,
 } from "@/pages/exam-fases";
 
-/** Belum waktunya? "YYYY-MM-DDTHH:mm" dibandingkan dengan waktu lokal. */
-function belumMulai(tglMulai?: string): boolean {
-  if (!tglMulai) return false;
-  const t = new Date(tglMulai).getTime();
-  if (Number.isNaN(t)) return false;
-  return Date.now() < t;
-}
-
 /** Label waktu mulai yang ramah baca (id-ID). */
 function labelTgl(tglMulai?: string): string {
   if (!tglMulai) return "";
-  const d = new Date(tglMulai);
-  if (Number.isNaN(d.getTime())) return tglMulai;
-  return d.toLocaleString("id-ID", { dateStyle: "full", timeStyle: "short" });
+  const d = tanggalJadwalDate(tglMulai);
+  if (!d) return tglMulai;
+  return d.toLocaleString("id-ID", {
+    dateStyle: "full",
+    timeStyle: "short",
+    timeZone: "Asia/Jakarta",
+  });
 }
 
 function PilKoneksi({
@@ -383,6 +381,12 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
     }, 1000);
     return () => window.clearInterval(id);
   }, [sesi?.fase, sesi?.batasWaktu]);
+
+  useEffect(() => {
+    if (fase !== "instruksi") return;
+    const id = window.setInterval(() => setSekarang(Date.now()), 15_000);
+    return () => window.clearInterval(id);
+  }, [fase]);
 
   const sisaWaktu =
     sesi?.fase === "ujian" && sesi.batasWaktu
@@ -730,8 +734,15 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
       );
       return;
     }
-    if (belumMulai(sesi?.tglMulai)) {
+    const statusJadwal = statusJadwalUjian(sesi.tglMulai);
+    if (statusJadwal === "belum") {
       toast.error(`Ujian baru bisa dimulai pada ${labelTgl(sesi?.tglMulai)}.`);
+      return;
+    }
+    if (statusJadwal === "lewat") {
+      toast.error(
+        `Tanggal ujian telah lewat. Ujian hanya dapat dimulai pada ${labelTgl(sesi.tglMulai)}.`,
+      );
       return;
     }
     const now = Date.now();
@@ -1104,7 +1115,12 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
           <InstruksiFase
             sesi={sesi}
             online={online}
-            terkunciJadwal={belumMulai(sesi.tglMulai)}
+            terkunciJadwal={
+              statusJadwalUjian(sesi.tglMulai, new Date(sekarang)) !==
+              "tanpa-jadwal" &&
+              statusJadwalUjian(sesi.tglMulai, new Date(sekarang)) !== "hari-ini"
+            }
+            jadwalLewat={statusJadwalUjian(sesi.tglMulai, new Date(sekarang)) === "lewat"}
             token={token}
             setToken={(v) => {
               setToken(v);

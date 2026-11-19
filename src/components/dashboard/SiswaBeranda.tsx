@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useOnline } from "@/hooks/use-online";
-import { gasCall, simpanPinTersimpan, type HasilGas, type SoalGas, type UjianGas } from "@/lib/api";
+import {
+  gasCall,
+  simpanPinTersimpan,
+  statusJadwalUjian,
+  tanggalJadwalDate,
+  type HasilGas,
+  type SoalGas,
+  type UjianGas,
+} from "@/lib/api";
 import {
   muatSesi,
   simpanSesi,
@@ -30,16 +38,13 @@ import { toast } from "sonner";
 /** Jadwal ramah baca: Jumat, 12 Oktober 2026 pukul 08.00. */
 function jadwalLabel(v?: string): string {
   if (!v) return "";
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return v;
-  return d.toLocaleString("id-ID", { dateStyle: "full", timeStyle: "short" });
-}
-
-/** Belum sampai waktu mulai? */
-function belumWaktunya(v?: string): boolean {
-  if (!v) return false;
-  const t = new Date(v).getTime();
-  return !Number.isNaN(t) && Date.now() < t;
+  const d = tanggalJadwalDate(v);
+  if (!d) return v;
+  return d.toLocaleString("id-ID", {
+    dateStyle: "full",
+    timeStyle: "short",
+    timeZone: "Asia/Jakarta",
+  });
 }
 
 /**
@@ -126,6 +131,12 @@ export function SiswaUjian() {
   const [versi, setVersi] = useState(0); // memicu muat ulang daftar/sesi
   const [sinkronBusy, setSinkronBusy] = useState<string | null>(null);
   const [unduhBusy, setUnduhBusy] = useState<string | null>(null);
+  const [jamSekarang, setJamSekarang] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setJamSekarang(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let hidup = true;
@@ -360,14 +371,31 @@ export function SiswaUjian() {
             {ujian.map((u) => {
               const sesi = sesiLokal.data[u.id] ?? null;
               const sudahSelesai =
-                sesi?.fase === "selesai" || u.sudah_selesai === true;
+                (sesi?.fase === "selesai" || u.sudah_selesai === true) &&
+                u.boleh_ujian_ulang !== true;
+              const sedangUjianUlang = u.boleh_ujian_ulang === true;
               const lanjut =
                 sesi && (sesi.fase === "ujian" || sesi.fase === "kirim");
               const takBoleh = u.boleh === false; // server: kelas tidak termasuk sasaran
-              const izin = u.boleh_unduh !== false; // izin bagikan dari admin
+              const izin =
+                u.boleh_unduh !== false ||
+                Boolean(lanjut) ||
+                sedangUjianUlang; // izin ulang server membuka akses unduh baru
+              const sesiUlangBaru = Boolean(
+                sedangUjianUlang && sesi && sesi.fase !== "selesai",
+              );
               // Soal benar-benar tersimpan di HP ini — syarat bisa mengerjakan.
-              const adaSoalLokal = Boolean(sesi && sesi.soal.length > 0);
-              const terkunciJadwal = belumWaktunya(u.tgl_mulai);
+              const adaSoalLokal = Boolean(
+                sesi &&
+                  sesi.soal.length > 0 &&
+                  (!sedangUjianUlang || sesiUlangBaru),
+              );
+              const statusJadwal = statusJadwalUjian(
+                u.tgl_mulai,
+                new Date(jamSekarang),
+              );
+              const terkunciJadwal = statusJadwal === "belum";
+              const jadwalLewat = statusJadwal === "lewat" && !lanjut;
               // Guru memperbaiki soal setelah unduhan dibuat → wajib sinkron ulang.
               const revisiBeda = Boolean(
                 !sudahSelesai &&
@@ -396,7 +424,7 @@ export function SiswaUjian() {
                           warna={
                             sudahSelesai
                               ? "hijau"
-                              : takBoleh || !izin
+                              : takBoleh || !izin || jadwalLewat
                                 ? "mati"
                                 : adaSoalLokal
                                   ? "hijau"
@@ -405,7 +433,9 @@ export function SiswaUjian() {
                           teks={
                             sudahSelesai
                               ? "Selesai"
-                              : takBoleh
+                              : jadwalLewat
+                                ? "Jadwal lewat"
+                                : takBoleh
                                 ? "Di luar sasaran"
                                 : !izin
                                   ? "Belum dibagikan"
@@ -454,6 +484,11 @@ export function SiswaUjian() {
                         {sesi?.hasil ? ` · Nilai ${sesi.hasil.nilai}` : ""}. Ujian
                         tidak dapat dikerjakan ulang.
                       </p>
+                    ) : sedangUjianUlang ? (
+                      <p className="mt-2 rounded-xl bg-sky-500/10 px-3 py-2 text-xs font-semibold text-sky-700">
+                        Admin mengizinkan ujian ulang. Unduh soal untuk memulai
+                        percobaan baru; hasil sebelumnya tetap tersimpan.
+                      </p>
                     ) : takBoleh ? (
                       <p className="mt-2 rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-700">
                         Kelasmu tidak terdaftar untuk ujian ini.
@@ -484,6 +519,10 @@ export function SiswaUjian() {
                         </Button>
                       ) : takBoleh ? (
                         <Button disabled>Kerjakan</Button>
+                      ) : jadwalLewat ? (
+                        <Button disabled className="gap-2">
+                          <CalendarClock className="size-4" /> Jadwal lewat
+                        </Button>
                       ) : !izin ? (
                         <Button disabled className="gap-2">
                           <Download className="size-4" /> Menunggu dibagikan
@@ -491,7 +530,7 @@ export function SiswaUjian() {
                       ) : !adaSoalLokal ? (
                         <Button
                           className="gap-2"
-                          disabled={!online || unduhBusy === u.id}
+                          disabled={!online || jadwalLewat || unduhBusy === u.id}
                           onClick={() => void unduhMapel(u)}
                         >
                           <Download
@@ -504,7 +543,10 @@ export function SiswaUjian() {
                       ) : (
                         <Button
                           className="gap-2"
-                          disabled={terkunciJadwal || online}
+                          disabled={
+                            online ||
+                            (!lanjut && (terkunciJadwal || jadwalLewat))
+                          }
                           onClick={() => navigate(`/ujian/${u.id}`)}
                         >
                           {lanjut ? (
@@ -568,6 +610,8 @@ export function SiswaUjian() {
                     <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
                       {takBoleh
                         ? "Hubungi admin bila menurutmu ini keliru."
+                        : jadwalLewat
+                          ? `Tanggal ujian telah lewat. Ujian hanya dapat dimulai pada ${jadwalLabel(u.tgl_mulai)}.`
                         : !izin
                           ? "Tunggu admin membagikan mapel ini (lampu kuning = siap diunduh)."
                           : !adaSoalLokal
@@ -591,7 +635,7 @@ export function SiswaUjian() {
   );
 }
 
-/** Riwayat nilai milik siswa (dicocokkan dari nama di sheet Hasil). */
+/** Riwayat nilai milik siswa, dicocokkan menggunakan akun login. */
 export function SiswaRiwayat() {
   const { user } = useAuth();
   const [hasil, setHasil] = useState<HasilGas[] | null>(null);
@@ -663,6 +707,7 @@ export function SiswaRiwayat() {
                   <th className="px-5 py-3">Ujian</th>
                   <th className="px-5 py-3">Kelas</th>
                   <th className="px-5 py-3">Pelanggaran</th>
+                  <th className="px-5 py-3">Percobaan / nilai</th>
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3 text-right">Selesai pada</th>
                 </tr>
@@ -672,6 +717,20 @@ export function SiswaRiwayat() {
                   <tr key={h.id} className="transition-colors hover:bg-muted/40">
                     <td className="px-5 py-3.5 font-semibold">{h.ujian_judul}</td>
                     <td className="px-5 py-3.5 text-muted-foreground">{h.kelas}</td>
+                    <td className="px-5 py-3.5">
+                      <span>
+                        Percobaan {h.percobaan ?? 1} · Nilai {h.nilai}
+                      </span>
+                      {h.nilai_resmi ? (
+                        <span className="mt-1 block text-xs font-bold text-emerald-700">
+                          Nilai resmi tertinggi
+                        </span>
+                      ) : (
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          Nilai resmi: {h.nilai_tertinggi ?? h.nilai}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-5 py-3.5">
                       <span
                         className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ${

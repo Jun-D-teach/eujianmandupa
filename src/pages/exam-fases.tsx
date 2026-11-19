@@ -17,13 +17,18 @@ import {
 } from "lucide-react";
 import type { Pilihan, SesiUjian } from "@/lib/exam-storage";
 import { opsiHTML, soalHTML } from "@/lib/soal-format";
+import { tanggalJadwalDate } from "@/lib/api";
 
 /** Label waktu mulai id-ID (duplikat ringan dari ExamPage). */
 function labelTgl(tglMulai?: string): string {
   if (!tglMulai) return "";
-  const d = new Date(tglMulai);
-  if (Number.isNaN(d.getTime())) return tglMulai;
-  return d.toLocaleString("id-ID", { dateStyle: "full", timeStyle: "short" });
+  const d = tanggalJadwalDate(tglMulai);
+  if (!d) return tglMulai;
+  return d.toLocaleString("id-ID", {
+    dateStyle: "full",
+    timeStyle: "short",
+    timeZone: "Asia/Jakarta",
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -163,6 +168,7 @@ export function InstruksiFase(props: {
   sesi: SesiUjian;
   online: boolean;
   terkunciJadwal: boolean;
+  jadwalLewat: boolean;
   token: string;
   setToken: (v: string) => void;
   pesanToken: string | null;
@@ -227,7 +233,8 @@ export function InstruksiFase(props: {
                   Internet sudah mati — siap!
                 </p>
                 <p className="text-xs leading-5 text-emerald-700/80">
-                  HP dalam keadaan offline. Ujian boleh dimulai kapan saja.
+                  HP dalam keadaan offline. Tombol mulai mengikuti tanggal dan
+                  jam WIB yang ditetapkan admin.
                 </p>
               </div>
             </>
@@ -291,12 +298,21 @@ export function InstruksiFase(props: {
         className="w-full"
         onClick={props.onMulai}
         disabled={props.online || props.terkunciJadwal}
+        title={
+          props.jadwalLewat
+            ? "Tanggal ujian telah lewat."
+            : props.terkunciJadwal
+              ? "Tunggu sampai tanggal dan jam mulai yang dijadwalkan."
+              : undefined
+        }
       >
-        {props.terkunciJadwal
-          ? "Belum sesuai jadwal — lihat jadwal di bawah"
-          : props.online
-            ? "Matikan internet dulu, lalu Mulai Ujian"
-            : "Mulai Ujian"}
+        {props.jadwalLewat
+          ? "Tanggal ujian telah lewat"
+          : props.terkunciJadwal
+            ? "Belum sesuai jadwal — lihat jadwal di bawah"
+            : props.online
+              ? "Matikan internet dulu, lalu Mulai Ujian"
+              : "Mulai Ujian"}
       </Button>
       <Button
         variant="ghost"

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { gasCall, type HasilGas, type SoalGas, type UjianGas } from "@/lib/api";
+import { useAuth } from "@/hooks/use-auth";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,6 +46,7 @@ import {
   PenLine,
   Printer,
   RefreshCw,
+  RotateCcw,
   Search,
   ShieldAlert,
   Trophy,
@@ -58,7 +60,10 @@ type BarisLaporan = {
   nama: string;
   kelas: string;
   nisn: string;
+  percobaan: number;
   nilai: number;
+  nilai_tertinggi: number;
+  nilai_resmi: boolean;
   benar: number;
   total_soal: number;
   total_pelanggaran: number;
@@ -74,11 +79,14 @@ const chartConfig = {
 
 /** Rekap hasil per ujian (guru & admin). */
 export function HasilUjian() {
+  const { user } = useAuth();
   const [ujian, setUjian] = useState<UjianGas[] | null>(null);
   const [pilih, setPilih] = useState<string | null>(null);
   const [hasil, setHasil] = useState<HasilGas[] | null>(null);
   const [versi, setVersi] = useState(0);
   const [koreksi, setKoreksi] = useState<HasilGas | null>(null);
+  const [targetUlang, setTargetUlang] = useState<HasilGas | null>(null);
+  const [busyUlang, setBusyUlang] = useState(false);
   /** Filter kelas untuk laporan (tabel, ringkasan, grafik & ekspor Excel). */
   const [kelas, setKelas] = useState("semua");
   const [busyEkspor, setBusyEkspor] = useState(false);
@@ -184,7 +192,20 @@ export function HasilUjian() {
     urutkan,
   ]);
 
+  const percobaanTerakhir = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const h of hasil ?? []) {
+      if (!h.username) continue;
+      map.set(h.username, Math.max(map.get(h.username) ?? 0, h.percobaan ?? 1));
+    }
+    return map;
+  }, [hasil]);
+
   const jumlahTersaring = hasilTampil?.length ?? 0;
+  const hasilResmiTampil = useMemo(
+    () => (hasilTampil ?? []).filter((h) => h.nilai_resmi !== false),
+    [hasilTampil],
+  );
   const hasilDipilih = (hasilTampil ?? []).filter((h) =>
     pilihanCetak.has(h.id),
   );
@@ -230,7 +251,7 @@ export function HasilUjian() {
 
   // Statistik dan grafik mengikuti seluruh filter hasil yang sedang aktif.
   const statistik = useMemo(() => {
-    const rows = hasilTampil ?? [];
+    const rows = hasilResmiTampil;
     if (rows.length === 0) return null;
     const nilai = rows.map((h) => h.nilai);
     return {
@@ -240,7 +261,7 @@ export function HasilUjian() {
       terendah: Math.min(...nilai),
       lulus: nilai.filter((n) => n >= 75).length,
     };
-  }, [hasilTampil]);
+  }, [hasilResmiTampil]);
 
   // Distribusi nilai per rentang — bahan grafik batang.
   const distribusi = useMemo(() => {
@@ -251,13 +272,31 @@ export function HasilUjian() {
       { label: "80–89", bawah: 80, batas: 89 },
       { label: "90–100", bawah: 90, batas: 100 },
     ];
-    const rows = hasilTampil ?? [];
+    const rows = hasilResmiTampil;
     return rentang.map((r) => ({
       label: r.label,
       jumlah: rows.filter((h) => h.nilai >= r.bawah && h.nilai <= r.batas)
         .length,
     }));
-  }, [hasilTampil]);
+  }, [hasilResmiTampil]);
+
+  const izinkanUlang = async () => {
+    if (!targetUlang?.username || !targetUlang.ujian_id) return;
+    setBusyUlang(true);
+    try {
+      const res = await gasCall<{ message?: string }>("izinkanUjianUlang", {
+        ujian_id: targetUlang.ujian_id,
+        username: targetUlang.username,
+      });
+      toast.success(res.message ?? "Izin ujian ulang diberikan.");
+      setTargetUlang(null);
+      setVersi((v) => v + 1);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal memberi izin ujian ulang.");
+    } finally {
+      setBusyUlang(false);
+    }
+  };
 
   const resetFilter = () => {
     setCari("");
@@ -269,7 +308,7 @@ export function HasilUjian() {
     setPilihanCetak(new Set());
   };
 
-  /** Unduh laporan Excel: Waktu Kirim | NAMA | NISN | KELAS | jawaban per soal. */
+  /** Unduh laporan Excel per percobaan, nilai resmi, dan jawaban per soal. */
   const unduhExcel = async () => {
     if (!pilih || busyEkspor) return;
     setBusyEkspor(true);
@@ -307,6 +346,10 @@ export function HasilUjian() {
         "NAMA",
         "NISN",
         "KELAS",
+        "Percobaan",
+        "Nilai Percobaan",
+        "Nilai Resmi Tertinggi",
+        "Percobaan Resmi?",
         ...lap.soal.map((s) => `Soal ${s.nomor}`),
       ];
       const isi = baris.map((b) => [
@@ -314,6 +357,10 @@ export function HasilUjian() {
         b.nama,
         b.nisn,
         b.kelas,
+        b.percobaan,
+        b.nilai,
+        b.nilai_tertinggi,
+        b.nilai_resmi ? "Ya" : "Tidak",
         ...lap.soal.map((s) => b.jawaban[s.id] ?? ""),
       ]);
       const ws = XLSX.utils.aoa_to_sheet([header, ...isi]);
@@ -674,7 +721,7 @@ export function HasilUjian() {
                       <th className="px-5 py-3">Pelanggaran</th>
                       <th className="px-5 py-3 text-right">Nilai</th>
                       <th className="px-5 py-3 text-right">Dikirim</th>
-                      <th className="px-5 py-3 text-right">Koreksi</th>
+                      <th className="px-5 py-3 text-right">Tindakan</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/60">
@@ -700,7 +747,42 @@ export function HasilUjian() {
                         <td className="px-3 py-3.5 font-bold text-muted-foreground">
                           {i + 1}
                         </td>
-                        <td className="px-5 py-3.5 font-semibold">{h.nama}</td>
+                        <td className="px-5 py-3.5 font-semibold">
+                          {h.nama}
+                          <span className="mt-1 block text-xs font-normal text-muted-foreground">
+                            Percobaan {h.percobaan ?? 1}
+                            {h.username ? ` · ${h.username}` : ""}
+                          </span>
+                          {h.izin_ulang && (
+                            <span className="mt-1 block text-[11px] font-normal text-muted-foreground">
+                              Izin oleh {h.izin_ulang.diberikan_oleh} pada{" "}
+                              {new Date(
+                                h.izin_ulang.diberikan_pada.replace(" ", "T"),
+                              ).toLocaleString("id-ID")}
+                              {" · digunakan "}
+                              {h.izin_ulang.digunakan_pada
+                                ? new Date(
+                                    h.izin_ulang.digunakan_pada.replace(" ", "T"),
+                                  ).toLocaleString("id-ID")
+                                : "belum"}
+                            </span>
+                          )}
+                          {h.izin_ulang_menunggu &&
+                            h.percobaan === percobaanTerakhir.get(h.username ?? "") && (
+                              <span className="mt-1 block text-xs font-semibold text-sky-700">
+                                  Izin oleh {h.izin_ulang_pending?.diberikan_oleh}
+                                  {h.izin_ulang_pending?.diberikan_pada
+                                    ? ` pada ${new Date(
+                                        h.izin_ulang_pending.diberikan_pada.replace(
+                                          " ",
+                                          "T",
+                                        ),
+                                      ).toLocaleString("id-ID")}`
+                                    : ""}{" "}
+                                  · belum digunakan
+                                </span>
+                            )}
+                        </td>
                         <td className="px-5 py-3.5 text-muted-foreground">
                           {h.kelas}
                         </td>
@@ -736,6 +818,15 @@ export function HasilUjian() {
                             />
                             {h.nilai}
                           </span>
+                          {h.nilai_resmi ? (
+                            <span className="mt-1 block text-[10px] font-bold text-emerald-700">
+                              Nilai resmi tertinggi
+                            </span>
+                          ) : (
+                            <span className="mt-1 block text-[10px] text-muted-foreground">
+                              Nilai resmi: {h.nilai_tertinggi ?? h.nilai}
+                            </span>
+                          )}
                           {(h.menunggu ?? 0) > 0 && (
                             <span className="mt-1 block rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-700">
                               {h.menunggu} menunggu koreksi
@@ -764,6 +855,22 @@ export function HasilUjian() {
                             <PenLine className="size-3.5" />
                             {(h.menunggu ?? 0) > 0 ? "Koreksi" : "Periksa"}
                           </Button>
+                          {user?.role === "admin" &&
+                            h.username &&
+                            h.percobaan === percobaanTerakhir.get(h.username) && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="mt-2 gap-1.5 border-sky-600/40 text-sky-700 hover:text-sky-800"
+                                disabled={h.izin_ulang_menunggu}
+                                onClick={() => setTargetUlang(h)}
+                              >
+                                <RotateCcw className="size-3.5" />
+                                {h.izin_ulang_menunggu
+                                  ? "Izin tersedia"
+                                  : "Izinkan ujian ulang"}
+                              </Button>
+                            )}
                         </td>
                       </tr>
                     ))}
@@ -878,6 +985,35 @@ export function HasilUjian() {
         onTutup={() => setKoreksi(null)}
         onSelesai={() => setVersi((v) => v + 1)}
       />
+      <Dialog
+        open={targetUlang !== null}
+        onOpenChange={(open) => {
+          if (!open && !busyUlang) setTargetUlang(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Izinkan ujian ulang?</DialogTitle>
+            <DialogDescription>
+              {targetUlang
+                ? `${targetUlang.nama} (${targetUlang.username}) akan mendapat satu kesempatan tambahan untuk ${targetUlang.ujian_judul}. Semua percobaan tetap tersimpan dan nilai tertinggi menjadi nilai resmi.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={busyUlang}
+              onClick={() => setTargetUlang(null)}
+            >
+              Batal
+            </Button>
+            <Button disabled={busyUlang} onClick={() => void izinkanUlang()}>
+              {busyUlang ? "Menyimpan…" : "Ya, izinkan sekali"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
