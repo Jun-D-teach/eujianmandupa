@@ -165,6 +165,7 @@ function pastikanStruktur(): void
             ujian_judul VARCHAR(200) NOT NULL DEFAULT '',
             nama VARCHAR(160) NOT NULL DEFAULT '',
             kelas VARCHAR(64) NOT NULL DEFAULT '',
+            siswa_username VARCHAR(64) NULL DEFAULT NULL,
             token VARCHAR(12) NOT NULL DEFAULT '',
             benar INT NOT NULL DEFAULT 0,
             total_soal INT NOT NULL DEFAULT 0,
@@ -172,6 +173,7 @@ function pastikanStruktur(): void
             poin INT NOT NULL DEFAULT 0,
             total_pelanggaran INT NOT NULL DEFAULT 0,
             timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_hasil_siswa_ujian (ujian_id, siswa_username),
             KEY idx_hasil_ujian (ujian_id),
             KEY idx_hasil_nama (nama)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
@@ -280,9 +282,14 @@ function pastikanStruktur(): void
         ['soal', 'kunci_teks', 'ALTER TABLE soal ADD COLUMN kunci_teks TEXT NULL AFTER tipe'],
         ['soal', 'bacaan_id', "ALTER TABLE soal ADD COLUMN bacaan_id VARCHAR(40) NOT NULL DEFAULT '' AFTER kunci_teks"],
         ['hasil', 'poin', 'ALTER TABLE hasil ADD COLUMN poin INT NOT NULL DEFAULT 0 AFTER nilai'],
+        ['hasil', 'siswa_username', 'ALTER TABLE hasil ADD COLUMN siswa_username VARCHAR(64) NULL DEFAULT NULL AFTER kelas'],
     ] as $mig) {
         $st = db()->query("SHOW COLUMNS FROM {$mig[0]} LIKE '{$mig[1]}'");
         if ($st->fetch() === false) db()->exec($mig[2]);
+    }
+    $st = db()->query("SHOW INDEX FROM hasil WHERE Key_name = 'uq_hasil_siswa_ujian'");
+    if ($st->fetch() === false) {
+        db()->exec('ALTER TABLE hasil ADD UNIQUE KEY uq_hasil_siswa_ujian (ujian_id, siswa_username)');
     }
 
     // Teks bacaan bersama (dipakai beberapa soal) + jawaban essay/uraian
@@ -372,7 +379,7 @@ const AKSES = [
     'getKelasList' => 1, 'tambahSiswa' => 1, 'ubahSiswa' => 1, 'hapusSiswa' => 1,
     'hapusSiswaMassal' => 1, 'importSiswa' => 1, 'buatAkunSiswa' => 1,
     'konfirmasiUjian' => 1,
-    'tambahSoal' => 1, 'ubahSoal' => 1, 'tambahSoalContoh' => 1, 'hapusSoal' => 1,
+    'tambahSoal' => 1, 'ubahSoal' => 1, 'tambahSoalContoh' => 1, 'hapusSoal' => 1, 'hapusSoalMassal' => 1,
     'imporSoal' => 1,
     'getGuru' => 1, 'tambahGuru' => 1, 'ubahGuru' => 1, 'hapusGuru' => 1,
     'hapusGuruMassal' => 1, 'ubahPasswordGuru' => 1,
@@ -679,6 +686,7 @@ function jalankan(string $action, array $d): array
         case 'tambahSoalContoh': return a_tambahSoalContoh($d);
         case 'imporSoal': return a_imporSoal($d);
         case 'hapusSoal': return a_hapusSoal($d);
+        case 'hapusSoalMassal': return a_hapusSoalMassal($d);
         case 'simpanBacaan': return a_simpanBacaan($d);
         case 'hapusBacaan': return a_hapusBacaan($d);
         case 'getKoreksi': return a_getKoreksi($d);
@@ -1603,7 +1611,7 @@ function tolakBilaBukanMilik(array $d, string $ujianId, string $pesan = ''): ?ar
     return null;
 }
 
-/** Daftar ujian aktif untuk siswa + kelayakan, izin unduh & status unduh. */
+/** Daftar ujian aktif untuk siswa + kelayakan, izin unduh & status selesai. */
 function a_getUjianSiswa(array $d): array
 {
     $kelas = bersih($d['kelas'] ?? '');
@@ -1612,11 +1620,16 @@ function a_getUjianSiswa(array $d): array
     foreach (semua('SELECT ujian_id FROM unduhan WHERE username = ?', [$username]) as $r) {
         $unduh[$r['ujian_id']] = true;
     }
+    $selesai = [];
+    foreach (semua('SELECT ujian_id FROM hasil WHERE siswa_username = ?', [$username]) as $r) {
+        $selesai[$r['ujian_id']] = true;
+    }
     $daftar = [];
     foreach (semua('SELECT * FROM ujian WHERE aktif = 1 ORDER BY dibuat') as $r) {
         $u = barisUjian($r, $kelas);
         if (!$u['aktif']) continue;
         $u['sudah_unduh'] = isset($unduh[$u['id']]);
+        $u['sudah_selesai'] = isset($selesai[$u['id']]);
         $daftar[] = $u;
     }
     return ['success' => true, 'ujian' => $daftar];
@@ -1894,6 +1907,13 @@ function a_getSoal(array $d): array
     // boleh sinkron ulang (mis. setelah guru memperbaiki soal) walau izin
     // sudah ditutup admin.
     $username = bersih($d['sesi_user'] ?? '');
+    $hasilSelesai = satu(
+        'SELECT id FROM hasil WHERE ujian_id = ? AND siswa_username = ? LIMIT 1',
+        [$id, strtolower($username)]
+    );
+    if ($hasilSelesai) {
+        return galat('Ujian ini sudah selesai di akunmu dan tidak dapat diunduh ulang.');
+    }
     $pernahUnduh = false;
     if ($username !== '') {
         $p = satu('SELECT username FROM unduhan WHERE ujian_id = ? AND username = ?', [$id, $username]);
@@ -1985,6 +2005,7 @@ return [
     'token_hash' => hash('sha256', strtoupper(bersih($r['token']))),
     'pin_pengawas' => pinPengawas(),
 ];
+}
 
 /** Soal untuk petugas: DENGAN kunci jawaban + daftar teks bacaan. */
 function a_getSoalAdmin(array $d): array
@@ -2241,6 +2262,44 @@ function a_hapusSoal(array $d): array
     return ['success' => true, 'message' => 'Soal dihapus.'];
 }
 
+function a_hapusSoalMassal(array $d): array
+{
+    $ujianId = bersih($d['ujian_id'] ?? '');
+    $ids = is_array($d['ids'] ?? null)
+        ? array_values(array_unique(array_filter(
+            array_map('bersih', array_filter($d['ids'], 'is_scalar')),
+            static fn($id) => $id !== ''
+        )))
+        : [];
+    if ($ujianId === '') return galat('Ujian tidak valid.');
+    if (!$ids) return galat('Pilih minimal satu soal untuk dihapus.');
+    if (count($ids) > 200) return galat('Maksimal 200 soal dapat dihapus sekaligus.');
+
+    $tolak = tolakBilaBukanMilik($d, $ujianId);
+    if ($tolak) return $tolak;
+
+    try {
+        db()->beginTransaction();
+        foreach ($ids as $id) {
+            $soal = satu('SELECT ujian_id FROM soal WHERE id = ?', [$id]);
+            if (!$soal || (string) $soal['ujian_id'] !== $ujianId) {
+                db()->rollBack();
+                return galat('Ada soal yang sudah tidak tersedia atau bukan bagian dari mapel ini. Muat ulang daftar soal.');
+            }
+        }
+        foreach ($ids as $id) {
+            jalan('DELETE FROM soal WHERE id = ? AND ujian_id = ?', [$id, $ujianId]);
+        }
+        naikkanRevisi($ujianId);
+        db()->commit();
+    } catch (Throwable $e) {
+        if (db()->inTransaction()) db()->rollBack();
+        throw $e;
+    }
+
+    return ['success' => true, 'terhapus' => count($ids), 'message' => count($ids) . ' soal dihapus.'];
+}
+
 /* ------------------------------------------------------------------ */
 /* HASIL (grading di server)                                           */
 /* ------------------------------------------------------------------ */
@@ -2248,6 +2307,7 @@ function a_hapusSoal(array $d): array
 function a_submitJawaban(array $d): array
 {
     $ujianId = bersih($d['ujian_id'] ?? '');
+    $username = strtolower(bersih($d['sesi_user'] ?? ''));
     $nama = bersih($d['nama'] ?? '');
     $kelas = bersih($d['kelas'] ?? '');
     $token = strtoupper(bersih($d['token'] ?? ''));
@@ -2255,6 +2315,9 @@ function a_submitJawaban(array $d): array
     $jawaban = is_array($d['jawaban'] ?? null) ? $d['jawaban'] : [];
 
     if ($ujianId === '') return galat('Ujian tidak valid.');
+    if (($d['sesi_role'] ?? '') !== 'siswa' || $username === '') {
+        return galat('Hanya akun siswa yang dapat mengirim jawaban ujian.');
+    }
     if ($nama === '' || $kelas === '') return galat('Nama dan kelas wajib diisi.');
 
     $meta = cariUjian($ujianId);
@@ -2285,48 +2348,68 @@ function a_submitJawaban(array $d): array
         if ($kunciMap[$idSoal] === $pilihan) $poin += 100;
     }
 
-    foreach ($jawabanPg as $idSoalPg => $pilihanPg) {
-        jalan(
-            'INSERT INTO jawaban_pg (hasil_id, soal_id, ujian_id, pilihan) VALUES (?,?,?,?)
-             ON DUPLICATE KEY UPDATE pilihan = VALUES(pilihan)',
-            [$hasilId, $idSoalPg, $ujianId, $pilihanPg]
-        );
-    }
-
-    // Jawaban teks (essay/uraian) disimpan untuk dikoreksi manual guru.
-    foreach ($jawaban as $item) {
-        $idSoal = (string) ($item['id_soal'] ?? '');
-        if (!isset($tipeMap[$idSoal]) || $tipeMap[$idSoal] === 'pg') continue;
-        $teks = (string) ($item['teks'] ?? '');
-        if (function_exists('mb_substr')) $teks = mb_substr($teks, 0, 20000);
-        else $teks = substr($teks, 0, 20000);
-        if (trim($teks) === '') continue;
-        jalan(
-            'INSERT INTO jawaban_teks (hasil_id, soal_id, ujian_id, teks, skor) VALUES (?,?,?,?,NULL)
-             ON DUPLICATE KEY UPDATE teks = VALUES(teks), skor = NULL',
-            [$hasilId, $idSoal, $ujianId, $teks]
-        );
-    }
-
     $nilai = $totalSoal > 0 ? (int) round($poin / $totalSoal) : 0;
     $benar = (int) round($poin / 100);
-    jalan(
-        'INSERT INTO hasil (id, ujian_id, ujian_judul, nama, kelas, token, benar, total_soal, nilai, poin, total_pelanggaran)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-        [
-            $hasilId,
-            $ujianId,
-            (string) $meta['judul'],
-            $nama,
-            $kelas,
-            $token,
-            $benar,
-            $totalSoal,
-            $nilai,
-            $poin,
-            $totalPelanggaran,
-        ]
-    );
+    try {
+        db()->beginTransaction();
+        $sudahAda = satu(
+            'SELECT id FROM hasil WHERE ujian_id = ? AND siswa_username = ? LIMIT 1',
+            [$ujianId, $username]
+        );
+        if ($sudahAda) {
+            db()->rollBack();
+            return galat('Ujian ini sudah selesai di akunmu. Kembali ke beranda dan muat ulang; kiriman ulang tidak diterima.');
+        }
+
+        foreach ($jawabanPg as $idSoalPg => $pilihanPg) {
+            jalan(
+                'INSERT INTO jawaban_pg (hasil_id, soal_id, ujian_id, pilihan) VALUES (?,?,?,?)
+                 ON DUPLICATE KEY UPDATE pilihan = VALUES(pilihan)',
+                [$hasilId, $idSoalPg, $ujianId, $pilihanPg]
+            );
+        }
+
+        // Jawaban teks (essay/uraian) disimpan untuk dikoreksi manual guru.
+        foreach ($jawaban as $item) {
+            $idSoal = (string) ($item['id_soal'] ?? '');
+            if (!isset($tipeMap[$idSoal]) || $tipeMap[$idSoal] === 'pg') continue;
+            $teks = (string) ($item['teks'] ?? '');
+            if (function_exists('mb_substr')) $teks = mb_substr($teks, 0, 20000);
+            else $teks = substr($teks, 0, 20000);
+            if (trim($teks) === '') continue;
+            jalan(
+                'INSERT INTO jawaban_teks (hasil_id, soal_id, ujian_id, teks, skor) VALUES (?,?,?,?,NULL)
+                 ON DUPLICATE KEY UPDATE teks = VALUES(teks), skor = NULL',
+                [$hasilId, $idSoal, $ujianId, $teks]
+            );
+        }
+
+        jalan(
+            'INSERT INTO hasil (id, ujian_id, ujian_judul, nama, kelas, siswa_username, token, benar, total_soal, nilai, poin, total_pelanggaran)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            [
+                $hasilId,
+                $ujianId,
+                (string) $meta['judul'],
+                $nama,
+                $kelas,
+                $username,
+                $token,
+                $benar,
+                $totalSoal,
+                $nilai,
+                $poin,
+                $totalPelanggaran,
+            ]
+        );
+        db()->commit();
+    } catch (Throwable $e) {
+        if (db()->inTransaction()) db()->rollBack();
+        if ($e instanceof PDOException && (string) $e->getCode() === '23000') {
+            return galat('Ujian ini sudah selesai di akunmu. Kembali ke beranda dan muat ulang; kiriman ulang tidak diterima.');
+        }
+        throw $e;
+    }
 
     return [
         'success' => true,

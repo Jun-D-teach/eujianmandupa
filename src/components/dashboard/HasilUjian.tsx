@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { gasCall, type HasilGas, type SoalGas, type UjianGas } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -18,7 +19,12 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { Empty, EmptyContent, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -33,10 +39,13 @@ import {
   BarChart3,
   BookOpen,
   CheckCheck,
+  CheckSquare,
   Download,
   Lock,
   PenLine,
+  Printer,
   RefreshCw,
+  Search,
   ShieldAlert,
   Trophy,
 } from "lucide-react";
@@ -73,6 +82,13 @@ export function HasilUjian() {
   /** Filter kelas untuk laporan (tabel, ringkasan, grafik & ekspor Excel). */
   const [kelas, setKelas] = useState("semua");
   const [busyEkspor, setBusyEkspor] = useState(false);
+  const [cari, setCari] = useState("");
+  const [filterKetuntasan, setFilterKetuntasan] = useState("semua");
+  const [filterKoreksi, setFilterKoreksi] = useState("semua");
+  const [filterPelanggaran, setFilterPelanggaran] = useState("semua");
+  const [urutkan, setUrutkan] = useState("nilai-desc");
+  const [pilihanCetak, setPilihanCetak] = useState<Set<string>>(new Set());
+  const daftarCetakRef = useRef<HTMLDivElement>(null);
 
   // Muat daftar ujian
   useEffect(() => {
@@ -125,9 +141,96 @@ export function HasilUjian() {
     return kelas === "semua" ? hasil : hasil.filter((h) => h.kelas === kelas);
   }, [hasil, kelas]);
 
-  // Statistik ringkas laporan (mengikuti filter kelas).
+  const hasilTampil = useMemo(() => {
+    if (!hasilTerfilter) return null;
+    const q = cari.trim().toLocaleLowerCase("id");
+    const rows = hasilTerfilter.filter((h) => {
+      const cocokCari =
+        !q ||
+        [h.nama, h.kelas, h.token, h.ujian_judul].some((v) =>
+          v?.toLocaleLowerCase("id").includes(q),
+        );
+      const cocokTuntas =
+        filterKetuntasan === "semua" ||
+        (filterKetuntasan === "tuntas" ? h.nilai >= 75 : h.nilai < 75);
+      const cocokKoreksi =
+        filterKoreksi === "semua" ||
+        (filterKoreksi === "menunggu"
+          ? (h.menunggu ?? 0) > 0
+          : (h.menunggu ?? 0) === 0);
+      const cocokPelanggaran =
+        filterPelanggaran === "semua" ||
+        (filterPelanggaran === "ada"
+          ? h.total_pelanggaran > 0
+          : h.total_pelanggaran === 0);
+      return cocokCari && cocokTuntas && cocokKoreksi && cocokPelanggaran;
+    });
+    return [...rows].sort((a, b) => {
+      if (urutkan === "nilai-desc")
+        return b.nilai - a.nilai || a.nama.localeCompare(b.nama, "id");
+      if (urutkan === "nilai-asc")
+        return a.nilai - b.nilai || a.nama.localeCompare(b.nama, "id");
+      if (urutkan === "nama") return a.nama.localeCompare(b.nama, "id");
+      const waktuA = new Date(a.timestamp.replace(" ", "T")).getTime() || 0;
+      const waktuB = new Date(b.timestamp.replace(" ", "T")).getTime() || 0;
+      return urutkan === "terlama" ? waktuA - waktuB : waktuB - waktuA;
+    });
+  }, [
+    hasilTerfilter,
+    cari,
+    filterKetuntasan,
+    filterKoreksi,
+    filterPelanggaran,
+    urutkan,
+  ]);
+
+  const jumlahTersaring = hasilTampil?.length ?? 0;
+  const hasilDipilih = (hasilTampil ?? []).filter((h) =>
+    pilihanCetak.has(h.id),
+  );
+  const rataDipilih = hasilDipilih.length
+    ? Math.round(
+        hasilDipilih.reduce((total, h) => total + h.nilai, 0) /
+          hasilDipilih.length,
+      )
+    : null;
+  const semuaTerpilih =
+    Boolean(hasilTampil?.length) &&
+    hasilTampil?.every((h) => pilihanCetak.has(h.id));
+
+  const toggleSemuaCetak = (dipilih: boolean) => {
+    setPilihanCetak((sebelumnya) => {
+      const baru = new Set(sebelumnya);
+      for (const h of hasilTampil ?? []) {
+        if (dipilih) baru.add(h.id);
+        else baru.delete(h.id);
+      }
+      return baru;
+    });
+  };
+
+  const cetakHasil = (hanyaDipilih: boolean) => {
+    const root = daftarCetakRef.current;
+    if (!root || !hasilTampil?.length) return;
+    const adaPilihanTampil = hasilTampil.some((h) => pilihanCetak.has(h.id));
+    if (hanyaDipilih && !adaPilihanTampil) {
+      toast.error("Pilih minimal satu hasil untuk dicetak.");
+      return;
+    }
+    root.classList.toggle("print-selected-only", hanyaDipilih);
+    window.print();
+  };
+
+  useEffect(() => {
+    const selesaiCetak = () =>
+      daftarCetakRef.current?.classList.remove("print-selected-only");
+    window.addEventListener("afterprint", selesaiCetak);
+    return () => window.removeEventListener("afterprint", selesaiCetak);
+  }, []);
+
+  // Statistik dan grafik mengikuti seluruh filter hasil yang sedang aktif.
   const statistik = useMemo(() => {
-    const rows = hasilTerfilter ?? [];
+    const rows = hasilTampil ?? [];
     if (rows.length === 0) return null;
     const nilai = rows.map((h) => h.nilai);
     return {
@@ -137,7 +240,7 @@ export function HasilUjian() {
       terendah: Math.min(...nilai),
       lulus: nilai.filter((n) => n >= 75).length,
     };
-  }, [hasilTerfilter]);
+  }, [hasilTampil]);
 
   // Distribusi nilai per rentang — bahan grafik batang.
   const distribusi = useMemo(() => {
@@ -148,12 +251,23 @@ export function HasilUjian() {
       { label: "80–89", bawah: 80, batas: 89 },
       { label: "90–100", bawah: 90, batas: 100 },
     ];
-    const rows = hasilTerfilter ?? [];
+    const rows = hasilTampil ?? [];
     return rentang.map((r) => ({
       label: r.label,
-      jumlah: rows.filter((h) => h.nilai >= r.bawah && h.nilai <= r.batas).length,
+      jumlah: rows.filter((h) => h.nilai >= r.bawah && h.nilai <= r.batas)
+        .length,
     }));
-  }, [hasilTerfilter]);
+  }, [hasilTampil]);
+
+  const resetFilter = () => {
+    setCari("");
+    setKelas("semua");
+    setFilterKetuntasan("semua");
+    setFilterKoreksi("semua");
+    setFilterPelanggaran("semua");
+    setUrutkan("nilai-desc");
+    setPilihanCetak(new Set());
+  };
 
   /** Unduh laporan Excel: Waktu Kirim | NAMA | NISN | KELAS | jawaban per soal. */
   const unduhExcel = async () => {
@@ -164,11 +278,18 @@ export function HasilUjian() {
         "getLaporan",
         { ujian_id: pilih },
       );
-      const baris = lap.baris.filter(
-        (b) => kelas === "semua" || b.kelas === kelas,
+      const urutanId = new Map(
+        (hasilTampil ?? []).map((h, index) => [h.id, index]),
       );
+      const baris = lap.baris
+        .filter((b) => urutanId.has(b.hasil_id))
+        .sort(
+          (a, b) =>
+            (urutanId.get(a.hasil_id) ?? 0) -
+            (urutanId.get(b.hasil_id) ?? 0),
+        );
       if (baris.length === 0) {
-        toast.error("Tidak ada jawaban untuk filter kelas ini.");
+        toast.error("Tidak ada jawaban untuk filter yang dipilih.");
         return;
       }
       const XLSX = await import("xlsx");
@@ -176,7 +297,10 @@ export function HasilUjian() {
         const d = new Date(t.replace(" ", "T"));
         return Number.isNaN(d.getTime())
           ? t
-          : d.toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" });
+          : d.toLocaleString("id-ID", {
+              dateStyle: "short",
+              timeStyle: "short",
+            });
       };
       const header = [
         "Waktu Kirim Jawaban",
@@ -196,7 +320,10 @@ export function HasilUjian() {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Hasil");
       const bersihkan = (v: string) =>
-        v.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+        v
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "");
       const judul = (ujian ?? []).find((u) => u.id === pilih)?.judul ?? "ujian";
       const namaFile =
         `hasil-${bersihkan(judul)}` +
@@ -205,7 +332,9 @@ export function HasilUjian() {
       XLSX.writeFile(wb, namaFile);
       toast.success(`${baris.length} baris diunduh ke ${namaFile}.`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Gagal mengunduh laporan.");
+      toast.error(
+        err instanceof Error ? err.message : "Gagal mengunduh laporan.",
+      );
     } finally {
       setBusyEkspor(false);
     }
@@ -224,7 +353,9 @@ export function HasilUjian() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-extrabold tracking-tight">Hasil ujian</h1>
+          <h1 className="text-2xl font-extrabold tracking-tight">
+            Hasil ujian
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Pilihan ganda dinilai otomatis (100 poin/soal); essay & uraian
             dikoreksi manual lewat tombol Koreksi. Total pelanggaran ikut
@@ -260,6 +391,11 @@ export function HasilUjian() {
                 onClick={() => {
                   setPilih(u.id);
                   setKelas("semua");
+                  setCari("");
+                  setFilterKetuntasan("semua");
+                  setFilterKoreksi("semua");
+                  setFilterPelanggaran("semua");
+                  setPilihanCetak(new Set());
                 }}
                 className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
                   pilih === u.id
@@ -268,43 +404,158 @@ export function HasilUjian() {
                 }`}
               >
                 {u.judul}
-                <span className="ml-2 text-xs opacity-70">{u.jumlah_soal} soal</span>
+                <span className="ml-2 text-xs opacity-70">
+                  {u.jumlah_soal} soal
+                </span>
               </button>
             ))}
           </div>
 
-          {/* Filter kelas + unduh laporan Excel */}
-          <div className="flex flex-wrap items-center gap-2">
-            <Select value={kelas} onValueChange={setKelas}>
-              <SelectTrigger className="w-52">
-                <SelectValue placeholder="Semua kelas" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="semua">Semua kelas</SelectItem>
-                {daftarKelas.map((k) => (
-                  <SelectItem key={k} value={k}>
-                    Kelas {k}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              variant="outline"
-              className="gap-2"
-              disabled={busyEkspor || hasilTerfilter === null || hasilTerfilter.length === 0}
-              onClick={() => void unduhExcel()}
-            >
-              <Download className="size-4" />
-              {busyEkspor ? "Menyiapkan…" : "Unduh Excel"}
-            </Button>
-          </div>
+          <Card className="space-y-4 border-border/70 p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="font-bold">Cari dan saring hasil</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {hasilTampil === null
+                    ? "Memuat data peserta…"
+                    : `${jumlahTersaring} dari ${hasil?.length ?? 0} hasil ditampilkan`}
+                </p>
+              </div>
+              <Button variant="ghost" size="sm" onClick={resetFilter}>
+                Reset filter
+              </Button>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="relative sm:col-span-2 xl:col-span-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={cari}
+                  onChange={(e) => setCari(e.target.value)}
+                  placeholder="Cari nama, kelas, atau token…"
+                  aria-label="Cari nama, kelas, atau token siswa"
+                  className="pl-9"
+                />
+              </div>
+              <Select value={kelas} onValueChange={setKelas}>
+                <SelectTrigger aria-label="Filter kelas">
+                  <SelectValue placeholder="Semua kelas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="semua">Semua kelas</SelectItem>
+                  {daftarKelas.map((k) => (
+                    <SelectItem key={k} value={k}>
+                      Kelas {k}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={filterKetuntasan}
+                onValueChange={setFilterKetuntasan}
+              >
+                <SelectTrigger aria-label="Filter ketuntasan">
+                  <SelectValue placeholder="Semua nilai" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="semua">Semua nilai</SelectItem>
+                  <SelectItem value="tuntas">Tuntas (≥ 75)</SelectItem>
+                  <SelectItem value="belum">Belum tuntas (&lt; 75)</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={filterKoreksi} onValueChange={setFilterKoreksi}>
+                <SelectTrigger aria-label="Filter status koreksi">
+                  <SelectValue placeholder="Semua status koreksi" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="semua">Semua status koreksi</SelectItem>
+                  <SelectItem value="menunggu">Menunggu koreksi</SelectItem>
+                  <SelectItem value="selesai">Koreksi selesai</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={filterPelanggaran}
+                onValueChange={setFilterPelanggaran}
+              >
+                <SelectTrigger aria-label="Filter pelanggaran">
+                  <SelectValue placeholder="Semua pelanggaran" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="semua">Semua pelanggaran</SelectItem>
+                  <SelectItem value="ada">Ada pelanggaran</SelectItem>
+                  <SelectItem value="tidak">Tanpa pelanggaran</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={urutkan} onValueChange={setUrutkan}>
+                <SelectTrigger aria-label="Urutkan hasil">
+                  <SelectValue placeholder="Urutkan" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nilai-desc">Nilai tertinggi</SelectItem>
+                  <SelectItem value="nilai-asc">Nilai terendah</SelectItem>
+                  <SelectItem value="nama">Nama A–Z</SelectItem>
+                  <SelectItem value="terbaru">Terbaru dikirim</SelectItem>
+                  <SelectItem value="terlama">Terlama dikirim</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  disabled={!hasilTampil?.length}
+                  onClick={() => toggleSemuaCetak(!semuaTerpilih)}
+                >
+                  <CheckSquare className="size-4" />
+                  {semuaTerpilih
+                    ? "Batal pilih hasil tersaring"
+                    : "Pilih hasil tersaring"}
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  {hasilTampil?.filter((h) => pilihanCetak.has(h.id)).length ??
+                    0}{" "}
+                  dipilih
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  className="gap-2"
+                  disabled={busyEkspor || !hasilTampil?.length}
+                  onClick={() => void unduhExcel()}
+                >
+                  <Download className="size-4" />
+                  {busyEkspor ? "Menyiapkan…" : "Unduh Excel"}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="gap-2"
+                  disabled={!hasilTampil?.length}
+                  onClick={() => cetakHasil(false)}
+                >
+                  <Printer className="size-4" /> Cetak semua tersaring
+                </Button>
+                <Button
+                  className="gap-2"
+                  disabled={!hasilTampil?.some((h) => pilihanCetak.has(h.id))}
+                  onClick={() => cetakHasil(true)}
+                >
+                  <Printer className="size-4" />
+                  Cetak dipilih (
+                  {hasilTampil?.filter((h) => pilihanCetak.has(h.id)).length ??
+                    0}
+                  )
+                </Button>
+              </div>
+            </div>
+          </Card>
 
           {/* Ringkasan + grafik distribusi nilai (mengikuti filter kelas) */}
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
             <Card className="border-border/70 p-5">
               <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                <Trophy className="size-3.5" /> Ringkasan{" "}
-                {kelas === "semua" ? "semua kelas" : `kelas ${kelas}`}
+                <Trophy className="size-3.5" /> Ringkasan hasil tersaring
               </p>
               {hasil === null ? (
                 <Skeleton className="mt-4 h-44 w-full" />
@@ -343,7 +594,10 @@ export function HasilUjian() {
                 <Skeleton className="mt-4 h-[240px] w-full" />
               ) : statistik ? (
                 <div className="mt-4 h-[240px] w-full">
-                  <ChartContainer config={chartConfig} className="h-full w-full">
+                  <ChartContainer
+                    config={chartConfig}
+                    className="h-full w-full"
+                  >
                     <BarChart
                       data={distribusi}
                       margin={{ top: 8, right: 8, left: -18, bottom: 0 }}
@@ -387,14 +641,14 @@ export function HasilUjian() {
               <Empty className="py-14">
                 <EmptyContent>
                   <EmptyTitle>
-                    {kelas === "semua"
-                      ? "Belum ada jawaban masuk"
-                      : `Belum ada jawaban dari kelas ${kelas}`}
+                    {hasilTerfilter?.length
+                      ? "Tidak ada hasil yang cocok"
+                      : "Belum ada jawaban masuk"}
                   </EmptyTitle>
                   <EmptyDescription>
-                    {kelas === "semua"
-                      ? "Hasil akan tampil setelah siswa mengirim jawabannya."
-                      : 'Pilih "Semua kelas" bila jawaban kelas lain sudah masuk.'}
+                    {hasilTerfilter?.length
+                      ? "Coba ubah kata pencarian atau reset filter."
+                      : "Hasil akan tampil setelah siswa mengirim jawabannya."}
                   </EmptyDescription>
                 </EmptyContent>
               </Empty>
@@ -403,7 +657,16 @@ export function HasilUjian() {
                 <table className="w-full min-w-[820px] text-sm">
                   <thead className="bg-muted/60 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     <tr>
-                      <th className="px-5 py-3">#</th>
+                      <th className="px-3 py-3">
+                        <Checkbox
+                          checked={semuaTerpilih}
+                          onCheckedChange={(checked) =>
+                            toggleSemuaCetak(Boolean(checked))
+                          }
+                          aria-label="Pilih semua hasil yang ditampilkan"
+                        />
+                      </th>
+                      <th className="px-3 py-3">#</th>
                       <th className="px-5 py-3">Nama</th>
                       <th className="px-5 py-3">Kelas</th>
                       <th className="px-5 py-3">Token</th>
@@ -415,9 +678,26 @@ export function HasilUjian() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/60">
-                    {hasilTerfilter?.map((h, i) => (
-                      <tr key={h.id} className="transition-colors hover:bg-muted/40">
-                        <td className="px-5 py-3.5 font-bold text-muted-foreground">
+                    {hasilTampil?.map((h, i) => (
+                      <tr
+                        key={h.id}
+                        className={`transition-colors hover:bg-muted/40 ${pilihanCetak.has(h.id) ? "is-selected" : ""}`}
+                      >
+                        <td className="px-3 py-3.5">
+                          <Checkbox
+                            checked={pilihanCetak.has(h.id)}
+                            onCheckedChange={(checked) =>
+                              setPilihanCetak((sebelumnya) => {
+                                const baru = new Set(sebelumnya);
+                                if (checked) baru.add(h.id);
+                                else baru.delete(h.id);
+                                return baru;
+                              })
+                            }
+                            aria-label={`Pilih hasil ${h.nama} untuk dicetak`}
+                          />
+                        </td>
+                        <td className="px-3 py-3.5 font-bold text-muted-foreground">
                           {i + 1}
                         </td>
                         <td className="px-5 py-3.5 font-semibold">{h.nama}</td>
@@ -435,7 +715,9 @@ export function HasilUjian() {
                         <td className="px-5 py-3.5">
                           <Badge
                             variant={
-                              h.total_pelanggaran > 0 ? "destructive" : "secondary"
+                              h.total_pelanggaran > 0
+                                ? "destructive"
+                                : "secondary"
                             }
                             className="gap-1"
                           >
@@ -495,8 +777,101 @@ export function HasilUjian() {
             Riwayat buka kunci tercatat di sheet "BukaKunci" saat pengawas
             membuka layar siswa dalam keadaan online.
           </p>
+          <div ref={daftarCetakRef} className="print-only">
+            <header className="print-header">
+              <p>REKAP HASIL UJIAN</p>
+              <h1>
+                {ujian.find((u) => u.id === pilih)?.judul ?? "Hasil ujian"}
+              </h1>
+              <div>
+                Kelas: {kelas === "semua" ? "Semua kelas" : kelas}
+                {" · "}
+                <span className="print-count-all">{jumlahTersaring} siswa</span>
+                <span className="print-count-selected">
+                  {hasilDipilih.length} siswa
+                </span>
+                {" · "}
+                Dicetak {new Date().toLocaleString("id-ID")}
+              </div>
+            </header>
+            <table className="print-table">
+              <thead>
+                <tr>
+                  <th>No.</th>
+                  <th>Nama siswa</th>
+                  <th>Kelas</th>
+                  <th>Benar</th>
+                  <th>Nilai</th>
+                  <th>Status koreksi</th>
+                  <th>Pelanggaran</th>
+                  <th>Waktu kirim</th>
+                </tr>
+              </thead>
+              <tbody>
+                {hasilTampil?.map((h, i) => (
+                  <tr
+                    key={h.id}
+                    className={`print-row ${pilihanCetak.has(h.id) ? "is-selected" : ""}`}
+                  >
+                    <td>{i + 1}</td>
+                    <td>{h.nama}</td>
+                    <td>{h.kelas}</td>
+                    <td>
+                      {h.benar}/{h.total_soal}
+                    </td>
+                    <td>{h.nilai}</td>
+                    <td>
+                      {(h.menunggu ?? 0) > 0
+                        ? `${h.menunggu} menunggu`
+                        : "Selesai"}
+                    </td>
+                    <td>{h.total_pelanggaran}</td>
+                    <td>{h.timestamp}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <footer className="print-footer">
+              <span className="print-average-all">
+                Rata-rata nilai: {statistik?.rata ?? "—"}
+              </span>
+              <span className="print-average-selected">
+                Rata-rata nilai dipilih: {rataDipilih ?? "—"}
+              </span>
+            </footer>
+          </div>
         </>
       )}
+
+      <style>{`
+        .print-only { display: none; }
+        @media print {
+          @page { size: portrait; margin: 14mm; }
+          body * { visibility: hidden !important; }
+          .print-only, .print-only * { visibility: visible !important; }
+          .print-only {
+            display: block !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            color: #111 !important;
+            background: #fff !important;
+            font: 10pt/1.4 Arial, sans-serif !important;
+          }
+          .print-selected-only .print-row:not(.is-selected) { display: none !important; }
+          .print-selected-only .print-count-all, .print-selected-only .print-average-all { display: none !important; }
+          .print-only:not(.print-selected-only) .print-count-selected, .print-only:not(.print-selected-only) .print-average-selected { display: none !important; }
+          .print-header { margin-bottom: 18px; border-bottom: 2px solid #222; padding-bottom: 10px; }
+          .print-header p { margin: 0 0 5px; font-size: 9pt; font-weight: 700; letter-spacing: .12em; }
+          .print-header h1 { margin: 0 0 5px; font-size: 18pt; }
+          .print-header div { font-size: 9pt; }
+          .print-table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+          .print-table th, .print-table td { border: 1px solid #777; padding: 6px; text-align: left; }
+          .print-table th { background: #eee !important; font-weight: 700; }
+          .print-footer { margin-top: 12px; text-align: right; font-weight: 700; }
+        }
+      `}</style>
 
       <DialogKoreksi
         target={koreksi}
@@ -542,13 +917,16 @@ function DialogKoreksi({
         setJawaban(j.jawaban);
         const awal: Record<string, string> = {};
         for (const [id, b] of Object.entries(j.jawaban)) {
-          if (b.skor !== null && b.skor !== undefined) awal[id] = String(b.skor);
+          if (b.skor !== null && b.skor !== undefined)
+            awal[id] = String(b.skor);
         }
         setSkor(awal);
       })
       .catch((err) => {
         if (!hidup) return;
-        toast.error(err instanceof Error ? err.message : "Gagal memuat data koreksi.");
+        toast.error(
+          err instanceof Error ? err.message : "Gagal memuat data koreksi.",
+        );
         setSoal([]);
       });
     return () => {
@@ -581,7 +959,9 @@ function DialogKoreksi({
       onSelesai();
       onTutup();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Gagal menyimpan koreksi.");
+      toast.error(
+        err instanceof Error ? err.message : "Gagal menyimpan koreksi.",
+      );
     } finally {
       setBusy(false);
     }
@@ -629,7 +1009,10 @@ function DialogKoreksi({
                 >
                   <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
                     Soal {i + 1}
-                    <Badge variant="outline" className="text-[10px] normal-case">
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] normal-case"
+                    >
                       {(s.tipe ?? "") === "uraian" ? "Uraian" : "Essay"}
                     </Badge>
                     {j?.skor !== null && j?.skor !== undefined && (
@@ -695,7 +1078,10 @@ function DialogKoreksi({
                         max={100}
                         value={skor[s.id] ?? ""}
                         onChange={(e) =>
-                          setSkor((prev) => ({ ...prev, [s.id]: e.target.value }))
+                          setSkor((prev) => ({
+                            ...prev,
+                            [s.id]: e.target.value,
+                          }))
                         }
                         className="w-24 text-right font-bold"
                       />
@@ -711,7 +1097,11 @@ function DialogKoreksi({
           <Button variant="ghost" onClick={onTutup} disabled={busy}>
             Batal
           </Button>
-          <Button className="gap-2" onClick={simpan} disabled={busy || soal === null}>
+          <Button
+            className="gap-2"
+            onClick={simpan}
+            disabled={busy || soal === null}
+          >
             <CheckCheck className="size-4" />
             {busy ? "Menyimpan…" : "Simpan & hitung ulang nilai"}
           </Button>

@@ -1754,6 +1754,13 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
   const [editId, setEditId] = useState<string | null>(null);
   const refDialogEdit = useRef<HTMLDivElement | null>(null);
   const [busy, setBusy] = useState(false);
+  const [filterSoal, setFilterSoal] = useState("");
+  const [pilihanHapus, setPilihanHapus] = useState<Set<string>>(new Set());
+  const [hapusTarget, setHapusTarget] = useState<{
+    ids: string[];
+    nomor: number[];
+  } | null>(null);
+  const [hapusBusy, setHapusBusy] = useState(false);
 
   // Dialog impor soal dari Word (.docx / tempel teks).
   const [imporBuka, setImporBuka] = useState(false);
@@ -1797,6 +1804,7 @@ function PanelSoal({ ujianId }: { ujianId: string }) {
   };
   const muat = () => {
     setSoal(null);
+    setPilihanHapus(new Set());
     gasCall<{ soal: SoalGas[]; bacaan?: BacaanGas[] }>("getSoalAdmin", { ujian_id: ujianId })
       .then((res) => {
         setSoal(res.soal);
@@ -2312,6 +2320,50 @@ const rapikanSoalOtomatis = () => {
       b.kunci !== "",
   );
 
+  const soalTersaring = useMemo(() => {
+    const q = filterSoal.trim().toLocaleLowerCase("id");
+    return (soal ?? [])
+      .map((item, index) => ({ item, nomor: index + 1 }))
+      .filter(({ item }) => {
+        if (!q) return true;
+        return [
+          item.pertanyaan,
+          item.opsi_a,
+          item.opsi_b,
+          item.opsi_c,
+          item.opsi_d,
+          item.opsi_e,
+          item.tipe,
+        ].some((nilai) => nilai?.toLocaleLowerCase("id").includes(q));
+      });
+  }, [soal, filterSoal]);
+
+  const semuaTersaringTerpilih =
+    soalTersaring.length > 0 &&
+    soalTersaring.every(({ item }) => pilihanHapus.has(item.id));
+
+  const toggleSemuaTersaring = (pilih: boolean) => {
+    setPilihanHapus((sebelumnya) => {
+      const berikutnya = new Set(sebelumnya);
+      for (const { item } of soalTersaring) {
+        if (pilih) berikutnya.add(item.id);
+        else berikutnya.delete(item.id);
+      }
+      return berikutnya;
+    });
+  };
+
+  const mintaKonfirmasiHapus = (ids: string[]) => {
+    const nomorById = new Map((soal ?? []).map((item, index) => [item.id, index + 1]));
+    const unik = [...new Set(ids)].filter((id) => nomorById.has(id));
+    if (!unik.length) return;
+    const nomor = unik.flatMap((id) => {
+      const angka = nomorById.get(id);
+      return angka === undefined ? [] : [angka];
+    });
+    setHapusTarget({ ids: unik, nomor });
+  };
+
   const setKunciPratinjau = (i: number, h: Kunci) =>
     setPratinjau((rows) =>
       rows ? rows.map((r, j) => (j === i ? { ...r, kunci: h } : r)) : rows,
@@ -2367,13 +2419,26 @@ const rapikanSoalOtomatis = () => {
     }
   };
 
-  const buang = async (id: string) => {
+  const konfirmasiHapusSoal = async () => {
+    if (!hapusTarget || hapusBusy) return;
+    setHapusBusy(true);
     try {
-      await gasCall("hapusSoal", { id });
+      const res = await gasCall<{ message?: string }>("hapusSoalMassal", {
+        ujian_id: ujianId,
+        ids: hapusTarget.ids,
+      });
+      setHapusTarget(null);
       muat();
-      toast.success("Soal dihapus.");
+      toast.success(
+        res.message ??
+          `${hapusTarget.ids.length} soal dihapus dari mapel ujian ini.`,
+      );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Gagal menghapus soal.");
+      toast.error(
+        err instanceof Error ? err.message : "Gagal menghapus soal.",
+      );
+    } finally {
+      setHapusBusy(false);
     }
   };
 
@@ -2403,16 +2468,74 @@ const rapikanSoalOtomatis = () => {
           </div>
         </div>
       ) : (
+        <>
+          <div className="space-y-3 rounded-2xl border border-border/70 bg-card p-3 sm:p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                value={filterSoal}
+                onChange={(e) => setFilterSoal(e.target.value)}
+                placeholder="Cari soal atau pilihan jawaban…"
+                aria-label="Filter daftar soal"
+                className="min-w-[220px] flex-1"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={soalTersaring.length === 0 || hapusBusy}
+                onClick={() => toggleSemuaTersaring(!semuaTersaringTerpilih)}
+              >
+                {semuaTersaringTerpilih
+                  ? "Batal pilih yang tampil"
+                  : `Pilih yang tampil (${soalTersaring.length})`}
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                className="gap-1.5"
+                disabled={pilihanHapus.size === 0 || hapusBusy}
+                onClick={() => mintaKonfirmasiHapus([...pilihanHapus])}
+              >
+                <Trash2 className="size-4" />
+                Hapus dipilih ({pilihanHapus.size})
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Filter hanya mempersempit daftar. Pilih soal yang ingin dihapus, lalu
+              konfirmasi tindakan.
+            </p>
+          </div>
+          {soalTersaring.length === 0 ? (
+            <p className="rounded-2xl border border-dashed border-border/70 px-4 py-8 text-center text-sm text-muted-foreground">
+              Tidak ada soal yang cocok dengan filter.
+            </p>
+          ) : (
         <ol className="space-y-3">
-          {soal.map((s, i) => (
+          {soalTersaring.map(({ item: s, nomor }) => (
             <li
               key={s.id}
               className="rounded-2xl border border-border/70 bg-background/60 p-4"
             >
               <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <Checkbox
+                    checked={pilihanHapus.has(s.id)}
+                    disabled={hapusBusy}
+                    onCheckedChange={(checked) =>
+                      setPilihanHapus((sebelumnya) => {
+                        const berikutnya = new Set(sebelumnya);
+                        if (checked === true) berikutnya.add(s.id);
+                        else berikutnya.delete(s.id);
+                        return berikutnya;
+                      })
+                    }
+                    aria-label={`Pilih soal nomor ${nomor} untuk dihapus`}
+                    className="mt-1"
+                  />
                 <div className="min-w-0">
                   <p className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Soal {i + 1}
+                    Soal {nomor}
                     <Badge variant="outline" className="text-[10px] normal-case">
                       {(s.tipe ?? "pg") === "pg"
                         ? "Pilihan ganda"
@@ -2428,7 +2551,7 @@ const rapikanSoalOtomatis = () => {
                   {s.gambar && (
                     <img
                       src={s.gambar}
-                      alt={`Gambar soal ${i + 1}`}
+                      alt={`Gambar soal ${nomor}`}
                       className="mt-2 max-h-44 rounded-xl border border-border/70 object-contain"
                     />
                   )}
@@ -2485,6 +2608,7 @@ const rapikanSoalOtomatis = () => {
                     )}
                   </div>
                 </div>
+                </div>
                 <div className="flex shrink-0 gap-1">
                   <Button
                     variant="ghost"
@@ -2500,8 +2624,10 @@ const rapikanSoalOtomatis = () => {
                     variant="ghost"
                     size="icon"
                     className="size-8 text-muted-foreground hover:text-red-600"
-                    onClick={() => buang(s.id)}
-                    aria-label="Hapus soal"
+                    disabled={hapusBusy}
+                    onClick={() => mintaKonfirmasiHapus([s.id])}
+                    aria-label={`Hapus soal nomor ${nomor}`}
+                    title={`Hapus soal nomor ${nomor}`}
                   >
                     <Trash2 className="size-4" />
                   </Button>
@@ -2510,6 +2636,8 @@ const rapikanSoalOtomatis = () => {
             </li>
           ))}
         </ol>
+          )}
+        </>
       )}
 
       {/* Form tambah / edit soal */}
@@ -2530,7 +2658,7 @@ const rapikanSoalOtomatis = () => {
         aria-labelledby={editId ? "editor-soal-title" : undefined}
         className={`rounded-2xl border border-border/70 bg-background/60 p-4 ${
           editId
-            ? "fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[calc(100%-1.5rem)] max-w-4xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto bg-background p-4 shadow-2xl sm:p-6"
+            ? "fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[calc(100%-1.5rem)] max-w-4xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto bg-white p-4 shadow-2xl sm:p-6 dark:bg-card"
             : ""
         }`}
       >
@@ -3275,6 +3403,40 @@ const rapikanSoalOtomatis = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={hapusTarget !== null}
+        onOpenChange={(open) => !open && !hapusBusy && setHapusTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {hapusTarget?.ids.length === 1
+                ? `Hapus soal nomor ${hapusTarget.nomor[0]}?`
+                : `Hapus ${hapusTarget?.ids.length ?? 0} soal terpilih?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {hapusTarget?.ids.length === 1
+                ? `Soal nomor ${hapusTarget.nomor[0]} akan dihapus permanen dari mapel ujian ini.`
+                : `Soal nomor ${hapusTarget?.nomor.join(", ")} akan dihapus permanen dari mapel ujian ini.`}{" "}
+              Tindakan ini tidak dapat dibatalkan.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={hapusBusy}>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void konfirmasiHapusSoal();
+              }}
+              disabled={hapusBusy}
+              className="bg-red-600 text-white hover:bg-red-700"
+            >
+              {hapusBusy ? "Menghapus…" : "Ya, hapus"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

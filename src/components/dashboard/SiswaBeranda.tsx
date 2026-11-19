@@ -359,7 +359,8 @@ export function SiswaUjian() {
           <div className="mt-6 grid gap-5 sm:grid-cols-2">
             {ujian.map((u) => {
               const sesi = sesiLokal.data[u.id] ?? null;
-              const sudahSelesai = sesi?.fase === "selesai";
+              const sudahSelesai =
+                sesi?.fase === "selesai" || u.sudah_selesai === true;
               const lanjut =
                 sesi && (sesi.fase === "ujian" || sesi.fase === "kirim");
               const takBoleh = u.boleh === false; // server: kelas tidak termasuk sasaran
@@ -449,7 +450,7 @@ export function SiswaUjian() {
 
                     {sudahSelesai ? (
                       <p className="mt-2 text-xs font-semibold text-emerald-700">
-                        Jawaban sudah dikirim
+                        Ujian ini sudah selesai di akunmu
                         {sesi?.hasil ? ` · Nilai ${sesi.hasil.nilai}` : ""}. Ujian
                         tidak dapat dikerjakan ulang.
                       </p>

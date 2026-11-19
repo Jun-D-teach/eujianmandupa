@@ -48,6 +48,8 @@ export type UjianGas = {
   boleh_unduh?: boolean;
   /** Server: apakah siswa ini sudah mengunduh soal mapel ini. */
   sudah_unduh?: boolean;
+  /** Server: akun siswa ini sudah berhasil mengirim ujian ini dari perangkat mana pun. */
+  sudah_selesai?: boolean;
   /** Nomor revisi isi soal — naik tiap guru menambah/mengubah/menghapus soal.
    *  Bila berbeda dengan salinan di HP, siswa wajib sinkron ulang. */
   revisi?: number;
