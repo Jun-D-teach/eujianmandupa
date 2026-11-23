@@ -337,7 +337,7 @@ async function tanganiPerluLogin(pesan: string): Promise<never> {
 export async function apiCall<T = Record<string, unknown>>(
   action: string,
   data: Record<string, unknown> = {},
-  timeoutMs = 20000,
+  timeoutMs = 60000,
 ): Promise<T> {
   const url = urlServer();
   let res: {

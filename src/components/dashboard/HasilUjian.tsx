@@ -87,6 +87,8 @@ export function HasilUjian() {
   const [koreksi, setKoreksi] = useState<HasilGas | null>(null);
   const [targetUlang, setTargetUlang] = useState<HasilGas | null>(null);
   const [busyUlang, setBusyUlang] = useState(false);
+  const [dialogHitungUlang, setDialogHitungUlang] = useState(false);
+  const [busyHitungUlang, setBusyHitungUlang] = useState(false);
   /** Filter kelas untuk laporan (tabel, ringkasan, grafik & ekspor Excel). */
   const [kelas, setKelas] = useState("semua");
   const [busyEkspor, setBusyEkspor] = useState(false);
@@ -306,6 +308,23 @@ export function HasilUjian() {
     setFilterPelanggaran("semua");
     setUrutkan("nilai-desc");
     setPilihanCetak(new Set());
+  };
+
+  const hitungUlangNilai = async () => {
+    if (!pilih || busyHitungUlang) return;
+    setBusyHitungUlang(true);
+    try {
+      const res = await gasCall<{ message?: string }>("hitungUlangNilaiAcak", {
+        ujian_id: pilih,
+      });
+      toast.success(res.message ?? "Hasil lama dihitung ulang.");
+      setDialogHitungUlang(false);
+      setVersi((v) => v + 1);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal menghitung ulang hasil.");
+    } finally {
+      setBusyHitungUlang(false);
+    }
   };
 
   /** Unduh laporan Excel per percobaan, nilai resmi, dan jawaban per soal. */
@@ -566,6 +585,17 @@ export function HasilUjian() {
                 </span>
               </div>
               <div className="flex flex-wrap gap-2">
+                {user?.role === "admin" && (
+                  <Button
+                    variant="outline"
+                    className="gap-2"
+                    disabled={!pilih || !hasil?.length || busyHitungUlang}
+                    onClick={() => setDialogHitungUlang(true)}
+                  >
+                    <RefreshCw className="size-4" />
+                    Hitung ulang nilai lama
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   className="gap-2"
@@ -985,6 +1015,41 @@ export function HasilUjian() {
         onTutup={() => setKoreksi(null)}
         onSelesai={() => setVersi((v) => v + 1)}
       />
+      <Dialog
+        open={dialogHitungUlang}
+        onOpenChange={(open) => {
+          if (!busyHitungUlang) setDialogHitungUlang(open);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Hitung ulang hasil siswa?</DialogTitle>
+            <DialogDescription>
+              Semua jawaban tersimpan untuk ujian ini akan dinilai ulang
+              memakai soal dan kunci yang ada sekarang. Skor koreksi essay
+              dipertahankan. Jika soal atau kunci pernah diubah setelah ujian,
+              nilai lama bisa berbeda dari nilai saat ujian berlangsung.
+              Kiriman tanpa jawaban tersimpan atau dengan jumlah soal berbeda
+              akan dilewati.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={busyHitungUlang}
+              onClick={() => setDialogHitungUlang(false)}
+            >
+              Batal
+            </Button>
+            <Button
+              disabled={busyHitungUlang}
+              onClick={() => void hitungUlangNilai()}
+            >
+              {busyHitungUlang ? "Menghitung…" : "Ya, hitung ulang"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={targetUlang !== null}
         onOpenChange={(open) => {

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ClipboardList,
+  FileText,
   GraduationCap,
   History,
   LogOut,
@@ -28,12 +29,14 @@ import { PengaturanPin } from "@/components/dashboard/PengaturanPin";
 import { PengaturanRuang } from "@/components/dashboard/PengaturanRuang";
 import { PengaturanJadwal } from "@/components/dashboard/PengaturanJadwal";
 import { PengaturanKartu } from "@/components/dashboard/PengaturanKartu";
+import { LaporanMengawas } from "@/components/dashboard/LaporanMengawas";
 
 type TabId =
   | "ujian"
   | "riwayat"
   | "kelola"
   | "hasil"
+  | "mengawas"
   | "siswa"
   | "guru"
   | "pengguna"
@@ -50,6 +53,7 @@ const TABS: Record<TabId, { label: string; ikon: typeof Users }> = {
   riwayat: { label: "Riwayat Ujian", ikon: History },
   kelola: { label: "Kelola Ujian", ikon: ClipboardList },
   hasil: { label: "Hasil Ujian", ikon: ShieldCheck },
+  mengawas: { label: "Laporan Mengawas", ikon: FileText },
   siswa: { label: "Data Siswa", ikon: Users },
   guru: { label: "Data Guru", ikon: GraduationCap },
   pengguna: { label: "Pengguna", ikon: UserCog },
@@ -57,8 +61,9 @@ const TABS: Record<TabId, { label: string; ikon: typeof Users }> = {
 };
 
 function tabsUntuk(role: string | undefined): TabId[] {
-  if (role === "admin") return ["kelola", "hasil", "siswa", "guru", "pengguna", "atur"];
-  if (role === "guru") return ["kelola", "hasil"];
+  if (role === "admin")
+    return ["kelola", "hasil", "mengawas", "siswa", "guru", "pengguna", "atur"];
+  if (role === "guru") return ["kelola", "hasil", "mengawas"];
   return ["ujian", "riwayat"];
 }
 
@@ -197,6 +202,7 @@ export default function Dashboard() {
           <KelolaUjian bukaCetakNonce={bukaCetakKartu} />
         )}
         {tabAktif === "hasil" && <HasilUjian />}
+        {tabAktif === "mengawas" && <LaporanMengawas />}
         {tabAktif === "siswa" && <DataSiswa />}
         {tabAktif === "guru" && <DataGuru />}
         {tabAktif === "pengguna" && <Pengguna />}

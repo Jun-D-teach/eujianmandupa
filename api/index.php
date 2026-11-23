@@ -340,6 +340,14 @@ function pastikanStruktur(): void
             KEY idx_jawaban_teks_hasil (hasil_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     );
+    $st = db()->query("SHOW COLUMNS FROM jawaban_teks LIKE 'ujian_id'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE jawaban_teks ADD COLUMN ujian_id VARCHAR(40) NOT NULL DEFAULT '' AFTER soal_id");
+    }
+    db()->exec(
+        "UPDATE jawaban_teks j JOIN hasil h ON h.id = j.hasil_id
+         SET j.ujian_id = h.ujian_id WHERE j.ujian_id = ''"
+    );
     // Jawaban pilihan ganda (A–E) per kiriman — dipakai laporan/ekspor Excel.
     db()->exec(
         "CREATE TABLE IF NOT EXISTS jawaban_pg (
@@ -351,6 +359,73 @@ function pastikanStruktur(): void
             KEY idx_jawaban_pg_hasil (hasil_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     );
+    $st = db()->query("SHOW COLUMNS FROM jawaban_pg LIKE 'ujian_id'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE jawaban_pg ADD COLUMN ujian_id VARCHAR(40) NOT NULL DEFAULT '' AFTER soal_id");
+    }
+    db()->exec(
+        "UPDATE jawaban_pg j JOIN hasil h ON h.id = j.hasil_id
+         SET j.ujian_id = h.ujian_id WHERE j.ujian_id = ''"
+    );
+    $st = db()->query("SHOW INDEX FROM jawaban_pg WHERE Key_name = 'idx_jawaban_pg_ujian'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE jawaban_pg ADD INDEX idx_jawaban_pg_ujian (ujian_id)");
+    }
+    $st = db()->query("SHOW INDEX FROM jawaban_teks WHERE Key_name = 'idx_jawaban_teks_ujian'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE jawaban_teks ADD INDEX idx_jawaban_teks_ujian (ujian_id)");
+    }
+    $st = db()->query("SHOW INDEX FROM hasil WHERE Key_name = 'idx_hasil_siswa'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE hasil ADD INDEX idx_hasil_siswa (siswa_username)");
+    }
+    $st = db()->query("SHOW INDEX FROM unduhan WHERE Key_name = 'idx_unduhan_username'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE unduhan ADD INDEX idx_unduhan_username (username)");
+    }
+    db()->exec(
+        "CREATE TABLE IF NOT EXISTS laporan_mengawas (
+            id VARCHAR(40) NOT NULL PRIMARY KEY,
+            ujian_id VARCHAR(40) NOT NULL,
+            guru_username VARCHAR(64) NOT NULL,
+            guru_nama VARCHAR(160) NOT NULL DEFAULT '',
+            guru_nip VARCHAR(32) NOT NULL DEFAULT '',
+            ujian_judul VARCHAR(200) NOT NULL DEFAULT '',
+            mapel VARCHAR(160) NOT NULL DEFAULT '',
+            deskripsi TEXT NULL,
+            tanggal DATE NOT NULL,
+            ruang_id VARCHAR(40) NOT NULL DEFAULT '',
+            kelas VARCHAR(16) NOT NULL DEFAULT '',
+            ruang VARCHAR(80) NOT NULL DEFAULT '',
+            jumlah_seharusnya INT NOT NULL DEFAULT 0,
+            jumlah_hadir INT NOT NULL DEFAULT 0,
+            jumlah_tidak_hadir INT NOT NULL DEFAULT 0,
+            jam_mulai TIME NOT NULL,
+            jam_selesai TIME NOT NULL,
+            catatan TEXT NULL,
+            ttd_data LONGTEXT NULL,
+            dibuat DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            diperbarui DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            KEY idx_laporan_mengawas_guru (guru_username, tanggal),
+            KEY idx_laporan_mengawas_ujian (ujian_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+    $st = db()->query("SHOW COLUMNS FROM laporan_mengawas LIKE 'ruang_id'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE laporan_mengawas ADD COLUMN ruang_id VARCHAR(40) NOT NULL DEFAULT '' AFTER tanggal");
+        db()->exec(
+            "UPDATE laporan_mengawas l JOIN ruang r ON LOWER(r.nama) = LOWER(l.ruang)
+             SET l.ruang_id = r.id WHERE l.ruang_id = ''"
+        );
+    }
+    $st = db()->query("SHOW COLUMNS FROM laporan_mengawas LIKE 'kelas'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE laporan_mengawas ADD COLUMN kelas VARCHAR(16) NOT NULL DEFAULT '' AFTER ruang_id");
+    }
+    $st = db()->query("SHOW COLUMNS FROM laporan_mengawas LIKE 'ttd_data'");
+    if ($st->fetch() === false) {
+        db()->exec("ALTER TABLE laporan_mengawas ADD COLUMN ttd_data LONGTEXT NULL AFTER catatan");
+    }
 
     $siap = true;
 }
@@ -402,7 +477,8 @@ const AKSES = [
        'getDaftarJadwal' => 2,      // admin only
     'hapusJadwalHarian' => 2,    // admin only
     'getUjian' => 1, 'getSoalAdmin' => 1, 'getHasil' => 1, 'getLaporan' => 1, 'getSiswa' => 1,
-    'izinkanUjianUlang' => 2,
+    'getLaporanMengawas' => 1, 'simpanLaporanMengawas' => 1, 'hapusLaporanMengawas' => 1,
+    'izinkanUjianUlang' => 2, 'hitungUlangNilaiAcak' => 2,
     'getKelasList' => 1, 'tambahSiswa' => 1, 'ubahSiswa' => 1, 'hapusSiswa' => 1,
     'hapusSiswaMassal' => 1, 'importSiswa' => 1, 'buatAkunSiswa' => 1,
     'konfirmasiUjian' => 1,
@@ -531,7 +607,6 @@ if ($aksi === '') $aksi = 'ping';
 
 try {
     pastikanStruktur();
-    tutupIzinUnduhKedaluwarsa();
 
     if (isset(AKSES[$aksi])) {
         $cek = validasiSesi($data['sesi'] ?? '', AKSES[$aksi]);
@@ -721,6 +796,10 @@ function jalankan(string $action, array $d): array
         case 'hapusJadwalHarian': return a_hapusJadwalHarian($d);
         case 'getSoalAdmin': return a_getSoalAdmin($d);
         case 'getHasil': return a_getHasil($d);
+        case 'hitungUlangNilaiAcak': return a_hitungUlangNilaiAcak($d);
+        case 'getLaporanMengawas': return a_getLaporanMengawas($d);
+        case 'simpanLaporanMengawas': return a_simpanLaporanMengawas($d);
+        case 'hapusLaporanMengawas': return a_hapusLaporanMengawas($d);
         case 'izinkanUjianUlang': return a_izinkanUjianUlang($d);
         case 'buatJadwalPengawasOtomatis': return a_buatJadwalPengawasOtomatis($d);
         case 'getLaporan': return a_getLaporan($d);
@@ -794,7 +873,7 @@ function a_ping(): array
     $r = satu('SELECT COUNT(*) AS n FROM pengguna');
     // 'versi' = penanda rilis: memudahkan memastikan berkas api/index.php di
     // hosting memang sudah versi terbaru (buka ?action=ping).
-    return ['success' => true, 'siap' => (int) ($r['n'] ?? 0) > 0, 'versi' => 'penugasan-guru-2'];
+    return ['success' => true, 'siap' => (int) ($r['n'] ?? 0) > 0, 'versi' => 'laporan-mengawas-1'];
 }
 
 function a_setupAdmin(array $d): array
@@ -1531,6 +1610,17 @@ function jumlahSoal(string $ujianId): int
     return (int) ($r['n'] ?? 0);
 }
 
+function jumlahSoalPerUjian(): array
+{
+    $hasil = [];
+    foreach (semua(
+        'SELECT ujian_id, COUNT(*) AS n FROM soal GROUP BY ujian_id'
+    ) as $r) {
+        $hasil[(string) $r['ujian_id']] = (int) $r['n'];
+    }
+    return $hasil;
+}
+
 /**
  * Tandai revisi soal — disetiap perubahan isi soal (tambah/ubah/hapus).
  * Klien siswa membandingkan `revisi` ini dengan salinan di HP; bila beda,
@@ -1582,20 +1672,28 @@ function cocokSasar(array $u, string $kelas): bool
  * @param bool|null $kelasSiswa null = tanpa pengecekan (admin)
  * @param bool $sertakanToken
  */
-function barisUjian(array $r, ?string $kelasSiswa, bool $sertakanToken = false): array
+function barisUjian(
+    array $r,
+    ?string $kelasSiswa,
+    bool $sertakanToken = false,
+    ?int $jumlahSoalTerhitung = null
+): array
 {
     $aktif = (int) $r['aktif'] === 1;
+    $bolehUnduh = (int) ($r['boleh_unduh'] ?? 0) === 1
+        && !empty($r['boleh_unduh_sampai'])
+        && strtotime((string) $r['boleh_unduh_sampai']) > time();
     $u = [
         'id' => (string) $r['id'],
         'judul' => (string) $r['judul'],
         'deskripsi' => (string) ($r['deskripsi'] ?? ''),
         'durasi_menit' => (int) $r['durasi_menit'],
         'aktif' => $aktif,
-        'boleh_unduh' => izinUnduhMasihAktif((string) $r['id']),
+        'boleh_unduh' => $bolehUnduh,
         'revisi' => (int) ($r['revisi'] ?? 1),
         'konfirmasi_guru' => (int) ($r['konfirmasi_guru'] ?? 0) === 1,
         'konfirmasi_pada' => (string) ($r['konfirmasi_pada'] ?? ''),
-        'jumlah_soal' => jumlahSoal((string) $r['id']),
+        'jumlah_soal' => $jumlahSoalTerhitung ?? jumlahSoal((string) $r['id']),
         'tgl_mulai' => (string) $r['tgl_mulai'],
         'sasar_jenis' => (string) $r['sasar_jenis'],
         'sasar_nilai' => (string) $r['sasar_nilai'],
@@ -1683,7 +1781,6 @@ function adaIzinUlang(string $ujianId, string $username): bool
 
 function a_getUjianSiswa(array $d): array
 {
-    tutupIzinUnduhKedaluwarsa();
     $kelas = bersih($d['kelas'] ?? '');
     $username = bersih($d['sesi_user'] ?? '');
     $unduh = [];
@@ -1702,9 +1799,10 @@ function a_getUjianSiswa(array $d): array
     ) as $r) {
         $izinUlang[$r['ujian_id']] = true;
     }
+    $jumlahSoal = jumlahSoalPerUjian();
     $daftar = [];
     foreach (semua('SELECT * FROM ujian WHERE aktif = 1 ORDER BY dibuat') as $r) {
-        $u = barisUjian($r, $kelas);
+        $u = barisUjian($r, $kelas, false, $jumlahSoal[(string) $r['id']] ?? 0);
         if (!$u['aktif']) continue;
         $u['sudah_unduh'] = isset($unduh[$u['id']]);
         $u['boleh_ujian_ulang'] = isset($izinUlang[$u['id']]);
@@ -1733,12 +1831,208 @@ function a_getUjian(array $d): array
     $rows = semua('SELECT * FROM ujian ORDER BY dibuat DESC');
     $peran = (string) ($d['sesi_role'] ?? '');
     $pengguna = (string) ($d['sesi_user'] ?? '');
+    $jumlahSoal = jumlahSoalPerUjian();
     $daftar = [];
     foreach ($rows as $r) {
         if (!bolehUjian($r, $peran, $pengguna)) continue;
-        $daftar[] = barisUjian($r, null, true);
+        $daftar[] = barisUjian($r, null, true, $jumlahSoal[(string) $r['id']] ?? 0);
     }
     return ['success' => true, 'ujian' => $daftar];
+}
+
+function daftarRuangLaporan(): array
+{
+    $penempatan = [];
+    foreach (semua(
+        'SELECT ruang_id, COUNT(*) AS jumlah FROM penempatan GROUP BY ruang_id'
+    ) as $baris) {
+        $penempatan[(string) $baris['ruang_id']] = (int) $baris['jumlah'];
+    }
+
+    $ruang = daftarRuang();
+    foreach ($ruang as &$item) {
+        $item['jumlah_ditempatkan'] = $penempatan[$item['id']] ?? 0;
+        $item['jumlah_per_kelas'] = $item['komposisi'];
+        $item['jumlah_seharusnya'] = array_sum($item['komposisi']);
+    }
+    unset($item);
+    return $ruang;
+}
+
+function dataGuruLaporan(string $username): array
+{
+    $guru = cariGuruNip($username);
+    $pengguna = satu('SELECT nama FROM pengguna WHERE username = ?', [$username]);
+    $nama = bersih($pengguna['nama'] ?? '');
+    if ($nama === '') $nama = bersih($guru['nama'] ?? '');
+    if ($nama === '') $nama = $username;
+    return [
+        'nama' => $nama,
+        'nip' => $guru['nip'] ?? $username,
+    ];
+}
+
+function a_getLaporanMengawas(array $d): array
+{
+    $username = strtolower(bersih($d['sesi_user'] ?? ''));
+    $role = strtolower(bersih($d['sesi_role'] ?? ''));
+    $daftarUjian = $role === 'admin' ? [] : a_getUjian($d)['ujian'];
+    $laporan = $role === 'admin'
+        ? semua('SELECT * FROM laporan_mengawas ORDER BY tanggal DESC, guru_nama, dibuat DESC')
+        : semua(
+            'SELECT * FROM laporan_mengawas WHERE guru_username = ?
+             ORDER BY tanggal DESC, dibuat DESC',
+            [$username]
+        );
+
+    return [
+        'success' => true,
+        'ujian' => $daftarUjian,
+        'ruang' => daftarRuangLaporan(),
+        'laporan' => $laporan,
+        'guru' => dataGuruLaporan($username),
+    ];
+}
+
+function a_simpanLaporanMengawas(array $d): array
+{
+    $username = strtolower(bersih($d['sesi_user'] ?? ''));
+    $role = strtolower(bersih($d['sesi_role'] ?? ''));
+    if ($role !== 'guru') return galat('Hanya guru yang dapat mengisi laporan mengawas.');
+    $id = bersih($d['id'] ?? '');
+    $sedangEdit = $id !== '';
+    $ujianId = bersih($d['ujian_id'] ?? '');
+    $tanggal = bersih($d['tanggal'] ?? '');
+    $ruangId = bersih($d['ruang_id'] ?? '');
+    $kelas = strtoupper(bersih($d['kelas'] ?? ''));
+    $jamMulai = bersih($d['jam_mulai'] ?? '');
+    $jamSelesai = bersih($d['jam_selesai'] ?? '');
+    $catatan = bersih($d['catatan'] ?? '');
+    $ttdData = bersih($d['ttd_data'] ?? '');
+    $hadir = filter_var($d['jumlah_hadir'] ?? null, FILTER_VALIDATE_INT);
+    $tidakHadir = filter_var($d['jumlah_tidak_hadir'] ?? null, FILTER_VALIDATE_INT);
+
+    if ($username === '' || $ujianId === '') return galat('Pilih ujian yang diawasi.');
+    if ($ruangId === '') return galat('Pilih ruang dari daftar ruang yang dibuat admin.');
+    if ($kelas === '') return galat('Pilih tingkat kelas dari komposisi ruang.');
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal)) return galat('Tanggal ujian wajib diisi dengan benar.');
+    $tanggalObj = DateTimeImmutable::createFromFormat('!Y-m-d', $tanggal);
+    if (!$tanggalObj || $tanggalObj->format('Y-m-d') !== $tanggal) return galat('Tanggal ujian tidak valid.');
+    if (!preg_match('/^(?:[01]\d|2[0-3]):[0-5]\d$/', $jamMulai)
+        || !preg_match('/^(?:[01]\d|2[0-3]):[0-5]\d$/', $jamSelesai)
+        || $jamSelesai <= $jamMulai) {
+        return galat('Jam selesai harus lebih akhir daripada jam mulai.');
+    }
+    if ($hadir === false || $tidakHadir === false || $hadir < 0 || $tidakHadir < 0) {
+        return galat('Jumlah hadir dan tidak hadir harus berupa angka nol atau lebih.');
+    }
+    if (function_exists('mb_strlen') ? mb_strlen($catatan) > 5000 : strlen($catatan) > 5000) {
+        return galat('Catatan maksimal 5.000 karakter.');
+    }
+    if ($ttdData === '') return galat('Tanda tangan pengawas wajib dibubuhkan.');
+    if (strlen($ttdData) > 500000
+        || !preg_match('#^data:image/png;base64,([A-Za-z0-9+/]+={0,2})$#D', $ttdData, $matches)) {
+        return galat('Data tanda tangan tidak valid atau terlalu besar. Silakan bubuhkan ulang tanda tangan.');
+    }
+    $gambarTtd = base64_decode($matches[1], true);
+    if ($gambarTtd === false || substr($gambarTtd, 0, 8) !== "\x89PNG\r\n\x1a\n") {
+        return galat('Format tanda tangan tidak valid. Silakan bubuhkan ulang tanda tangan.');
+    }
+
+    $ujian = cariUjian($ujianId);
+    if (!$ujian || !bolehUjian($ujian, $role, $username)) {
+        return galat('Ujian tidak ditemukan atau tidak ditugaskan kepada akunmu.');
+    }
+    $ruang = null;
+    foreach (daftarRuangLaporan() as $itemRuang) {
+        if ($itemRuang['id'] === $ruangId) {
+            $ruang = $itemRuang;
+            break;
+        }
+    }
+    if ($ruang === null) return galat('Ruang tidak ditemukan. Segarkan daftar ruang lalu coba lagi.');
+    if (!array_key_exists($kelas, $ruang['komposisi'])) {
+        return galat('Tingkat kelas tersebut tidak termasuk dalam komposisi ruang yang dipilih.');
+    }
+    $jumlahSeharusnya = (int) ($ruang['jumlah_per_kelas'][$kelas] ?? 0);
+    if ($hadir + $tidakHadir > $jumlahSeharusnya) {
+        return galat('Jumlah hadir dan tidak hadir melebihi jumlah peserta yang seharusnya (' . $jumlahSeharusnya . ').');
+    }
+    if ($id !== '') {
+        $laporanLama = satu(
+            'SELECT id FROM laporan_mengawas WHERE id = ? AND guru_username = ?',
+            [$id, $username]
+        );
+        if (!$laporanLama) return galat('Laporan tidak ditemukan atau bukan milik akunmu.');
+    }
+
+    $guru = dataGuruLaporan($username);
+    $mapel = bersih($ujian['mapel'] ?? '');
+    if ($mapel === '') $mapel = bersih($ujian['judul'] ?? '');
+    $values = [
+        $ujianId,
+        $username,
+        $guru['nama'],
+        $guru['nip'],
+        bersih($ujian['judul'] ?? ''),
+        $mapel,
+        bersih($ujian['deskripsi'] ?? ''),
+        $tanggal,
+        $ruangId,
+        $kelas,
+        $ruang['nama'],
+        $jumlahSeharusnya,
+        $hadir,
+        $tidakHadir,
+        $jamMulai . ':00',
+        $jamSelesai . ':00',
+        $catatan,
+        $ttdData,
+    ];
+
+    if ($id !== '') {
+        jalan(
+            'UPDATE laporan_mengawas SET
+                ujian_id = ?, guru_username = ?, guru_nama = ?, guru_nip = ?,
+                ujian_judul = ?, mapel = ?, deskripsi = ?, tanggal = ?, ruang_id = ?, kelas = ?, ruang = ?,
+                jumlah_seharusnya = ?, jumlah_hadir = ?, jumlah_tidak_hadir = ?,
+                jam_mulai = ?, jam_selesai = ?, catatan = ?, ttd_data = ?
+             WHERE id = ? AND guru_username = ?',
+            array_merge($values, [$id, $username])
+        );
+    } else {
+        $id = idBaru('lm');
+        jalan(
+            'INSERT INTO laporan_mengawas (
+                id, ujian_id, guru_username, guru_nama, guru_nip, ujian_judul,
+                mapel, deskripsi, tanggal, ruang_id, kelas, ruang, jumlah_seharusnya,
+                jumlah_hadir, jumlah_tidak_hadir, jam_mulai, jam_selesai, catatan, ttd_data
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            array_merge([$id], $values)
+        );
+    }
+
+    return [
+        'success' => true,
+        'id' => $id,
+        'message' => $sedangEdit ? 'Laporan mengawas diperbarui.' : 'Laporan mengawas disimpan.',
+    ];
+}
+
+function a_hapusLaporanMengawas(array $d): array
+{
+    $id = bersih($d['id'] ?? '');
+    $username = strtolower(bersih($d['sesi_user'] ?? ''));
+    if (strtolower(bersih($d['sesi_role'] ?? '')) !== 'guru') {
+        return galat('Hanya guru yang dapat menghapus laporan mengawas.');
+    }
+    if ($id === '') return galat('Laporan yang akan dihapus tidak valid.');
+    $jumlah = jalan(
+        'DELETE FROM laporan_mengawas WHERE id = ? AND guru_username = ?',
+        [$id, $username]
+    );
+    if ($jumlah < 1) return galat('Laporan tidak ditemukan atau bukan milik akunmu.');
+    return ['success' => true, 'message' => 'Laporan mengawas dihapus.'];
 }
 
 function validasiSasar($jenis, $nilai): array
@@ -2019,7 +2313,10 @@ function a_getSoal(array $d): array
         $p = satu('SELECT username FROM unduhan WHERE ujian_id = ? AND username = ?', [$id, $username]);
         $pernahUnduh = $p !== null;
     }
-    if (!izinUnduhMasihAktif($id) && !$pernahUnduh) {
+    $bolehUnduhSaatIni = (int) ($r['boleh_unduh'] ?? 0) === 1
+        && !empty($r['boleh_unduh_sampai'])
+        && strtotime((string) $r['boleh_unduh_sampai']) > time();
+    if (!$bolehUnduhSaatIni && !$pernahUnduh) {
         return galat('Admin belum membuka izin unduh soal untuk mapel ini. Tunggu info pengawas.');
     }
 
@@ -2039,7 +2336,12 @@ function a_getSoal(array $d): array
 
     $daftar = [];
 $peta = petaBacaan($id);
-foreach (semua('SELECT * FROM soal WHERE ujian_id = ?', [$id]) as $s) {
+    foreach (semua(
+        'SELECT id, ujian_id, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, opsi_e,
+                opsi_huruf, gambar, tipe, kunci_teks, kunci_jawaban, bacaan_id
+         FROM soal WHERE ujian_id = ? ORDER BY id',
+        [$id]
+    ) as $s) {
     $daftar[] = barisSoal($s, false, $peta);
 }
 if (!$daftar) return galat('Ujian ini belum memiliki soal.');
@@ -2049,54 +2351,8 @@ if (!$daftar) return galat('Ujian ini belum memiliki soal.');
    Seed = username + ujian_id, jadi urutan konsisten untuk
    siswa yang sama (jika unduh ulang, urutan tetap sama).
    ============================================================ */
-$username = bersih($d['sesi_user'] ?? '');
-$seed = crc32($username . ':' . $id);
-
-// 1. Acak urutan soal
-srand($seed);
-shuffle($daftar);
-
-// 2. Acak urutan pilihan A-E per soal (tapi kunci jawaban ikut disesuaikan)
-foreach ($daftar as &$soal) {
-    if (($soal['tipe'] ?? 'pg') !== 'pg') continue;
-    
-    // Kumpulkan opsi yang ada
-    $opsiAsli = [];
-    $hurufAsli = ['a', 'b', 'c', 'd', 'e'];
-    foreach ($hurufAsli as $h) {
-        $kunci = 'opsi_' . $h;
-        if (!empty($soal[$kunci])) {
-            $opsiAsli[$h] = $soal[$kunci];
-        }
-    }
-    
-    // Acak urutan huruf
-    $hurufAcak = array_keys($opsiAsli);
-    shuffle($hurufAcak);
-    
-    // Peta huruf lama -> huruf baru
-    $petaHuruf = [];
-    $hurufBaru = ['a', 'b', 'c', 'd', 'e'];
-    foreach ($hurufAcak as $i => $hLama) {
-        $petaHuruf[$hLama] = $hurufBaru[$i];
-    }
-    
-    // Isi ulang opsi dengan urutan baru
-    foreach ($hurufBaru as $hBaru) {
-        $kunciBaru = 'opsi_' . $hBaru;
-        $hLama = array_search($hBaru, $petaHuruf);
-        $soal[$kunciBaru] = $opsiAsli[$hLama] ?? '';
-    }
-    
-    // Sesuaikan kunci jawaban
-    if (!empty($soal['kunci_jawaban'])) {
-        $kunciLama = strtolower($soal['kunci_jawaban']);
-        if (isset($petaHuruf[$kunciLama])) {
-            $soal['kunci_jawaban'] = strtoupper($petaHuruf[$kunciLama]);
-        }
-    }
-}
-unset($soal);
+    $username = strtolower(bersih($d['sesi_user'] ?? ''));
+    [$daftar] = acakDaftarSoalUntukSiswa($daftar, $id, $username);
 
 return [
     'success' => true,
@@ -2105,6 +2361,49 @@ return [
     'token_hash' => hash('sha256', strtoupper(bersih($r['token']))),
     'pin_pengawas' => pinPengawas(),
 ];
+}
+
+/**
+ * Acak soal dan pilihan secara deterministik untuk satu siswa.
+ *
+ * Peta huruf lama -> huruf acak dikembalikan agar server dapat mencocokkan
+ * kunci asli dengan huruf yang benar-benar dilihat siswa.
+ */
+function acakDaftarSoalUntukSiswa(array $daftar, string $ujianId, string $username): array
+{
+    $seed = crc32(strtolower(bersih($username)) . ':' . $ujianId);
+    srand($seed);
+    shuffle($daftar);
+
+    $petaPerSoal = [];
+    foreach ($daftar as &$soal) {
+        if (($soal['tipe'] ?? 'pg') !== 'pg') continue;
+
+        $opsiAsli = [];
+        foreach (['a', 'b', 'c', 'd', 'e'] as $h) {
+            $kunci = 'opsi_' . $h;
+            if (!empty($soal[$kunci])) $opsiAsli[$h] = $soal[$kunci];
+        }
+
+        $hurufAcak = array_keys($opsiAsli);
+        shuffle($hurufAcak);
+        $hurufBaru = ['a', 'b', 'c', 'd', 'e'];
+        $petaHuruf = [];
+        foreach ($hurufAcak as $i => $hLama) {
+            $petaHuruf[$hLama] = $hurufBaru[$i];
+        }
+
+        foreach ($hurufBaru as $hBaru) {
+            $hLama = array_search($hBaru, $petaHuruf, true);
+            $kunciBaru = 'opsi_' . $hBaru;
+            $soal[$kunciBaru] = $hLama !== false ? ($opsiAsli[$hLama] ?? '') : '';
+        }
+
+        $petaPerSoal[(string) $soal['id']] = $petaHuruf;
+    }
+    unset($soal);
+
+    return [$daftar, $petaPerSoal];
 }
 
 /** Soal untuk petugas: DENGAN kunci jawaban + daftar teks bacaan. */
@@ -2428,13 +2727,21 @@ function a_submitJawaban(array $d): array
     $kunciMap = [];
     $tipeMap = [];
     $totalSoal = 0;
-    foreach (semua('SELECT id, kunci_jawaban, tipe FROM soal WHERE ujian_id = ?', [$ujianId]) as $s) {
+    $daftarUntukPeta = [];
+    foreach (semua(
+        'SELECT id, kunci_jawaban, tipe, pertanyaan, opsi_a, opsi_b, opsi_c,
+                opsi_d, opsi_e, opsi_huruf, gambar, bacaan_id
+         FROM soal WHERE ujian_id = ? ORDER BY id',
+        [$ujianId]
+    ) as $s) {
         $idS = (string) $s['id'];
         $kunciMap[$idS] = strtoupper(bersih($s['kunci_jawaban']));
         $tipe = strtolower(bersih($s['tipe'] ?? 'pg'));
         $tipeMap[$idS] = in_array($tipe, ['essay', 'uraian'], true) ? $tipe : 'pg';
         $totalSoal++;
+        $daftarUntukPeta[] = barisSoal($s, false);
     }
+    [, $petaAcak] = acakDaftarSoalUntukSiswa($daftarUntukPeta, $ujianId, $username);
 
     $hasilId = idBaru('h');
     $poin = 0;
@@ -2445,7 +2752,9 @@ function a_submitJawaban(array $d): array
         $pilihan = strtoupper(bersih($item['pilihan'] ?? ''));
         if ($pilihan === '') continue;
         $jawabanPg[$idSoal] = $pilihan;
-        if ($kunciMap[$idSoal] === $pilihan) $poin += 100;
+        $kunciAsli = strtolower($kunciMap[$idSoal]);
+        $kunciAcak = strtoupper($petaAcak[$idSoal][$kunciAsli] ?? $kunciAsli);
+        if ($kunciAcak === $pilihan) $poin += 100;
     }
 
     $nilai = $totalSoal > 0 ? (int) round($poin / $totalSoal) : 0;
@@ -2557,6 +2866,116 @@ function a_submitJawaban(array $d): array
         'message' => $percobaan > 1
             ? 'Jawaban ujian ulang tersimpan. Semua percobaan tercatat; nilai tertinggi menjadi nilai resmi.'
             : 'Jawaban tersimpan.',
+    ];
+}
+
+/**
+ * Hitung ulang hasil lama setelah koreksi pemetaan opsi acak.
+ * Hanya hasil dengan jawaban tersimpan, username, dan jumlah soal yang cocok
+ * dengan soal saat ini yang diproses.
+ */
+function a_hitungUlangNilaiAcak(array $d): array
+{
+    $ujianId = bersih($d['ujian_id'] ?? '');
+    if ($ujianId === '') return galat('Pilih ujian yang nilainya akan dihitung ulang.');
+    if (!satu('SELECT id FROM ujian WHERE id = ?', [$ujianId])) {
+        return galat('Ujian tidak ditemukan.');
+    }
+
+    $soal = [];
+    foreach (semua(
+        'SELECT id, tipe, kunci_jawaban, opsi_a, opsi_b, opsi_c, opsi_d, opsi_e
+         FROM soal WHERE ujian_id = ? ORDER BY id',
+        [$ujianId]
+    ) as $s) {
+        $soal[(string) $s['id']] = $s;
+    }
+    if (!$soal) return galat('Ujian ini belum memiliki soal.');
+
+    $hasilRows = semua(
+        'SELECT id, siswa_username, total_soal FROM hasil WHERE ujian_id = ?',
+        [$ujianId]
+    );
+    if (!$hasilRows) return galat('Belum ada hasil siswa untuk ujian ini.');
+
+    $jawabanPg = [];
+    foreach (semua(
+        'SELECT hasil_id, soal_id, pilihan FROM jawaban_pg WHERE ujian_id = ?',
+        [$ujianId]
+    ) as $j) {
+        $jawabanPg[(string) $j['hasil_id']][(string) $j['soal_id']] =
+            strtoupper(bersih($j['pilihan']));
+    }
+    $jawabanTeks = [];
+    foreach (semua(
+        'SELECT hasil_id, soal_id, skor FROM jawaban_teks WHERE ujian_id = ?',
+        [$ujianId]
+    ) as $j) {
+        $jawabanTeks[(string) $j['hasil_id']][(string) $j['soal_id']] =
+            $j['skor'] === null ? null : max(0, min(100, (int) $j['skor']));
+    }
+
+    $petaPerUsername = [];
+    $diperbarui = 0;
+    $dilewati = 0;
+    try {
+        db()->beginTransaction();
+        foreach ($hasilRows as $h) {
+            $hasilId = (string) $h['id'];
+            $username = strtolower(bersih($h['siswa_username'] ?? ''));
+            $punyaJawaban = !empty($jawabanPg[$hasilId]) || !empty($jawabanTeks[$hasilId]);
+            if (
+                $username === ''
+                || !$punyaJawaban
+                || (int) $h['total_soal'] !== count($soal)
+            ) {
+                $dilewati++;
+                continue;
+            }
+
+            if (!isset($petaPerUsername[$username])) {
+                [, $petaPerUsername[$username]] = acakDaftarSoalUntukSiswa(
+                    array_values($soal),
+                    $ujianId,
+                    $username
+                );
+            }
+
+            $poin = 0;
+            foreach ($soal as $soalId => $s) {
+                $tipe = strtolower(bersih($s['tipe'] ?? 'pg'));
+                if (!in_array($tipe, ['essay', 'uraian'], true)) {
+                    $pilihan = $jawabanPg[$hasilId][$soalId] ?? '';
+                    $kunciAsli = strtolower(strtoupper(bersih($s['kunci_jawaban'] ?? '')));
+                    $kunciAcak = strtoupper(
+                        $petaPerUsername[$username][$soalId][$kunciAsli] ?? $kunciAsli
+                    );
+                    if ($pilihan !== '' && $pilihan === $kunciAcak) $poin += 100;
+                    continue;
+                }
+
+                $skor = $jawabanTeks[$hasilId][$soalId] ?? null;
+                if ($skor !== null) $poin += $skor;
+            }
+
+            $totalSoal = count($soal);
+            jalan(
+                'UPDATE hasil SET poin = ?, benar = ?, total_soal = ?, nilai = ? WHERE id = ?',
+                [$poin, (int) round($poin / 100), $totalSoal, (int) round($poin / $totalSoal), $hasilId]
+            );
+            $diperbarui++;
+        }
+        db()->commit();
+    } catch (Throwable $e) {
+        if (db()->inTransaction()) db()->rollBack();
+        throw $e;
+    }
+
+    return [
+        'success' => true,
+        'diperbarui' => $diperbarui,
+        'dilewati' => $dilewati,
+        'message' => $diperbarui . ' hasil dihitung ulang; ' . $dilewati . ' hasil dilewati karena data jawaban/soal tidak cocok.',
     ];
 }
 

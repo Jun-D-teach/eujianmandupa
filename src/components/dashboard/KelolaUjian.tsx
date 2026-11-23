@@ -1836,9 +1836,9 @@ const mulaiEdit = (s: SoalGas) => {
     opsi_e: s.opsi_e || " ",
     gambar: s.gambar?.trim() ? s.gambar : "",
   });
-  setKunci(((s.kunci_jawaban || "A ").toUpperCase() as Kunci) || "A ");
-   setTipe((s.tipe ?? "pg") as TipeSoal);  // ✅ PERBAIKAN DI SINI
-  setKunciTeks(s.kunci_teks || " ");
+  setKunci(((s.kunci_jawaban || "A").trim().toUpperCase() as Kunci) || "A");
+  setTipe((s.tipe ?? "pg").trim() as TipeSoal);
+  setKunciTeks((s.kunci_teks || "").trim());
   setBacaanId(s.bacaan_id || " ");
   setBacaanJudul(" ");
   setBacaanTeks(" ");
