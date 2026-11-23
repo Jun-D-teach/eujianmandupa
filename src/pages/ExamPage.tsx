@@ -556,13 +556,16 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
   useEffect(() => {
     if (fase !== "instruksi" || !sesi || !online) return;
     const revisiServer = meta?.revisi;
-    if (typeof revisiServer !== "number") return;
-    if ((sesi.revisi ?? 1) === revisiServer) return;
+    const revisiBeda =
+      typeof revisiServer === "number" && (sesi.revisi ?? 1) !== revisiServer;
+    const formatBeda =
+      (sesi.formatOpsi ?? "acak") !== (meta?.format_opsi ?? "acak");
+    if (!revisiBeda && !formatBeda) return;
     let hidup = true;
     const sinkron = async () => {
       try {
         const data = await gasCall<
-          { ujian: UjianGas; soal: import("@/lib/api").SoalGas[]; token_hash?: string; pin_pengawas?: string }
+          { ujian: UjianGas; soal: import("@/lib/api").SoalGas[]; token_hash?: string; pin_pengawas?: string; format_opsi?: "acak" | "tetap" }
         >("getSoal", { id: ujianId, kelas: sesi.kelas });
         if (!hidup) return;
         pastikanIdSoalValid(data.soal);
@@ -583,6 +586,7 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
         const baru: SesiUjian = {
           ...sesi,
           revisi: data.ujian.revisi,
+          formatOpsi: data.format_opsi ?? data.ujian.format_opsi ?? "acak",
           tokenHash: data.token_hash ?? sesi.tokenHash,
           soal: data.soal.map((s) => ({
             id: normalisasiIdSoal(s.id),
@@ -614,7 +618,7 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
     return () => {
       hidup = false;
     };
-  }, [fase, sesi, meta?.revisi, online, ujianId, username]);
+  }, [fase, sesi, meta?.revisi, meta?.format_opsi, online, ujianId, username]);
 
   // --- Aksi fase -------------------------------------------------------
   /** Unduh soal (online) — TANPA token; izin bagikan admin + kelas sasaran
@@ -635,7 +639,7 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
     setPesan(null);
     try {
       const data = await gasCall<
-        { ujian: UjianGas; soal: import("@/lib/api").SoalGas[]; token_hash?: string; pin_pengawas?: string }
+        { ujian: UjianGas; soal: import("@/lib/api").SoalGas[]; token_hash?: string; pin_pengawas?: string; format_opsi?: "acak" | "tetap" }
       >("getSoal", { id: ujianId, kelas: k });
       pastikanIdSoalValid(data.soal);
       // Cache PIN pengawas terbaru (dari sheet Pengaturan) agar layar kunci
@@ -657,6 +661,7 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
         tokenHash: data.token_hash,
         durasi_menit: data.ujian.durasi_menit,
         revisi: data.ujian.revisi,
+        formatOpsi: data.format_opsi ?? data.ujian.format_opsi ?? "acak",
         tglMulai: data.ujian.tgl_mulai || undefined,
         unduhPada: Date.now(),
         soal: data.soal.map((s) => ({
@@ -737,6 +742,12 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
     ) {
       toast.error(
         "Guru memperbaiki soal — nyalakan internet dulu untuk sinkron ulang, lalu matikan internet kembali.",
+      );
+      return;
+    }
+    if ((sesi.formatOpsi ?? "acak") !== (meta?.format_opsi ?? "acak")) {
+      toast.error(
+        "Format pilihan berubah — nyalakan internet dulu untuk sinkron ulang, lalu matikan internet kembali.",
       );
       return;
     }
@@ -872,6 +883,7 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
         nama: sesi.nama,
         kelas: sesi.kelas,
         token: sesi.token ?? "",
+        format_opsi: sesi.formatOpsi ?? "acak",
         total_pelanggaran: sesi.pelanggaran.length,
         jawaban: sesi.soal.map((s) => {
           const id = normalisasiIdSoal(s.id);

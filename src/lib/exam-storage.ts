@@ -68,6 +68,8 @@ export type SesiUjian = {
   /** Revisi soal saat unduhan dibuat — dicocokkan dengan server; bila beda
       berarti guru memperbaiki soal → wajib sinkron ulang (sebelum mulai). */
   revisi?: number;
+  /** Mode opsi dari server; sesi lama tanpa nilai ini memakai mode acak lama. */
+  formatOpsi?: "acak" | "tetap";
   /** Jadwal mulai "YYYY-MM-DDTHH:mm" — gerbang waktu diperiksa lokal. */
   tglMulai?: string;
   /** Batas waktu pengerjaan (epoch ms), dihitung saat ujian dimulai. */

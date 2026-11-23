@@ -168,6 +168,7 @@ function pastikanStruktur(): void
             nama VARCHAR(160) NOT NULL DEFAULT '',
             kelas VARCHAR(64) NOT NULL DEFAULT '',
             siswa_username VARCHAR(64) NULL DEFAULT NULL,
+            format_opsi VARCHAR(16) NOT NULL DEFAULT 'acak',
             percobaan INT NOT NULL DEFAULT 1,
             token VARCHAR(12) NOT NULL DEFAULT '',
             benar INT NOT NULL DEFAULT 0,
@@ -184,6 +185,7 @@ function pastikanStruktur(): void
             ujian_id VARCHAR(40) NOT NULL,
             username VARCHAR(64) NOT NULL,
             waktu DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            format_opsi VARCHAR(16) NOT NULL DEFAULT 'acak',
             PRIMARY KEY (ujian_id, username)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
         "CREATE TABLE IF NOT EXISTS izin_ujian_ulang (
@@ -304,7 +306,9 @@ function pastikanStruktur(): void
         ['soal', 'bacaan_id', "ALTER TABLE soal ADD COLUMN bacaan_id VARCHAR(40) NOT NULL DEFAULT '' AFTER kunci_teks"],
         ['hasil', 'poin', 'ALTER TABLE hasil ADD COLUMN poin INT NOT NULL DEFAULT 0 AFTER nilai'],
         ['hasil', 'siswa_username', 'ALTER TABLE hasil ADD COLUMN siswa_username VARCHAR(64) NULL DEFAULT NULL AFTER kelas'],
+        ['hasil', 'format_opsi', "ALTER TABLE hasil ADD COLUMN format_opsi VARCHAR(16) NOT NULL DEFAULT 'acak' AFTER siswa_username"],
         ['hasil', 'percobaan', 'ALTER TABLE hasil ADD COLUMN percobaan INT NOT NULL DEFAULT 1 AFTER siswa_username'],
+        ['unduhan', 'format_opsi', "ALTER TABLE unduhan ADD COLUMN format_opsi VARCHAR(16) NOT NULL DEFAULT 'acak' AFTER waktu"],
     ] as $mig) {
         $st = db()->query("SHOW COLUMNS FROM {$mig[0]} LIKE '{$mig[1]}'");
         if ($st->fetch() === false) db()->exec($mig[2]);
@@ -1710,6 +1714,7 @@ function barisUjian(
         'durasi_menit' => (int) $r['durasi_menit'],
         'aktif' => $aktif,
         'boleh_unduh' => $bolehUnduh,
+        'format_opsi' => 'tetap',
         'revisi' => (int) ($r['revisi'] ?? 1),
         'konfirmasi_guru' => (int) ($r['konfirmasi_guru'] ?? 0) === 1,
         'konfirmasi_pada' => (string) ($r['konfirmasi_pada'] ?? ''),
@@ -2348,48 +2353,49 @@ function a_getSoal(array $d): array
         );
     }
 
-    jalan(
-        'INSERT INTO unduhan (ujian_id, username, waktu) VALUES (?,?,NOW())
-         ON DUPLICATE KEY UPDATE waktu = NOW()',
-        [$id, $username]
-    );
-
     $daftar = [];
-$peta = petaBacaan($id);
+    $peta = petaBacaan($id);
     foreach (semua(
         'SELECT id, ujian_id, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, opsi_e,
                 opsi_huruf, gambar, tipe, kunci_teks, kunci_jawaban, bacaan_id
          FROM soal WHERE ujian_id = ? ORDER BY id',
         [$id]
     ) as $s) {
-    $daftar[] = barisSoal($s, false, $peta);
-}
-if (!$daftar) return galat('Ujian ini belum memiliki soal.');
+        $daftar[] = barisSoal($s, false, $peta);
+    }
+    if (!$daftar) return galat('Ujian ini belum memiliki soal.');
 
-/* ============================================================
-   ACAK URUTAN SOAL & PILIHAN A-E PER SISWA
-   Seed = username + ujian_id, jadi urutan konsisten untuk
-   siswa yang sama (jika unduh ulang, urutan tetap sama).
-   ============================================================ */
     $username = strtolower(bersih($d['sesi_user'] ?? ''));
     [$daftar] = acakDaftarSoalUntukSiswa($daftar, $id, $username);
 
-return [
-    'success' => true,
-    'ujian' => $meta,
-    'soal' => $daftar,
-    'token_hash' => hash('sha256', strtoupper(bersih($r['token']))),
-    'pin_pengawas' => pinPengawas(),
-];
+    jalan(
+        'INSERT INTO unduhan (ujian_id, username, waktu, format_opsi) VALUES (?,?,NOW(),?)
+         ON DUPLICATE KEY UPDATE waktu = NOW(), format_opsi = VALUES(format_opsi)',
+        [$id, $username, 'tetap']
+    );
+
+    return [
+        'success' => true,
+        'ujian' => $meta,
+        'soal' => $daftar,
+        'format_opsi' => 'tetap',
+        'token_hash' => hash('sha256', strtoupper(bersih($r['token']))),
+        'pin_pengawas' => pinPengawas(),
+    ];
 }
 
 /**
- * Acak soal dan pilihan secara deterministik untuk satu siswa.
+ * Acak urutan soal dan, bila diminta untuk kiriman lama, pilihan per siswa.
  *
- * Peta huruf lama -> huruf acak dikembalikan agar server dapat mencocokkan
- * kunci asli dengan huruf yang benar-benar dilihat siswa.
+ * Pilihan baru tidak diacak; peta identitas tetap dipakai agar penilaian tetap
+ * berbasis ID soal. Mode acak dipertahankan hanya untuk data kiriman lama.
  */
-function acakDaftarSoalUntukSiswa(array $daftar, string $ujianId, string $username): array
+function acakDaftarSoalUntukSiswa(
+    array $daftar,
+    string $ujianId,
+    string $username,
+    bool $acakOpsi = false
+): array
 {
     $seed = crc32(strtolower(bersih($username)) . ':' . $ujianId);
     srand($seed);
@@ -2397,12 +2403,24 @@ function acakDaftarSoalUntukSiswa(array $daftar, string $ujianId, string $userna
 
     $petaPerSoal = [];
     foreach ($daftar as &$soal) {
-        if (($soal['tipe'] ?? 'pg') !== 'pg') continue;
+        if (in_array(
+            strtolower(bersih($soal['tipe'] ?? 'pg')),
+            ['essay', 'uraian'],
+            true
+        )) continue;
 
         $opsiAsli = [];
         foreach (['a', 'b', 'c', 'd', 'e'] as $h) {
             $kunci = 'opsi_' . $h;
             if (!empty($soal[$kunci])) $opsiAsli[$h] = $soal[$kunci];
+        }
+
+        $idSoal = normalisasiIdSoal($soal['id'] ?? null);
+        if (!$acakOpsi) {
+            $petaHuruf = [];
+            foreach (array_keys($opsiAsli) as $h) $petaHuruf[$h] = $h;
+            $petaPerSoal[$idSoal] = $petaHuruf;
+            continue;
         }
 
         $hurufAcak = array_keys($opsiAsli);
@@ -2419,11 +2437,49 @@ function acakDaftarSoalUntukSiswa(array $daftar, string $ujianId, string $userna
             $soal[$kunciBaru] = $hLama !== false ? ($opsiAsli[$hLama] ?? '') : '';
         }
 
-        $petaPerSoal[normalisasiIdSoal($soal['id'] ?? null)] = $petaHuruf;
+        $petaPerSoal[$idSoal] = $petaHuruf;
     }
     unset($soal);
 
     return [$daftar, $petaPerSoal];
+}
+
+/** Nilai PG dari pilihan yang dilihat siswa, dicocokkan dengan kunci via ID soal. */
+function hitungSkorPilihanGanda(array $soal, array $jawabanPg, array $petaOpsi): array
+{
+    $poin = 0;
+    $benar = 0;
+    $valid = true;
+    $idPg = [];
+    foreach ($soal as $s) {
+        $tipe = strtolower(bersih($s['tipe'] ?? 'pg'));
+        if (in_array($tipe, ['essay', 'uraian'], true)) continue;
+        $idSoal = normalisasiIdSoal($s['id'] ?? null);
+        $kunciAsli = strtolower(bersih($s['kunci_jawaban'] ?? ''));
+        if (
+            $idSoal === ''
+            || !in_array($kunciAsli, ['a', 'b', 'c', 'd', 'e'], true)
+            || !isset($petaOpsi[$idSoal][$kunciAsli])
+        ) {
+            error_log('[UjianAman] Kunci/peta PG tidak cocok saat hitung nilai: id=' . json_encode($s['id'] ?? null));
+            $valid = false;
+            continue;
+        }
+        $idPg[$idSoal] = true;
+        $pilihan = strtoupper(bersih($jawabanPg[$idSoal] ?? ''));
+        $kunciTampil = strtoupper($petaOpsi[$idSoal][$kunciAsli]);
+        if ($pilihan !== '' && $pilihan === $kunciTampil) {
+            $poin += 100;
+            $benar++;
+        }
+    }
+    foreach ($jawabanPg as $idSoal => $_pilihan) {
+        if (!isset($idPg[normalisasiIdSoal($idSoal)])) {
+            error_log('[UjianAman] Jawaban PG tidak memiliki soal pasangan: id=' . json_encode($idSoal));
+            $valid = false;
+        }
+    }
+    return ['poin' => $poin, 'benar' => $benar, 'valid' => $valid];
 }
 
 /** Soal untuk petugas: DENGAN kunci jawaban + daftar teks bacaan. */
@@ -2742,6 +2798,20 @@ function a_submitJawaban(array $d): array
     $meta = cariUjian($ujianId);
     if (!$meta) return galat('Ujian tidak ditemukan.');
 
+    $unduhan = satu(
+        'SELECT format_opsi FROM unduhan WHERE ujian_id = ? AND username = ?',
+        [$ujianId, $username]
+    );
+    $formatOpsi = strtolower(bersih($unduhan['format_opsi'] ?? 'acak'));
+    if (!in_array($formatOpsi, ['acak', 'tetap'], true)) $formatOpsi = 'acak';
+    $formatKlien = strtolower(bersih($d['format_opsi'] ?? ''));
+    if ($formatKlien !== '' && !in_array($formatKlien, ['acak', 'tetap'], true)) {
+        return galat('Format pilihan pada perangkat tidak valid. Sinkronkan ulang sebelum mengirim.');
+    }
+    if ($formatKlien !== '' && $formatKlien !== $formatOpsi) {
+        return galat('Format pilihan di perangkat berbeda dari server. Sinkronkan ulang sebelum mengirim.');
+    }
+
     // Bobot: tiap soal bernilai 100 poin. PG benar = 100; essay/uraian
     // dinilai manual (awalnya 0, menunggu koreksi guru).
     $kunciMap = [];
@@ -2763,9 +2833,14 @@ function a_submitJawaban(array $d): array
         $tipe = strtolower(bersih($s['tipe'] ?? 'pg'));
         $tipeMap[$idS] = in_array($tipe, ['essay', 'uraian'], true) ? $tipe : 'pg';
         $totalSoal++;
-        $daftarUntukPeta[] = barisSoal($s, false);
+        $daftarUntukPeta[] = barisSoal($s, true);
     }
-    [, $petaAcak] = acakDaftarSoalUntukSiswa($daftarUntukPeta, $ujianId, $username);
+    [, $petaOpsi] = acakDaftarSoalUntukSiswa(
+        $daftarUntukPeta,
+        $ujianId,
+        $username,
+        $formatOpsi === 'acak'
+    );
 
     $jawabanNormal = [];
     $adaIdTidakCocok = false;
@@ -2796,7 +2871,6 @@ function a_submitJawaban(array $d): array
     $jawaban = array_values($jawabanNormal);
 
     $hasilId = idBaru('h');
-    $poin = 0;
     $jawabanPg = [];  // disimpan untuk laporan/ekspor (A–E per soal)
     foreach ($jawaban as $item) {
         $idSoal = normalisasiIdSoal($item['id_soal'] ?? null);
@@ -2804,13 +2878,15 @@ function a_submitJawaban(array $d): array
         $pilihan = strtoupper(bersih($item['pilihan'] ?? ''));
         if ($pilihan === '') continue;
         $jawabanPg[$idSoal] = $pilihan;
-        $kunciAsli = strtolower($kunciMap[$idSoal]);
-        $kunciAcak = strtoupper($petaAcak[$idSoal][$kunciAsli] ?? $kunciAsli);
-        if ($kunciAcak === $pilihan) $poin += 100;
     }
+    $skorPg = hitungSkorPilihanGanda($daftarUntukPeta, $jawabanPg, $petaOpsi);
+    if (!$skorPg['valid']) {
+        return galat('ID soal atau kunci jawaban tidak cocok. Jawaban belum disimpan; hubungi guru/admin.');
+    }
+    $poin = $skorPg['poin'];
+    $benar = $skorPg['benar'];
 
     $nilai = $totalSoal > 0 ? (int) round($poin / $totalSoal) : 0;
-    $benar = (int) round($poin / 100);
     $izinUlangId = null;
     $percobaan = 1;
     try {
@@ -2872,8 +2948,8 @@ function a_submitJawaban(array $d): array
         }
 
         jalan(
-            'INSERT INTO hasil (id, ujian_id, ujian_judul, nama, kelas, siswa_username, percobaan, token, benar, total_soal, nilai, poin, total_pelanggaran)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO hasil (id, ujian_id, ujian_judul, nama, kelas, siswa_username, format_opsi, percobaan, token, benar, total_soal, nilai, poin, total_pelanggaran)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [
                 $hasilId,
                 $ujianId,
@@ -2881,6 +2957,7 @@ function a_submitJawaban(array $d): array
                 $nama,
                 $kelas,
                 $username,
+                $formatOpsi,
                 $percobaan,
                 $token,
                 $benar,
@@ -2922,7 +2999,7 @@ function a_submitJawaban(array $d): array
 }
 
 /**
- * Hitung ulang hasil lama setelah koreksi pemetaan opsi acak.
+ * Hitung ulang hasil dengan tetap memakai mode opsi yang tersimpan.
  * Hanya hasil dengan jawaban tersimpan, username, dan jumlah soal yang cocok
  * dengan soal saat ini yang diproses.
  */
@@ -2941,30 +3018,68 @@ function a_hitungUlangNilaiAcak(array $d): array
         [$ujianId]
     ) as $s) {
         $idSoal = normalisasiIdSoal($s['id'] ?? null);
-        if ($idSoal !== '') $soal[$idSoal] = $s;
+        if ($idSoal === '' || isset($soal[$idSoal])) {
+            error_log('[UjianAman] ID soal kosong/duplikat saat hitung ulang: ujian=' . $ujianId . ', id=' . json_encode($s['id'] ?? null));
+            return galat('ID soal tidak valid atau duplikat. Nilai tidak dihitung ulang.');
+        }
+        $s['id'] = $idSoal;
+        $soal[$idSoal] = $s;
     }
     if (!$soal) return galat('Ujian ini belum memiliki soal.');
 
     $hasilRows = semua(
-        'SELECT id, siswa_username, total_soal FROM hasil WHERE ujian_id = ?',
+        'SELECT id, siswa_username, format_opsi, total_soal, poin FROM hasil WHERE ujian_id = ?',
         [$ujianId]
     );
     if (!$hasilRows) return galat('Belum ada hasil siswa untuk ujian ini.');
 
     $jawabanPg = [];
+    $jawabanPgTidakCocok = [];
     foreach (semua(
         'SELECT hasil_id, soal_id, pilihan FROM jawaban_pg WHERE ujian_id = ?',
         [$ujianId]
     ) as $j) {
-        $jawabanPg[(string) $j['hasil_id']][normalisasiIdSoal($j['soal_id'] ?? null)] =
-            strtoupper(bersih($j['pilihan']));
+        $hasilId = (string) $j['hasil_id'];
+        $idSoal = normalisasiIdSoal($j['soal_id'] ?? null);
+        if (
+            $idSoal === ''
+            || !isset($soal[$idSoal])
+            || in_array(
+                strtolower(bersih($soal[$idSoal]['tipe'] ?? 'pg')),
+                ['essay', 'uraian'],
+                true
+            )
+            || isset($jawabanPg[$hasilId][$idSoal])
+        ) {
+            error_log('[UjianAman] ID jawaban PG tidak cocok saat hitung ulang: hasil=' . $hasilId . ', id=' . json_encode($j['soal_id'] ?? null));
+            $jawabanPgTidakCocok[$hasilId] = true;
+            continue;
+        }
+        $jawabanPg[$hasilId][$idSoal] = strtoupper(bersih($j['pilihan']));
     }
     $jawabanTeks = [];
+    $jawabanTeksTidakCocok = [];
     foreach (semua(
         'SELECT hasil_id, soal_id, skor FROM jawaban_teks WHERE ujian_id = ?',
         [$ujianId]
     ) as $j) {
-        $jawabanTeks[(string) $j['hasil_id']][normalisasiIdSoal($j['soal_id'] ?? null)] =
+        $hasilId = (string) $j['hasil_id'];
+        $idSoal = normalisasiIdSoal($j['soal_id'] ?? null);
+        if (
+            $idSoal === ''
+            || !isset($soal[$idSoal])
+            || !in_array(
+                strtolower(bersih($soal[$idSoal]['tipe'] ?? 'pg')),
+                ['essay', 'uraian'],
+                true
+            )
+            || isset($jawabanTeks[$hasilId][$idSoal])
+        ) {
+            error_log('[UjianAman] ID jawaban teks tidak cocok saat hitung ulang: hasil=' . $hasilId . ', id=' . json_encode($j['soal_id'] ?? null));
+            $jawabanTeksTidakCocok[$hasilId] = true;
+            continue;
+        }
+        $jawabanTeks[$hasilId][$idSoal] =
             $j['skor'] === null ? null : max(0, min(100, (int) $j['skor']));
     }
 
@@ -2981,40 +3096,61 @@ function a_hitungUlangNilaiAcak(array $d): array
                 $username === ''
                 || !$punyaJawaban
                 || (int) $h['total_soal'] !== count($soal)
+                || isset($jawabanPgTidakCocok[$hasilId])
+                || isset($jawabanTeksTidakCocok[$hasilId])
             ) {
                 $dilewati++;
                 continue;
             }
 
-            if (!isset($petaPerUsername[$username])) {
-                [, $petaPerUsername[$username]] = acakDaftarSoalUntukSiswa(
-                    array_values($soal),
-                    $ujianId,
-                    $username
-                );
-            }
-
-            $poin = 0;
+            $poinTeks = 0;
             foreach ($soal as $soalId => $s) {
                 $tipe = strtolower(bersih($s['tipe'] ?? 'pg'));
-                if (!in_array($tipe, ['essay', 'uraian'], true)) {
-                    $pilihan = $jawabanPg[$hasilId][$soalId] ?? '';
-                    $kunciAsli = strtolower(strtoupper(bersih($s['kunci_jawaban'] ?? '')));
-                    $kunciAcak = strtoupper(
-                        $petaPerUsername[$username][$soalId][$kunciAsli] ?? $kunciAsli
-                    );
-                    if ($pilihan !== '' && $pilihan === $kunciAcak) $poin += 100;
-                    continue;
-                }
-
+                if (!in_array($tipe, ['essay', 'uraian'], true)) continue;
                 $skor = $jawabanTeks[$hasilId][$soalId] ?? null;
-                if ($skor !== null) $poin += $skor;
+                if ($skor !== null) $poinTeks += $skor;
             }
 
+            $jumlahPg = 0;
+            foreach ($soal as $s) {
+                if (!in_array(strtolower(bersih($s['tipe'] ?? 'pg')), ['essay', 'uraian'], true)) $jumlahPg++;
+            }
+            if (!empty($jawabanPg[$hasilId])) {
+                $formatOpsi = strtolower(bersih($h['format_opsi'] ?? 'acak'));
+                if (!in_array($formatOpsi, ['acak', 'tetap'], true)) $formatOpsi = 'acak';
+                if (!isset($petaPerUsername[$username][$formatOpsi])) {
+                    [, $petaPerUsername[$username][$formatOpsi]] = acakDaftarSoalUntukSiswa(
+                        array_values($soal),
+                        $ujianId,
+                        $username,
+                        $formatOpsi === 'acak'
+                    );
+                }
+                $skorPg = hitungSkorPilihanGanda(
+                    array_values($soal),
+                    $jawabanPg[$hasilId],
+                    $petaPerUsername[$username][$formatOpsi]
+                );
+                if (!$skorPg['valid']) {
+                    $dilewati++;
+                    continue;
+                }
+                $poinPg = $skorPg['poin'];
+                $benar = $skorPg['benar'];
+            } else {
+                // Kiriman lama tanpa pilihan PG per ID: jangan mengira semua salah.
+                $poinPg = max(
+                    0,
+                    min(100 * $jumlahPg, (int) $h['poin'] - $poinTeks)
+                );
+                $benar = min($jumlahPg, intdiv($poinPg, 100));
+            }
+
+            $poin = $poinPg + $poinTeks;
             $totalSoal = count($soal);
             jalan(
                 'UPDATE hasil SET poin = ?, benar = ?, total_soal = ?, nilai = ? WHERE id = ?',
-                [$poin, (int) round($poin / 100), $totalSoal, (int) round($poin / $totalSoal), $hasilId]
+                [$poin, $benar, $totalSoal, (int) round($poin / $totalSoal), $hasilId]
             );
             $diperbarui++;
         }
@@ -3032,43 +3168,120 @@ function a_hitungUlangNilaiAcak(array $d): array
     ];
 }
 
-/** Hitung ulang poin/nilai/benar satu kiriman dari soal + skor koreksi. */
-function hitungUlangHasil(string $hasilId): void
+/** Hitung ulang satu kiriman dengan jawaban dan kunci yang dipasangkan via ID soal. */
+function hitungUlangHasil(string $hasilId): bool
 {
-    $h = satu('SELECT ujian_id FROM hasil WHERE id = ?', [$hasilId]);
-    if (!$h) return;
+    $h = satu(
+        'SELECT ujian_id, siswa_username, format_opsi, total_soal, poin FROM hasil WHERE id = ?',
+        [$hasilId]
+    );
+    if (!$h) return false;
     $ujianId = (string) $h['ujian_id'];
 
-    $totalSoal = 0;
-    $pgBenar = 0;
-    foreach (semua('SELECT id, tipe FROM soal WHERE ujian_id = ?', [$ujianId]) as $s) {
-        $totalSoal++;
-        if (strtolower(bersih($s['tipe'] ?? 'pg')) !== 'pg') continue;
-        $r = satu(
-            'SELECT pilihan FROM jawaban WHERE hasil_id = ? AND soal_id = ?',
-            [$hasilId, normalisasiIdSoal($s['id'] ?? null)]
+    $soal = [];
+    foreach (semua(
+        'SELECT id, ujian_id, tipe, kunci_jawaban, opsi_a, opsi_b, opsi_c, opsi_d, opsi_e
+         FROM soal WHERE ujian_id = ? ORDER BY id',
+        [$ujianId]
+    ) as $s) {
+        $idSoal = normalisasiIdSoal($s['id'] ?? null);
+        if ($idSoal === '' || isset($soal[$idSoal])) {
+            error_log('[UjianAman] ID soal kosong/duplikat saat koreksi: ujian=' . $ujianId . ', id=' . json_encode($s['id'] ?? null));
+            return false;
+        }
+        $s['id'] = $idSoal;
+        $soal[$idSoal] = $s;
+    }
+    if (!$soal || count($soal) !== (int) $h['total_soal']) {
+        error_log('[UjianAman] Jumlah soal tidak cocok saat koreksi: hasil=' . $hasilId . ', tersimpan=' . (int) $h['total_soal'] . ', saat_ini=' . count($soal));
+        return false;
+    }
+
+    $jawabanPg = [];
+    foreach (semua(
+        'SELECT soal_id, pilihan FROM jawaban_pg WHERE hasil_id = ?',
+        [$hasilId]
+    ) as $j) {
+        $idSoal = normalisasiIdSoal($j['soal_id'] ?? null);
+        if (
+            $idSoal === ''
+            || !isset($soal[$idSoal])
+            || in_array(
+                strtolower(bersih($soal[$idSoal]['tipe'] ?? 'pg')),
+                ['essay', 'uraian'],
+                true
+            )
+            || isset($jawabanPg[$idSoal])
+        ) {
+            error_log('[UjianAman] ID jawaban PG tidak cocok saat koreksi: hasil=' . $hasilId . ', id=' . json_encode($j['soal_id'] ?? null));
+            return false;
+        }
+        $jawabanPg[$idSoal] = strtoupper(bersih($j['pilihan']));
+    }
+
+    $jawabanTeks = [];
+    foreach (semua(
+        'SELECT soal_id, skor FROM jawaban_teks WHERE hasil_id = ?',
+        [$hasilId]
+    ) as $j) {
+        $idSoal = normalisasiIdSoal($j['soal_id'] ?? null);
+        if (
+            $idSoal === ''
+            || !isset($soal[$idSoal])
+            || !in_array(
+                strtolower(bersih($soal[$idSoal]['tipe'] ?? 'pg')),
+                ['essay', 'uraian'],
+                true
+            )
+            || isset($jawabanTeks[$idSoal])
+        ) {
+            error_log('[UjianAman] ID jawaban teks tidak cocok saat koreksi: hasil=' . $hasilId . ', id=' . json_encode($j['soal_id'] ?? null));
+            return false;
+        }
+        $jawabanTeks[$idSoal] =
+            $j['skor'] === null ? null : max(0, min(100, (int) $j['skor']));
+    }
+
+    $poinTeks = 0;
+    foreach ($jawabanTeks as $skor) {
+        if ($skor !== null) $poinTeks += $skor;
+    }
+
+    $jumlahPg = 0;
+    foreach ($soal as $s) {
+        if (!in_array(strtolower(bersih($s['tipe'] ?? 'pg')), ['essay', 'uraian'], true)) {
+            $jumlahPg++;
+        }
+    }
+
+    $username = strtolower(bersih($h['siswa_username'] ?? ''));
+    if ($jawabanPg && $username !== '') {
+        $formatOpsi = strtolower(bersih($h['format_opsi'] ?? 'acak'));
+        if (!in_array($formatOpsi, ['acak', 'tetap'], true)) $formatOpsi = 'acak';
+        [, $petaOpsi] = acakDaftarSoalUntukSiswa(
+            array_values($soal),
+            $ujianId,
+            $username,
+            $formatOpsi === 'acak'
         );
-        if ($r) $pgBenar++;
+        $skorPg = hitungSkorPilihanGanda(array_values($soal), $jawabanPg, $petaOpsi);
+        if (!$skorPg['valid']) return false;
+        $poinPg = $skorPg['poin'];
+        $benar = $skorPg['benar'];
+    } else {
+        // Jawaban lama tanpa pilihan PG per ID: pertahankan poin PG tersimpan.
+        $poinPg = max(0, min(100 * $jumlahPg, (int) $h['poin'] - $poinTeks));
+        $benar = min($jumlahPg, intdiv($poinPg, 100));
     }
 
-    $poin = $pgBenar * 100;
-    $tipeMap = [];
-    foreach (semua('SELECT id, tipe FROM soal WHERE ujian_id = ?', [$ujianId]) as $s) {
-        $tipeMap[normalisasiIdSoal($s['id'] ?? null)] = strtolower(bersih($s['tipe'] ?? 'pg'));
-    }
-    foreach (semua('SELECT soal_id, skor FROM jawaban_teks WHERE hasil_id = ?', [$hasilId]) as $j) {
-        $idS = normalisasiIdSoal($j['soal_id'] ?? null);
-        if (($tipeMap[$idS] ?? 'pg') === 'pg') continue;
-        if ($j['skor'] === null) continue;
-        $skor = max(0, min(100, (int) $j['skor']));
-        $poin += $skor;
-    }
-
-    $nilai = $totalSoal > 0 ? (int) round($poin / $totalSoal) : 0;
+    $poin = $poinPg + $poinTeks;
+    $totalSoal = count($soal);
+    $nilai = (int) round($poin / $totalSoal);
     jalan(
-        'UPDATE hasil SET poin = ?, nilai = ?, benar = ? WHERE id = ?',
-        [$poin, $nilai, (int) round($poin / 100), $hasilId]
+        'UPDATE hasil SET poin = ?, nilai = ?, benar = ?, total_soal = ? WHERE id = ?',
+        [$poin, $nilai, $benar, $totalSoal, $hasilId]
     );
+    return true;
 }
 
 /** Jumlah soal essay/uraian yang jawabannya belum dikoreksi. */
@@ -3574,23 +3787,57 @@ function a_simpanKoreksi(array $d): array
 
     $tipeSoal = [];
     foreach (semua('SELECT id, tipe FROM soal WHERE ujian_id = ?', [(string) $h['ujian_id']]) as $s) {
-        $tipeSoal[normalisasiIdSoal($s['id'] ?? null)] = strtolower(bersih($s['tipe'] ?? 'pg'));
+        $idSoal = normalisasiIdSoal($s['id'] ?? null);
+        if ($idSoal === '' || isset($tipeSoal[$idSoal])) {
+            error_log('[UjianAman] ID soal kosong/duplikat saat simpan koreksi: ujian=' . $h['ujian_id'] . ', id=' . json_encode($s['id'] ?? null));
+            return galat('ID soal tidak valid atau duplikat. Koreksi belum disimpan.');
+        }
+        $tipeSoal[$idSoal] = strtolower(bersih($s['tipe'] ?? 'pg'));
     }
 
-    $tersimpan = 0;
+    $nilaiPerSoal = [];
     foreach ($skor as $soalId => $nilai) {
         $soalId = normalisasiIdSoal($soalId);
-        if ($soalId === '' || !isset($tipeSoal[$soalId]) || $tipeSoal[$soalId] === 'pg') continue;
-        $n = max(0, min(100, (int) $nilai));
-        $k = jalan(
-            'UPDATE jawaban_teks SET skor = ? WHERE hasil_id = ? AND soal_id = ?',
-            [$n, $hasilId, $soalId]
-        );
-        if ($k > 0) $tersimpan++;
+        if (
+            $soalId === ''
+            || !isset($tipeSoal[$soalId])
+            || !in_array($tipeSoal[$soalId], ['essay', 'uraian'], true)
+        ) {
+            error_log('[UjianAman] ID soal koreksi tidak cocok: hasil=' . $hasilId . ', id=' . json_encode($soalId));
+            return galat('ID soal koreksi tidak cocok dengan ujian. Koreksi belum disimpan.');
+        }
+        if (!is_numeric($nilai) || !is_finite((float) $nilai)) {
+            return galat('Skor harus berupa angka antara 0 dan 100.');
+        }
+        if (!satu(
+            'SELECT soal_id FROM jawaban_teks WHERE hasil_id = ? AND soal_id = ?',
+            [$hasilId, $soalId]
+        )) {
+            return galat('Jawaban siswa untuk soal tersebut tidak ditemukan. Koreksi belum disimpan.');
+        }
+        $nilaiPerSoal[$soalId] = max(0, min(100, (int) round((float) $nilai)));
     }
-    if ($tersimpan === 0) return galat('Tidak ada skor yang tersimpan — pastikan soal essay/uraian punya jawaban siswa.');
+    if (!$nilaiPerSoal) return galat('Tidak ada skor untuk disimpan.');
 
-    hitungUlangHasil($hasilId);
+    try {
+        db()->beginTransaction();
+        foreach ($nilaiPerSoal as $soalId => $nilai) {
+            jalan(
+                'UPDATE jawaban_teks SET skor = ? WHERE hasil_id = ? AND soal_id = ?',
+                [$nilai, $hasilId, $soalId]
+            );
+        }
+        if (!hitungUlangHasil($hasilId)) {
+            db()->rollBack();
+            return galat('Soal atau jawaban tidak cocok dengan data kiriman. Koreksi belum disimpan.');
+        }
+        db()->commit();
+    } catch (Throwable $e) {
+        if (db()->inTransaction()) db()->rollBack();
+        throw $e;
+    }
+
+    $tersimpan = count($nilaiPerSoal);
     $r = satu('SELECT benar, total_soal, nilai, poin FROM hasil WHERE id = ?', [$hasilId]);
     return [
         'success' => true,

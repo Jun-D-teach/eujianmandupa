@@ -93,6 +93,8 @@ export type UjianGas = {
   /** Nomor revisi isi soal — naik tiap guru menambah/mengubah/menghapus soal.
    *  Bila berbeda dengan salinan di HP, siswa wajib sinkron ulang. */
   revisi?: number;
+  /** Mode urutan pilihan yang dipakai untuk unduhan dan penilaian jawaban. */
+  format_opsi?: "acak" | "tetap";
   /** Konfirmasi guru: soal sudah selesai & siap dibagikan (lampu admin). */
   konfirmasi_guru?: boolean;
   /** Waktu konfirmasi dari server ("YYYY-MM-DD HH:MM:SS") atau "". */

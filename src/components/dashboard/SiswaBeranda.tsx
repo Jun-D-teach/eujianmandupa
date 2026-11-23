@@ -82,7 +82,12 @@ function LampuStatus({
  */
 function baruSesiUnduh(
   ujianId: string,
-  data: { ujian: UjianGas; soal: SoalGas[]; token_hash?: string },
+  data: {
+    ujian: UjianGas;
+    soal: SoalGas[];
+    token_hash?: string;
+    format_opsi?: "acak" | "tetap";
+  },
   nama: string,
   kelas: string,
 ): SesiUjian {
@@ -98,6 +103,7 @@ function baruSesiUnduh(
     tokenHash: data.token_hash,
     durasi_menit: data.ujian.durasi_menit,
     revisi: data.ujian.revisi,
+    formatOpsi: data.format_opsi ?? data.ujian.format_opsi ?? "acak",
     tglMulai: data.ujian.tgl_mulai || undefined,
     unduhPada: Date.now(),
     soal: data.soal.map((s) => ({
@@ -205,6 +211,7 @@ export function SiswaUjian() {
         soal: SoalGas[];
         token_hash?: string;
         pin_pengawas?: string;
+        format_opsi?: "acak" | "tetap";
       }>("getSoal", { id: u.id, kelas: sesiLama.kelas });
       pastikanIdSoalValid(data.soal);
       if (
@@ -227,6 +234,7 @@ export function SiswaUjian() {
       const baru: SesiUjian = {
         ...sesiLama,
         revisi: data.ujian.revisi,
+        formatOpsi: data.format_opsi ?? data.ujian.format_opsi ?? "acak",
         tokenHash: data.token_hash ?? sesiLama.tokenHash,
         soal: data.soal.map((s) => ({
           id: normalisasiIdSoal(s.id),
@@ -280,6 +288,7 @@ export function SiswaUjian() {
         soal: SoalGas[];
         token_hash?: string;
         pin_pengawas?: string;
+        format_opsi?: "acak" | "tetap";
       }>("getSoal", { id: u.id, kelas });
       if (
         typeof data.pin_pengawas === "string" &&
@@ -409,8 +418,14 @@ export function SiswaUjian() {
                   typeof u.revisi === "number" &&
                   (sesi.revisi ?? 1) !== u.revisi,
               );
+              const formatBeda = Boolean(
+                !sudahSelesai &&
+                  sesi &&
+                  (sesi.formatOpsi ?? "acak") !== (u.format_opsi ?? "acak"),
+              );
+              const perluSinkron = revisiBeda || formatBeda;
               const bisaSinkron =
-                revisiBeda &&
+                perluSinkron &&
                 sesi !== null &&
                 (sesi.fase === "setup" || sesi.fase === "instruksi");
               return (
@@ -510,11 +525,11 @@ export function SiswaUjian() {
                       </p>
                     ) : null}
 
-                    {revisiBeda && (
+                    {perluSinkron && (
                       <p className="mt-2 rounded-xl bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-700">
                         {bisaSinkron
-                          ? "Guru memperbaiki soal — sinkron ulang dulu saat online sebelum mengerjakan."
-                          : "Guru memperbaiki soal — versi terbaru berlaku untuk pengerjaan berikutnya."}
+                          ? "Versi soal atau pilihan berubah — sinkron ulang saat online sebelum mengerjakan."
+                          : "Versi soal atau pilihan berubah — versi terbaru berlaku untuk pengerjaan berikutnya."}
                       </p>
                     )}
 
