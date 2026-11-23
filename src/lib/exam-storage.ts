@@ -95,6 +95,25 @@ export type SesiUjian = {
 
 const PREFIKS = "ujianaman:sesi:";
 
+export function normalisasiIdSoal(id: unknown): string {
+  return typeof id === "string" || typeof id === "number"
+    ? String(id).trim()
+    : "";
+}
+
+export function pastikanIdSoalValid(soal: readonly { id: unknown }[]): void {
+  const ids = new Set<string>();
+  for (const item of soal) {
+    const id = normalisasiIdSoal(item.id);
+    if (!id || ids.has(id)) {
+      throw new Error(
+        "Server mengirim ID soal kosong atau duplikat. Hubungi guru/admin.",
+      );
+    }
+    ids.add(id);
+  }
+}
+
 /** Kunci sesi per siswa + per ujian agar HP bisa dipakai bergantian. */
 const kunciSesi = (ujianId: string, username: string): string => {
   const id = username.trim().toLowerCase();
@@ -107,8 +126,21 @@ const kunciSesi = (ujianId: string, username: string): string => {
 function normalisasiSoal(data: SesiUjian): SesiUjian {
   data.soal = data.soal.map((s) => {
     const lama = s as unknown as { _id?: string };
-    return { ...s, id: s.id || String(lama._id ?? "") };
+    return {
+      ...s,
+      id: normalisasiIdSoal(s.id) || normalisasiIdSoal(lama._id),
+    };
   });
+  const normalisasiJawaban = <T,>(jawaban: Record<string, T> | undefined) => {
+    const hasil: Record<string, T> = {};
+    for (const [id, nilai] of Object.entries(jawaban ?? {})) {
+      const idNormal = normalisasiIdSoal(id);
+      if (idNormal) hasil[idNormal] = nilai;
+    }
+    return hasil;
+  };
+  data.jawaban = normalisasiJawaban(data.jawaban);
+  data.jawabanTeks = normalisasiJawaban(data.jawabanTeks);
   return data;
 }
 

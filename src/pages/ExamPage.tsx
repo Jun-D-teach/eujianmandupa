@@ -15,6 +15,8 @@ import {
 import {
   hapusSesi,
   muatSesi,
+  normalisasiIdSoal,
+  pastikanIdSoalValid,
   simpanSesi,
   type Fase,
   type Pelanggaran,
@@ -563,24 +565,27 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
           { ujian: UjianGas; soal: import("@/lib/api").SoalGas[]; token_hash?: string; pin_pengawas?: string }
         >("getSoal", { id: ujianId, kelas: sesi.kelas });
         if (!hidup) return;
+        pastikanIdSoalValid(data.soal);
         if (typeof data.pin_pengawas === "string" && /^\d{6}$/.test(data.pin_pengawas)) {
           await simpanPinTersimpan(data.pin_pengawas);
         }
-        const idBaru = new Set(data.soal.map((s) => s.id));
+        const idBaru = new Set(data.soal.map((s) => normalisasiIdSoal(s.id)));
         const jawaban: SesiUjian["jawaban"] = {};
         for (const [k, v] of Object.entries(sesi.jawaban)) {
-          if (idBaru.has(k)) jawaban[k] = v;
+          const id = normalisasiIdSoal(k);
+          if (id && idBaru.has(id)) jawaban[id] = v;
         }
         const jawabanTeks: NonNullable<SesiUjian["jawabanTeks"]> = {};
         for (const [k, v] of Object.entries(sesi.jawabanTeks ?? {})) {
-          if (idBaru.has(k)) jawabanTeks[k] = v;
+          const id = normalisasiIdSoal(k);
+          if (id && idBaru.has(id)) jawabanTeks[id] = v;
         }
         const baru: SesiUjian = {
           ...sesi,
           revisi: data.ujian.revisi,
           tokenHash: data.token_hash ?? sesi.tokenHash,
           soal: data.soal.map((s) => ({
-            id: s.id,
+            id: normalisasiIdSoal(s.id),
             pertanyaan: s.pertanyaan,
             opsi_a: s.opsi_a,
             opsi_b: s.opsi_b,
@@ -632,6 +637,7 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
       const data = await gasCall<
         { ujian: UjianGas; soal: import("@/lib/api").SoalGas[]; token_hash?: string; pin_pengawas?: string }
       >("getSoal", { id: ujianId, kelas: k });
+      pastikanIdSoalValid(data.soal);
       // Cache PIN pengawas terbaru (dari sheet Pengaturan) agar layar kunci
       // tetap bisa dibuka offline dengan PIN terkini.
       if (typeof data.pin_pengawas === "string" && /^\d{6}$/.test(data.pin_pengawas)) {
@@ -654,7 +660,7 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
         tglMulai: data.ujian.tgl_mulai || undefined,
         unduhPada: Date.now(),
         soal: data.soal.map((s) => ({
-          id: s.id,
+          id: normalisasiIdSoal(s.id),
           pertanyaan: s.pertanyaan,
           opsi_a: s.opsi_a,
           opsi_b: s.opsi_b,
@@ -770,9 +776,14 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
     if (!sesi) return;
     const soal = sesi.soal[sesi.indeks];
     if (!soal) return;
+    const id = normalisasiIdSoal(soal.id);
+    if (!id) {
+      toast.error("ID soal tidak valid. Sinkronkan ulang soal sebelum menjawab.");
+      return;
+    }
     setSesi({
       ...sesi,
-      jawaban: { ...sesi.jawaban, [soal.id]: pilihan },
+      jawaban: { ...sesi.jawaban, [id]: pilihan },
     });
   };
 
@@ -781,9 +792,14 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
     if (!sesi) return;
     const soal = sesi.soal[sesi.indeks];
     if (!soal) return;
+    const id = normalisasiIdSoal(soal.id);
+    if (!id) {
+      toast.error("ID soal tidak valid. Sinkronkan ulang soal sebelum menjawab.");
+      return;
+    }
     setSesi({
       ...sesi,
-      jawabanTeks: { ...(sesi.jawabanTeks ?? {}), [soal.id]: teks },
+      jawabanTeks: { ...(sesi.jawabanTeks ?? {}), [id]: teks },
     });
   };
 
@@ -833,6 +849,17 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
 
   const kirimJawaban = async () => {
     if (!sesi || sesi.fase !== "kirim" || !ujianId) return;
+    const idSoal = new Set<string>();
+    for (const soal of sesi.soal) {
+      const id = normalisasiIdSoal(soal.id);
+      if (!id || idSoal.has(id)) {
+        toast.error(
+          "Ada ID soal kosong atau duplikat di perangkat. Sinkronkan ulang dan hubungi pengawas jika masih gagal.",
+        );
+        return;
+      }
+      idSoal.add(id);
+    }
     setBusy(true);
     try {
       const res = await gasCall<{
@@ -846,15 +873,18 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
         kelas: sesi.kelas,
         token: sesi.token ?? "",
         total_pelanggaran: sesi.pelanggaran.length,
-        jawaban: sesi.soal.map((s) => ({
-          id_soal: s.id,
-          pilihan: sesi.jawaban[s.id],
-          // Jawaban teks essay/uraian — dikoreksi manual guru.
-          teks:
-            (s.tipe ?? "pg") === "pg"
-              ? undefined
-              : sesi.jawabanTeks?.[s.id] ?? "",
-        })),
+        jawaban: sesi.soal.map((s) => {
+          const id = normalisasiIdSoal(s.id);
+          return {
+            id_soal: id,
+            pilihan: sesi.jawaban[id],
+            // Jawaban teks essay/uraian — dikoreksi manual guru.
+            teks:
+              (s.tipe ?? "pg") === "pg"
+                ? undefined
+                : sesi.jawabanTeks?.[id] ?? "",
+          };
+        }),
       });
       const sesiSelesai: SesiUjian = {
         ...sesi,

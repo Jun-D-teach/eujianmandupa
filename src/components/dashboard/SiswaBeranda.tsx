@@ -14,6 +14,8 @@ import {
   muatSesi,
   simpanSesi,
   hapusSesi,
+  normalisasiIdSoal,
+  pastikanIdSoalValid,
   type SesiUjian,
 } from "@/lib/exam-storage";
 import { Badge } from "@/components/ui/badge";
@@ -84,6 +86,7 @@ function baruSesiUnduh(
   nama: string,
   kelas: string,
 ): SesiUjian {
+  pastikanIdSoalValid(data.soal);
   return {
     versi: 1,
     ujianId,
@@ -98,7 +101,7 @@ function baruSesiUnduh(
     tglMulai: data.ujian.tgl_mulai || undefined,
     unduhPada: Date.now(),
     soal: data.soal.map((s) => ({
-      id: s.id,
+      id: normalisasiIdSoal(s.id),
       pertanyaan: s.pertanyaan,
       opsi_a: s.opsi_a,
       opsi_b: s.opsi_b,
@@ -203,27 +206,30 @@ export function SiswaUjian() {
         token_hash?: string;
         pin_pengawas?: string;
       }>("getSoal", { id: u.id, kelas: sesiLama.kelas });
+      pastikanIdSoalValid(data.soal);
       if (
         typeof data.pin_pengawas === "string" &&
         /^\d{6}$/.test(data.pin_pengawas)
       ) {
         await simpanPinTersimpan(data.pin_pengawas);
       }
-      const idBaru = new Set(data.soal.map((s) => s.id));
+      const idBaru = new Set(data.soal.map((s) => normalisasiIdSoal(s.id)));
       const jawaban: SesiUjian["jawaban"] = {};
       for (const [k, v] of Object.entries(sesiLama.jawaban)) {
-        if (idBaru.has(k)) jawaban[k] = v;
+        const id = normalisasiIdSoal(k);
+        if (id && idBaru.has(id)) jawaban[id] = v;
       }
       const jawabanTeks: NonNullable<SesiUjian["jawabanTeks"]> = {};
       for (const [k, v] of Object.entries(sesiLama.jawabanTeks ?? {})) {
-        if (idBaru.has(k)) jawabanTeks[k] = v;
+        const id = normalisasiIdSoal(k);
+        if (id && idBaru.has(id)) jawabanTeks[id] = v;
       }
       const baru: SesiUjian = {
         ...sesiLama,
         revisi: data.ujian.revisi,
         tokenHash: data.token_hash ?? sesiLama.tokenHash,
         soal: data.soal.map((s) => ({
-          id: s.id,
+          id: normalisasiIdSoal(s.id),
           pertanyaan: s.pertanyaan,
           opsi_a: s.opsi_a,
           opsi_b: s.opsi_b,

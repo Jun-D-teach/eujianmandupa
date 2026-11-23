@@ -453,6 +453,24 @@ function bersih($v): string
     return trim((string) ($v ?? ''));
 }
 
+function normalisasiIdSoal($v): string
+{
+    if (!is_string($v) && !is_int($v) && !is_float($v)) return '';
+    return trim((string) $v);
+}
+
+function catatIdSoalTidakCocok(string $ujianId, $id): void
+{
+    $teksId = json_encode($id, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (is_string($teksId) && strlen($teksId) > 200) {
+        $teksId = substr($teksId, 0, 200) . '...';
+    }
+    error_log(
+        '[UjianAman] ID soal submit tidak cocok: ujian=' . $ujianId
+        . ', id=' . ($teksId === false ? '[tidak dapat ditampilkan]' : $teksId)
+    );
+}
+
 /* ------------------------------------------------------------------ */
 /* Sesi ber-token HMAC + matriks akses per peran                        */
 /* ------------------------------------------------------------------ */
@@ -477,6 +495,7 @@ const AKSES = [
        'getDaftarJadwal' => 2,      // admin only
     'hapusJadwalHarian' => 2,    // admin only
     'getUjian' => 1, 'getSoalAdmin' => 1, 'getHasil' => 1, 'getLaporan' => 1, 'getSiswa' => 1,
+    'getMonitoringUjian' => 1,
     'getLaporanMengawas' => 1, 'simpanLaporanMengawas' => 1, 'hapusLaporanMengawas' => 1,
     'izinkanUjianUlang' => 2, 'hitungUlangNilaiAcak' => 2,
     'getKelasList' => 1, 'tambahSiswa' => 1, 'ubahSiswa' => 1, 'hapusSiswa' => 1,
@@ -796,6 +815,7 @@ function jalankan(string $action, array $d): array
         case 'hapusJadwalHarian': return a_hapusJadwalHarian($d);
         case 'getSoalAdmin': return a_getSoalAdmin($d);
         case 'getHasil': return a_getHasil($d);
+        case 'getMonitoringUjian': return a_getMonitoringUjian($d);
         case 'hitungUlangNilaiAcak': return a_hitungUlangNilaiAcak($d);
         case 'getLaporanMengawas': return a_getLaporanMengawas($d);
         case 'simpanLaporanMengawas': return a_simpanLaporanMengawas($d);
@@ -2233,7 +2253,7 @@ function barisSoal(array $r, bool $denganKunci, array $petaBacaan = []): array
     if (!in_array($tipe, ['pg', 'essay', 'uraian'], true)) $tipe = 'pg';
     $bacaanId = (string) ($r['bacaan_id'] ?? '');
     $out = [
-        'id' => (string) $r['id'],
+        'id' => normalisasiIdSoal($r['id'] ?? null),
         'ujian_id' => (string) $r['ujian_id'],
         'pertanyaan' => (string) $r['pertanyaan'],
         'opsi_a' => (string) $r['opsi_a'],
@@ -2399,7 +2419,7 @@ function acakDaftarSoalUntukSiswa(array $daftar, string $ujianId, string $userna
             $soal[$kunciBaru] = $hLama !== false ? ($opsiAsli[$hLama] ?? '') : '';
         }
 
-        $petaPerSoal[(string) $soal['id']] = $petaHuruf;
+        $petaPerSoal[normalisasiIdSoal($soal['id'] ?? null)] = $petaHuruf;
     }
     unset($soal);
 
@@ -2734,7 +2754,11 @@ function a_submitJawaban(array $d): array
          FROM soal WHERE ujian_id = ? ORDER BY id',
         [$ujianId]
     ) as $s) {
-        $idS = (string) $s['id'];
+        $idS = normalisasiIdSoal($s['id'] ?? null);
+        if ($idS === '' || isset($tipeMap[$idS])) {
+            error_log('[UjianAman] ID soal kosong/duplikat di database: ujian=' . $ujianId . ', id=' . json_encode($s['id'] ?? null));
+            return galat('Data ID soal tidak valid atau duplikat. Hubungi guru/admin sebelum mengirim jawaban.');
+        }
         $kunciMap[$idS] = strtoupper(bersih($s['kunci_jawaban']));
         $tipe = strtolower(bersih($s['tipe'] ?? 'pg'));
         $tipeMap[$idS] = in_array($tipe, ['essay', 'uraian'], true) ? $tipe : 'pg';
@@ -2743,12 +2767,40 @@ function a_submitJawaban(array $d): array
     }
     [, $petaAcak] = acakDaftarSoalUntukSiswa($daftarUntukPeta, $ujianId, $username);
 
+    $jawabanNormal = [];
+    $adaIdTidakCocok = false;
+    foreach ($jawaban as $item) {
+        if (!is_array($item)) {
+            catatIdSoalTidakCocok($ujianId, $item);
+            $adaIdTidakCocok = true;
+            continue;
+        }
+        $idAsli = $item['id_soal'] ?? null;
+        $idSoal = normalisasiIdSoal($idAsli);
+        if ($idSoal === '' || !isset($tipeMap[$idSoal]) || !isset($kunciMap[$idSoal])) {
+            catatIdSoalTidakCocok($ujianId, $idAsli);
+            $adaIdTidakCocok = true;
+            continue;
+        }
+        if (isset($jawabanNormal[$idSoal])) {
+            error_log('[UjianAman] Jawaban ID soal duplikat saat submit: ujian=' . $ujianId . ', id=' . json_encode($idAsli));
+            $adaIdTidakCocok = true;
+            continue;
+        }
+        $item['id_soal'] = $idSoal;
+        $jawabanNormal[$idSoal] = $item;
+    }
+    if ($adaIdTidakCocok) {
+        return galat('ID soal di perangkat tidak cocok dengan server. Jawaban belum dikirim; sinkronkan ulang dan hubungi pengawas.');
+    }
+    $jawaban = array_values($jawabanNormal);
+
     $hasilId = idBaru('h');
     $poin = 0;
     $jawabanPg = [];  // disimpan untuk laporan/ekspor (A–E per soal)
     foreach ($jawaban as $item) {
-        $idSoal = (string) ($item['id_soal'] ?? '');
-        if (!isset($tipeMap[$idSoal]) || $tipeMap[$idSoal] !== 'pg') continue;
+        $idSoal = normalisasiIdSoal($item['id_soal'] ?? null);
+        if (!isset($tipeMap[$idSoal], $kunciMap[$idSoal]) || $tipeMap[$idSoal] !== 'pg') continue;
         $pilihan = strtoupper(bersih($item['pilihan'] ?? ''));
         if ($pilihan === '') continue;
         $jawabanPg[$idSoal] = $pilihan;
@@ -2806,8 +2858,8 @@ function a_submitJawaban(array $d): array
 
         // Jawaban teks (essay/uraian) disimpan untuk dikoreksi manual guru.
         foreach ($jawaban as $item) {
-            $idSoal = (string) ($item['id_soal'] ?? '');
-            if (!isset($tipeMap[$idSoal]) || $tipeMap[$idSoal] === 'pg') continue;
+            $idSoal = normalisasiIdSoal($item['id_soal'] ?? null);
+            if (!isset($tipeMap[$idSoal], $kunciMap[$idSoal]) || $tipeMap[$idSoal] === 'pg') continue;
             $teks = (string) ($item['teks'] ?? '');
             if (function_exists('mb_substr')) $teks = mb_substr($teks, 0, 20000);
             else $teks = substr($teks, 0, 20000);
@@ -2888,7 +2940,8 @@ function a_hitungUlangNilaiAcak(array $d): array
          FROM soal WHERE ujian_id = ? ORDER BY id',
         [$ujianId]
     ) as $s) {
-        $soal[(string) $s['id']] = $s;
+        $idSoal = normalisasiIdSoal($s['id'] ?? null);
+        if ($idSoal !== '') $soal[$idSoal] = $s;
     }
     if (!$soal) return galat('Ujian ini belum memiliki soal.');
 
@@ -2903,7 +2956,7 @@ function a_hitungUlangNilaiAcak(array $d): array
         'SELECT hasil_id, soal_id, pilihan FROM jawaban_pg WHERE ujian_id = ?',
         [$ujianId]
     ) as $j) {
-        $jawabanPg[(string) $j['hasil_id']][(string) $j['soal_id']] =
+        $jawabanPg[(string) $j['hasil_id']][normalisasiIdSoal($j['soal_id'] ?? null)] =
             strtoupper(bersih($j['pilihan']));
     }
     $jawabanTeks = [];
@@ -2911,7 +2964,7 @@ function a_hitungUlangNilaiAcak(array $d): array
         'SELECT hasil_id, soal_id, skor FROM jawaban_teks WHERE ujian_id = ?',
         [$ujianId]
     ) as $j) {
-        $jawabanTeks[(string) $j['hasil_id']][(string) $j['soal_id']] =
+        $jawabanTeks[(string) $j['hasil_id']][normalisasiIdSoal($j['soal_id'] ?? null)] =
             $j['skor'] === null ? null : max(0, min(100, (int) $j['skor']));
     }
 
@@ -2993,7 +3046,7 @@ function hitungUlangHasil(string $hasilId): void
         if (strtolower(bersih($s['tipe'] ?? 'pg')) !== 'pg') continue;
         $r = satu(
             'SELECT pilihan FROM jawaban WHERE hasil_id = ? AND soal_id = ?',
-            [$hasilId, (string) $s['id']]
+            [$hasilId, normalisasiIdSoal($s['id'] ?? null)]
         );
         if ($r) $pgBenar++;
     }
@@ -3001,10 +3054,10 @@ function hitungUlangHasil(string $hasilId): void
     $poin = $pgBenar * 100;
     $tipeMap = [];
     foreach (semua('SELECT id, tipe FROM soal WHERE ujian_id = ?', [$ujianId]) as $s) {
-        $tipeMap[(string) $s['id']] = strtolower(bersih($s['tipe'] ?? 'pg'));
+        $tipeMap[normalisasiIdSoal($s['id'] ?? null)] = strtolower(bersih($s['tipe'] ?? 'pg'));
     }
     foreach (semua('SELECT soal_id, skor FROM jawaban_teks WHERE hasil_id = ?', [$hasilId]) as $j) {
-        $idS = (string) $j['soal_id'];
+        $idS = normalisasiIdSoal($j['soal_id'] ?? null);
         if (($tipeMap[$idS] ?? 'pg') === 'pg') continue;
         if ($j['skor'] === null) continue;
         $skor = max(0, min(100, (int) $j['skor']));
@@ -3059,6 +3112,15 @@ function a_getHasil(array $d): array
     if ($tolak) return $tolak;
     $ujian = cariUjian($ujianId);
     $rows = semua('SELECT * FROM hasil WHERE ujian_id = ? ORDER BY timestamp DESC', [$ujianId]);
+    if (strtolower(bersih($d['sesi_role'] ?? '')) === 'guru' && $ujian) {
+        $hasilSasaranGuru = [];
+        foreach ($rows as $row) {
+            if (cocokSasar($ujian, (string) $row['kelas'])) {
+                $hasilSasaranGuru[] = $row;
+            }
+        }
+        $rows = $hasilSasaranGuru;
+    }
     $nilaiTertinggi = [];
     $hasilResmi = [];
     foreach ($rows as $row) {
@@ -3150,6 +3212,107 @@ function a_getHasil(array $d): array
     return ['success' => true, 'hasil' => $hasil, 'peserta' => $peserta];
 }
 
+/** Status pengiriman siswa berdasarkan penempatan ruang, tanpa membuka nilai. */
+function a_getMonitoringUjian(array $d): array
+{
+    $tanggal = bersih($d['tanggal'] ?? '');
+    $mapel = bersih($d['mapel'] ?? '');
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal)) {
+        return galat('Pilih tanggal ujian yang valid.');
+    }
+    if ($mapel === '' || strlen($mapel) > 100) {
+        return galat('Pilih mata pelajaran yang valid.');
+    }
+
+    $peran = strtolower(bersih($d['sesi_role'] ?? ''));
+    $pengguna = bersih($d['sesi_user'] ?? '');
+    $ujianMapel = [];
+    foreach (semua(
+        'SELECT * FROM ujian WHERE tgl_mulai LIKE ? ORDER BY dibuat DESC',
+        [$tanggal . '%']
+    ) as $ujian) {
+        if (!bolehUjian($ujian, $peran, $pengguna)) continue;
+        $namaMapel = bersih($ujian['mapel'] ?? '');
+        if ($namaMapel === '') $namaMapel = bersih($ujian['judul'] ?? '');
+        if (strtolower($namaMapel) !== strtolower($mapel)) continue;
+        $ujianMapel[(string) $ujian['id']] = $ujian;
+    }
+
+    $hasilPerUjianUsername = [];
+    $hasilPerUjianNamaKelas = [];
+    if ($ujianMapel) {
+        $ujianIds = array_keys($ujianMapel);
+        $placeholder = implode(',', array_fill(0, count($ujianIds), '?'));
+        foreach (semua(
+            "SELECT ujian_id, siswa_username, nama, kelas FROM hasil WHERE ujian_id IN ($placeholder)",
+            $ujianIds
+        ) as $hasil) {
+            $ujianId = (string) $hasil['ujian_id'];
+            $username = strtolower(bersih($hasil['siswa_username'] ?? ''));
+            if ($username !== '') $hasilPerUjianUsername[$ujianId][$username] = true;
+            $keyNamaKelas = strtoupper(bersih($hasil['nama'])) . '|' . strtoupper(bersih($hasil['kelas']));
+            $hasilPerUjianNamaKelas[$ujianId][$keyNamaKelas] = true;
+        }
+    }
+
+    $penempatan = [];
+    $jumlahPerNamaKelas = [];
+    foreach (semua(
+        'SELECT p.ruang_id, p.nisn, p.nama, p.kelas, p.kursi, r.nama AS ruang_nama
+         FROM penempatan p LEFT JOIN ruang r ON r.id = p.ruang_id
+         ORDER BY r.urutan, r.nama, p.kursi'
+    ) as $siswa) {
+        $ujianSasaran = [];
+        foreach ($ujianMapel as $ujianId => $ujian) {
+            if (cocokSasar($ujian, (string) $siswa['kelas'])) {
+                $ujianSasaran[] = $ujianId;
+            }
+        }
+        $keyNamaKelas = strtoupper(bersih($siswa['nama'])) . '|' . strtoupper(bersih($siswa['kelas']));
+        $siswa['key_nama_kelas'] = $keyNamaKelas;
+        $siswa['ujian_sasaran'] = $ujianSasaran;
+        $siswa['ikut_ujian'] = count($ujianSasaran) > 0;
+        $penempatan[] = $siswa;
+        $jumlahPerNamaKelas[$keyNamaKelas] = ($jumlahPerNamaKelas[$keyNamaKelas] ?? 0) + 1;
+    }
+
+    $peserta = [];
+    foreach ($penempatan as $siswa) {
+        $nisn = strtolower(bersih($siswa['nisn']));
+        $keyNamaKelas = $siswa['key_nama_kelas'];
+        $sudahKirim = false;
+        foreach ($siswa['ujian_sasaran'] as $ujianId) {
+            if ($nisn !== '' && isset($hasilPerUjianUsername[$ujianId][$nisn])) {
+                $sudahKirim = true;
+                break;
+            }
+            if (
+                ($jumlahPerNamaKelas[$keyNamaKelas] ?? 0) === 1
+                && isset($hasilPerUjianNamaKelas[$ujianId][$keyNamaKelas])
+            ) {
+                $sudahKirim = true;
+                break;
+            }
+        }
+        $peserta[] = [
+            'ruang_id' => (string) $siswa['ruang_id'],
+            'ruang_nama' => (string) ($siswa['ruang_nama'] ?? ''),
+            'nisn' => (string) $siswa['nisn'],
+            'nama' => (string) $siswa['nama'],
+            'kelas' => (string) $siswa['kelas'],
+            'kursi' => (int) $siswa['kursi'],
+            'ikut_ujian' => (bool) $siswa['ikut_ujian'],
+            'sudah_kirim' => $sudahKirim,
+        ];
+    }
+
+    return [
+        'success' => true,
+        'ruang' => daftarRuang(),
+        'peserta' => $peserta,
+    ];
+}
+
 function a_izinkanUjianUlang(array $d): array
 {
     $ujianId = bersih($d['ujian_id'] ?? '');
@@ -3221,7 +3384,7 @@ function a_getLaporan(array $d): array
     $nomor = 0;
     foreach (semua('SELECT id, tipe FROM soal WHERE ujian_id = ? ORDER BY id', [$ujianId]) as $s) {
         $nomor++;
-        $idS = (string) $s['id'];
+        $idS = normalisasiIdSoal($s['id'] ?? null);
         $urutSoal[$idS] = [
             'id' => $idS,
             'nomor' => $nomor,
@@ -3243,11 +3406,11 @@ function a_getLaporan(array $d): array
     // Jawaban PG (A–E) & teks per kiriman — satu query lalu dipetakan.
     $pgByHasil = [];
     foreach (semua('SELECT hasil_id, soal_id, pilihan FROM jawaban_pg WHERE ujian_id = ?', [$ujianId]) as $j) {
-        $pgByHasil[(string) $j['hasil_id']][(string) $j['soal_id']] = strtoupper(bersih($j['pilihan']));
+        $pgByHasil[(string) $j['hasil_id']][normalisasiIdSoal($j['soal_id'] ?? null)] = strtoupper(bersih($j['pilihan']));
     }
     $teksByHasil = [];
     foreach (semua('SELECT hasil_id, soal_id, teks FROM jawaban_teks WHERE ujian_id = ?', [$ujianId]) as $j) {
-        $teksByHasil[(string) $j['hasil_id']][(string) $j['soal_id']] = (string) $j['teks'];
+        $teksByHasil[(string) $j['hasil_id']][normalisasiIdSoal($j['soal_id'] ?? null)] = (string) $j['teks'];
     }
 
     $hasilRows = semua('SELECT * FROM hasil WHERE ujian_id = ? ORDER BY kelas, nama, percobaan', [$ujianId]);
@@ -3377,8 +3540,9 @@ function a_getJawabanKoreksi(array $d): array
 
     $jawaban = [];
     foreach (semua('SELECT soal_id, teks, skor FROM jawaban_teks WHERE hasil_id = ?', [$hasilId]) as $j) {
-        $jawaban[(string) $j['soal_id']] = [
-            'soal_id' => (string) $j['soal_id'],
+        $idSoal = normalisasiIdSoal($j['soal_id'] ?? null);
+        $jawaban[$idSoal] = [
+            'soal_id' => $idSoal,
             'teks' => (string) $j['teks'],
             'skor' => $j['skor'] === null ? null : (int) $j['skor'],
         ];
@@ -3410,12 +3574,12 @@ function a_simpanKoreksi(array $d): array
 
     $tipeSoal = [];
     foreach (semua('SELECT id, tipe FROM soal WHERE ujian_id = ?', [(string) $h['ujian_id']]) as $s) {
-        $tipeSoal[(string) $s['id']] = strtolower(bersih($s['tipe'] ?? 'pg'));
+        $tipeSoal[normalisasiIdSoal($s['id'] ?? null)] = strtolower(bersih($s['tipe'] ?? 'pg'));
     }
 
     $tersimpan = 0;
     foreach ($skor as $soalId => $nilai) {
-        $soalId = bersih($soalId);
+        $soalId = normalisasiIdSoal($soalId);
         if ($soalId === '' || !isset($tipeSoal[$soalId]) || $tipeSoal[$soalId] === 'pg') continue;
         $n = max(0, min(100, (int) $nilai));
         $k = jalan(

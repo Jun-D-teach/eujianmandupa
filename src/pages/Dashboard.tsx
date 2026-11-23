@@ -9,6 +9,7 @@ import {
   GraduationCap,
   History,
   LogOut,
+  Monitor,
   Settings,
   ShieldCheck,
   UserCog,
@@ -30,12 +31,14 @@ import { PengaturanRuang } from "@/components/dashboard/PengaturanRuang";
 import { PengaturanJadwal } from "@/components/dashboard/PengaturanJadwal";
 import { PengaturanKartu } from "@/components/dashboard/PengaturanKartu";
 import { LaporanMengawas } from "@/components/dashboard/LaporanMengawas";
+import { MonitoringUjian } from "@/components/dashboard/MonitoringUjian";
 
 type TabId =
   | "ujian"
   | "riwayat"
   | "kelola"
   | "hasil"
+  | "monitoring"
   | "mengawas"
   | "siswa"
   | "guru"
@@ -53,6 +56,7 @@ const TABS: Record<TabId, { label: string; ikon: typeof Users }> = {
   riwayat: { label: "Riwayat Ujian", ikon: History },
   kelola: { label: "Kelola Ujian", ikon: ClipboardList },
   hasil: { label: "Hasil Ujian", ikon: ShieldCheck },
+  monitoring: { label: "Monitoring Ujian", ikon: Monitor },
   mengawas: { label: "Laporan Mengawas", ikon: FileText },
   siswa: { label: "Data Siswa", ikon: Users },
   guru: { label: "Data Guru", ikon: GraduationCap },
@@ -62,8 +66,8 @@ const TABS: Record<TabId, { label: string; ikon: typeof Users }> = {
 
 function tabsUntuk(role: string | undefined): TabId[] {
   if (role === "admin")
-    return ["kelola", "hasil", "mengawas", "siswa", "guru", "pengguna", "atur"];
-  if (role === "guru") return ["kelola", "hasil", "mengawas"];
+    return ["kelola", "hasil", "monitoring", "mengawas", "siswa", "guru", "pengguna", "atur"];
+  if (role === "guru") return ["kelola", "hasil", "monitoring", "mengawas"];
   return ["ujian", "riwayat"];
 }
 
@@ -104,7 +108,7 @@ export default function Dashboard() {
     <main className="min-h-screen bg-background text-foreground">
       {/* Header - Modern Design */}
 <header className="sticky top-0 z-40 border-b border-border/60 bg-background/95 backdrop-blur-xl supports-[backdrop-filter]:bg-background/80">
-  <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-4 px-5">
+  <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2 sm:px-5">
     {/* Logo */}
     <button
       type="button"
@@ -124,9 +128,8 @@ export default function Dashboard() {
       </span>
     </button>
 
-    {/* Navigation Menu - Enhanced */}
-    {/* Navigation Menu - Responsive: ikon saja di HP, ikon+teks di desktop */}
-<nav className="flex flex-1 items-center justify-center gap-1 md:gap-1.5">
+    {/* Semua menu ditampilkan agar tidak terpotong pada layar sempit. */}
+<nav aria-label="Menu utama" className="order-last flex w-full flex-wrap items-center justify-start gap-1 border-t border-border/60 pt-2 sm:justify-center md:gap-1.5">
   {tabs.map((id) => {
     const item = TABS[id];
     const aktif = tabAktif === id;
@@ -148,8 +151,7 @@ export default function Dashboard() {
         `}
       >
         <Ikon className={`size-4 transition-transform ${aktif ? "scale-110" : "group-hover:scale-110"}`} />
-        {/* Teks label: disembunyikan di HP, tampil di layar medium ke atas */}
-        <span className="hidden md:inline whitespace-nowrap">{item.label}</span>
+        <span className="whitespace-nowrap">{item.label}</span>
         {aktif && (
           <span className="absolute -bottom-1 left-1/2 h-0.5 w-6 md:w-8 -translate-x-1/2 rounded-full bg-emerald-400" />
         )}
@@ -202,6 +204,7 @@ export default function Dashboard() {
           <KelolaUjian bukaCetakNonce={bukaCetakKartu} />
         )}
         {tabAktif === "hasil" && <HasilUjian />}
+        {tabAktif === "monitoring" && <MonitoringUjian />}
         {tabAktif === "mengawas" && <LaporanMengawas />}
         {tabAktif === "siswa" && <DataSiswa />}
         {tabAktif === "guru" && <DataGuru />}
