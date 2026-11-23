@@ -190,6 +190,7 @@ export type HasilGas = {
   menunggu?: number;
   total_pelanggaran: number;
   timestamp: string;
+  timestamp_ms?: number | null;
 };
 
 export type PenggunaGas = {
@@ -347,6 +348,8 @@ export async function apiCall<T = Record<string, unknown>>(
     message?: string;
     perlu_login?: boolean;
   };
+  let statusServer: number | null = null;
+  let tipeKonten = "";
   try {
     const r = await fetch(url, {
       method: "POST",
@@ -355,6 +358,8 @@ export async function apiCall<T = Record<string, unknown>>(
       body: JSON.stringify({ action, sesi: muatSesiToken(), ...data }),
       signal: AbortSignal.timeout(timeoutMs),
     });
+    statusServer = r.status;
+    tipeKonten = r.headers.get("content-type") ?? "";
     if (!r.ok) {
       throw new Error(
         `Server merespons HTTP ${r.status} — pastikan folder api ter-upload dan PHP aktif di hosting.`,
@@ -366,8 +371,15 @@ export async function apiCall<T = Record<string, unknown>>(
       throw new Error("Server tidak menjawab (timeout). Coba lagi beberapa saat.");
     }
     if (err instanceof SyntaxError) {
+      console.error("Respons API bukan JSON:", {
+        action,
+        status: statusServer,
+        contentType: tipeKonten,
+      });
       throw new Error(
-        "Respons server bukan JSON — pastikan folder api ter-upload di hosting dan MySQL sudah aktif.",
+        action === "submitJawaban"
+          ? "Balasan server tidak terbaca. Jawaban mungkin sudah tersimpan; cek Hasil Ujian sebelum mencoba kirim ulang."
+          : "Respons server bukan JSON — periksa endpoint API dan MySQL.",
       );
     }
     if (err instanceof TypeError) {

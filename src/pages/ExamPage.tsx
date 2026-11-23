@@ -10,6 +10,7 @@ import {
   simpanPinTersimpan,
   statusJadwalUjian,
   tanggalJadwalDate,
+  type HasilGas,
   type UjianGas,
 } from "@/lib/api";
 import {
@@ -208,6 +209,7 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
   const [meta, setMeta] = useState<UjianGas | null | undefined>(undefined);
 
   const [busy, setBusy] = useState(false);
+  const [cekStatusBusy, setCekStatusBusy] = useState(false);
   const [pesan, setPesan] = useState<string | null>(null);
   const [modal, setModal] = useState<{ jenis: Pelanggaran["jenis"] } | null>(
     null,
@@ -238,6 +240,7 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
   /** Waktu pelanggaran terakhir — dedupe agar satu kejadian cukup satu strike. */
   const lastViolationRef = useRef(0);
   const gagalSimpanRef = useRef(false);
+  const cekStatusOtomatisRef = useRef("");
 
   useEffect(() => {
     faseRef.current = sesi?.fase;
@@ -858,6 +861,109 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
     }
   };
 
+  const cekHasilTerkirim = useCallback(
+    async (sesiPerluCek: SesiUjian): Promise<boolean> => {
+      if (!online || !username || typeof sesiPerluCek.mulaiPada !== "number") {
+        return false;
+      }
+
+      const data = await gasCall<{ hasil: HasilGas[] }>("getHasilSaya");
+      const waktuMulai = Math.max(
+        sesiPerluCek.mulaiPada,
+        sesiPerluCek.unduhPada,
+      );
+      const hasilTerkait = data.hasil
+        .filter(
+          (hasil) =>
+            hasil.ujian_id === sesiPerluCek.ujianId &&
+            typeof hasil.timestamp_ms === "number" &&
+            hasil.timestamp_ms >= waktuMulai,
+        )
+        .sort(
+          (a, b) => (b.timestamp_ms ?? 0) - (a.timestamp_ms ?? 0),
+        )[0];
+      if (!hasilTerkait || typeof hasilTerkait.timestamp_ms !== "number") {
+        return false;
+      }
+
+      const sesiSelesai: SesiUjian = {
+        ...sesiPerluCek,
+        fase: "selesai",
+        kirimPada: hasilTerkait.timestamp_ms,
+        sirene: false,
+        hasil: {
+          nilai: hasilTerkait.nilai,
+          benar: hasilTerkait.benar,
+          total_soal: hasilTerkait.total_soal,
+          total_pelanggaran: hasilTerkait.total_pelanggaran,
+          jumlah_pg: sesiPerluCek.soal.filter(
+            (soal) => (soal.tipe ?? "pg") === "pg",
+          ).length,
+          jumlah_uraian: sesiPerluCek.soal.filter(
+            (soal) => (soal.tipe ?? "pg") !== "pg",
+          ).length,
+        },
+      };
+      setSesi(sesiSelesai);
+      hentikanSirene();
+      setSireneNyala(false);
+      try {
+        await simpanSesi(
+          {
+            ...sesiSelesai,
+            soal: [],
+            jawaban: {},
+            jawabanTeks: {},
+            pelanggaran: [],
+            token: undefined,
+            tokenHash: undefined,
+            sirene: false,
+          },
+          username,
+        );
+      } catch (err) {
+        console.error("Kiriman tercatat, tetapi status selesai gagal disimpan:", err);
+        toast.error(
+          "Jawaban sudah tercatat di server, tetapi status selesai gagal disimpan di perangkat. Jangan kirim ulang.",
+          { duration: 10000 },
+        );
+        return true;
+      }
+      toast.success("Kiriman sudah tercatat. Ujian ditandai selesai.");
+      return true;
+    },
+    [online, username],
+  );
+
+  useEffect(() => {
+    if (!sesi || sesi.fase !== "kirim" || !online || !username) return;
+    const kunciCek = `${sesi.ujianId}:${username}:${sesi.mulaiPada ?? ""}`;
+    if (cekStatusOtomatisRef.current === kunciCek) return;
+    cekStatusOtomatisRef.current = kunciCek;
+    void cekHasilTerkirim(sesi).catch((err) => {
+      console.error("Gagal memeriksa status kiriman ujian:", err);
+      cekStatusOtomatisRef.current = "";
+    });
+  }, [sesi, online, username, cekHasilTerkirim]);
+
+  const cekStatusKirim = async () => {
+    if (!sesi || cekStatusBusy) return;
+    setCekStatusBusy(true);
+    try {
+      const terkirim = await cekHasilTerkirim(sesi);
+      if (!terkirim) {
+        toast.info(
+          "Belum ditemukan kiriman untuk sesi ini. Jawaban tetap tersimpan di perangkat.",
+        );
+      }
+    } catch (err) {
+      console.error("Gagal memeriksa status kiriman ujian:", err);
+      toast.error("Status kiriman belum bisa diperiksa. Coba lagi saat online.");
+    } finally {
+      setCekStatusBusy(false);
+    }
+  };
+
   const kirimJawaban = async () => {
     if (!sesi || sesi.fase !== "kirim" || !ujianId) return;
     const idSoal = new Set<string>();
@@ -944,9 +1050,17 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
       setSireneNyala(false);
       toast.success("Jawaban berhasil dikirim.");
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Gagal mengirim. Coba lagi.",
-      );
+      let terkirim = false;
+      try {
+        terkirim = await cekHasilTerkirim(sesi);
+      } catch (cekErr) {
+        console.error("Gagal memastikan apakah jawaban sudah tersimpan:", cekErr);
+      }
+      if (!terkirim) {
+        toast.error(
+          err instanceof Error ? err.message : "Gagal mengirim. Coba lagi.",
+        );
+      }
     } finally {
       setBusy(false);
     }
@@ -1205,7 +1319,9 @@ const [sesi, setSesi] = useState<SesiUjian | null>(null);
             totalTerjawab={totalTerjawab}
             online={online}
             busy={busy}
+            cekStatusBusy={cekStatusBusy}
             onKirim={kirimJawaban}
+            onCekStatus={cekStatusKirim}
             onKembali={() => {
               if (!sesi) return;
               waktuHabisRef.current = false;

@@ -3299,6 +3299,11 @@ function barisHasil(array $r): array
 {
     $hasilId = (string) $r['id'];
     $ujianId = (string) $r['ujian_id'];
+    $waktu = (string) ($r['timestamp'] ?? '');
+    $zona = new DateTimeZone(defined('APP_ZONE') ? APP_ZONE : 'Asia/Jakarta');
+    $waktuDibuat = $waktu !== ''
+        ? DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $waktu, $zona)
+        : false;
     return [
         'id' => $hasilId,
         'ujian_id' => $ujianId,
@@ -3314,7 +3319,8 @@ function barisHasil(array $r): array
         'poin' => (int) ($r['poin'] ?? 0),
         'menunggu' => jumlahMenunggu($hasilId, $ujianId),
         'total_pelanggaran' => (int) $r['total_pelanggaran'],
-        'timestamp' => isset($r['timestamp']) && $r['timestamp'] ? (string) $r['timestamp'] : '',
+        'timestamp' => $waktu,
+        'timestamp_ms' => $waktuDibuat ? $waktuDibuat->getTimestamp() * 1000 : null,
     ];
 }
 

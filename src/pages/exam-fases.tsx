@@ -503,7 +503,9 @@ export function KirimFase(props: {
   totalTerjawab: number;
   online: boolean;
   busy: boolean;
+  cekStatusBusy: boolean;
   onKirim: () => void;
+  onCekStatus: () => void;
   onKembali: () => void;
 }) {
   const { sesi } = props;
@@ -583,6 +585,14 @@ export function KirimFase(props: {
       >
         <Send className="size-4" />
         {props.busy ? "Mengirim…" : "Kirim Jawaban"}
+      </Button>
+      <Button
+        variant="outline"
+        className="w-full"
+        onClick={props.onCekStatus}
+        disabled={!props.online || props.busy || props.cekStatusBusy}
+      >
+        {props.cekStatusBusy ? "Memeriksa status…" : "Cek status kiriman"}
       </Button>
       <Button
         variant="ghost"
