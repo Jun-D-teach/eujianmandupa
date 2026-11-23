@@ -3057,6 +3057,7 @@ function a_getHasil(array $d): array
     $ujianId = bersih($d['ujian_id'] ?? '');
     $tolak = tolakBilaBukanMilik($d, $ujianId);
     if ($tolak) return $tolak;
+    $ujian = cariUjian($ujianId);
     $rows = semua('SELECT * FROM hasil WHERE ujian_id = ? ORDER BY timestamp DESC', [$ujianId]);
     $nilaiTertinggi = [];
     $hasilResmi = [];
@@ -3109,7 +3110,44 @@ function a_getHasil(array $d): array
         $item['izin_ulang'] = $izinTerpakai[$item['id']] ?? null;
         $hasil[] = $item;
     }
-    return ['success' => true, 'hasil' => $hasil];
+
+    $peserta = [];
+    $jumlahPerNamaKelas = [];
+    foreach (semua('SELECT id, nisn, nama, kelas FROM siswa ORDER BY kelas, nama') as $s) {
+        if (!$ujian || !cocokSasar($ujian, (string) $s['kelas'])) continue;
+        $nisn = strtolower(bersih($s['nisn']));
+        $keyNamaKelas = strtoupper(bersih($s['nama'])) . '|' . strtoupper(bersih($s['kelas']));
+        $peserta[] = [
+            'id' => (string) $s['id'],
+            'nisn' => $nisn,
+            'nama' => (string) $s['nama'],
+            'kelas' => (string) $s['kelas'],
+            'key_nama_kelas' => $keyNamaKelas,
+            'sudah_kirim' => false,
+        ];
+        $jumlahPerNamaKelas[$keyNamaKelas] = ($jumlahPerNamaKelas[$keyNamaKelas] ?? 0) + 1;
+    }
+
+    $usernameTerkirim = [];
+    $namaKelasTerkirim = [];
+    foreach ($rows as $row) {
+        $username = strtolower(bersih($row['siswa_username'] ?? ''));
+        if ($username !== '') $usernameTerkirim[$username] = true;
+        $keyNamaKelas = strtoupper(bersih($row['nama'])) . '|' . strtoupper(bersih($row['kelas']));
+        $namaKelasTerkirim[$keyNamaKelas] = true;
+    }
+    foreach ($peserta as &$p) {
+        $p['sudah_kirim'] = isset($usernameTerkirim[$p['nisn']])
+            || (
+                ($jumlahPerNamaKelas[$p['key_nama_kelas']] ?? 0) === 1
+                && isset($namaKelasTerkirim[$p['key_nama_kelas']])
+            );
+        unset($p['key_nama_kelas']);
+        unset($p['nisn']);
+    }
+    unset($p);
+
+    return ['success' => true, 'hasil' => $hasil, 'peserta' => $peserta];
 }
 
 function a_izinkanUjianUlang(array $d): array

@@ -71,6 +71,12 @@ type BarisLaporan = {
 };
 
 type SoalLaporan = { id: string; nomor: number; tipe: string };
+type PesertaUjian = {
+  id: string;
+  nama: string;
+  kelas: string;
+  sudah_kirim: boolean;
+};
 
 /** Konfigurasi warna grafik distribusi nilai. */
 const chartConfig = {
@@ -83,6 +89,7 @@ export function HasilUjian() {
   const [ujian, setUjian] = useState<UjianGas[] | null>(null);
   const [pilih, setPilih] = useState<string | null>(null);
   const [hasil, setHasil] = useState<HasilGas[] | null>(null);
+  const [peserta, setPeserta] = useState<PesertaUjian[] | null>(null);
   const [versi, setVersi] = useState(0);
   const [koreksi, setKoreksi] = useState<HasilGas | null>(null);
   const [targetUlang, setTargetUlang] = useState<HasilGas | null>(null);
@@ -122,16 +129,27 @@ export function HasilUjian() {
   useEffect(() => {
     if (!pilih) {
       setHasil(null);
+      setPeserta(null);
       return;
     }
     let hidup = true;
     setHasil(null);
-    gasCall<{ hasil: HasilGas[] }>("getHasil", { ujian_id: pilih })
+    setPeserta(null);
+    gasCall<{ hasil: HasilGas[]; peserta?: PesertaUjian[] }>(
+      "getHasil",
+      { ujian_id: pilih },
+    )
       .then((res) => {
-        if (hidup) setHasil(res.hasil);
+        if (hidup) {
+          setHasil(res.hasil);
+          setPeserta(res.peserta ?? []);
+        }
       })
       .catch(() => {
-        if (hidup) setHasil([]);
+        if (hidup) {
+          setHasil([]);
+          setPeserta([]);
+        }
       });
     return () => {
       hidup = false;
@@ -142,8 +160,26 @@ export function HasilUjian() {
   const daftarKelas = useMemo(() => {
     const set = new Set<string>();
     for (const h of hasil ?? []) if (h.kelas) set.add(h.kelas);
+    for (const p of peserta ?? []) if (p.kelas) set.add(p.kelas);
     return [...set].sort();
-  }, [hasil]);
+  }, [hasil, peserta]);
+
+  const pesertaTersaring = useMemo(
+    () =>
+      (peserta ?? []).filter((p) => kelas === "semua" || p.kelas === kelas),
+    [peserta, kelas],
+  );
+  const jumlahSudahKirim = pesertaTersaring.filter((p) => p.sudah_kirim).length;
+  const belumMengirim = useMemo(() => {
+    const q = cari.trim().toLocaleLowerCase("id");
+    return pesertaTersaring.filter(
+      (p) =>
+        !p.sudah_kirim &&
+        (!q ||
+          p.nama.toLocaleLowerCase("id").includes(q) ||
+          p.kelas.toLocaleLowerCase("id").includes(q)),
+    );
+  }, [pesertaTersaring, cari]);
 
   // Baris yang lolos filter kelas — dipakai tabel, ringkasan, grafik & ekspor.
   const hasilTerfilter = useMemo(() => {
@@ -482,9 +518,9 @@ export function HasilUjian() {
               <div>
                 <h2 className="font-bold">Cari dan saring hasil</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {hasilTampil === null
+                  {hasilTampil === null || peserta === null
                     ? "Memuat data peserta…"
-                    : `${jumlahTersaring} dari ${hasil?.length ?? 0} hasil ditampilkan`}
+                    : `${jumlahSudahKirim} dari ${pesertaTersaring.length} siswa sasaran sudah mengirim (${pesertaTersaring.length - jumlahSudahKirim} belum) · ${jumlahTersaring} hasil ditampilkan`}
                 </p>
               </div>
               <Button variant="ghost" size="sm" onClick={resetFilter}>
@@ -626,6 +662,41 @@ export function HasilUjian() {
                 </Button>
               </div>
             </div>
+          </Card>
+
+          <Card className="border-border/70 p-4 sm:p-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="font-bold">Siswa belum mengirim</h2>
+              <span className="text-xs text-muted-foreground">
+                {belumMengirim.length} siswa
+                {kelas === "semua" ? "" : ` · kelas ${kelas}`}
+              </span>
+            </div>
+            {peserta === null ? (
+              <Skeleton className="mt-3 h-12 w-full" />
+            ) : belumMengirim.length > 0 ? (
+              <ul className="mt-3 grid max-h-56 gap-2 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
+                {belumMengirim.map((p) => (
+                  <li
+                    key={p.id}
+                    className="flex items-center justify-between gap-3 rounded-lg bg-muted/50 px-3 py-2 text-sm"
+                  >
+                    <span className="truncate font-medium">{p.nama}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {p.kelas}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-3 text-sm text-muted-foreground">
+                {pesertaTersaring.length === 0
+                  ? "Tidak ada siswa terdaftar yang menjadi sasaran ujian ini."
+                  : cari.trim()
+                    ? "Tidak ada siswa yang cocok dengan pencarian dan belum mengirim."
+                    : "Semua siswa sasaran sudah mengirim."}
+              </p>
+            )}
           </Card>
 
           {/* Ringkasan + grafik distribusi nilai (mengikuti filter kelas) */}
